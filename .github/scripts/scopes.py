@@ -156,6 +156,14 @@ def empty_effects(contract):
     return {effect: False for effect in contract.effects}
 
 
+def daemon_test_file_plan(decisions):
+    return bool(decisions) and all(
+        not decision["escalated"]
+        and decision["matchedRules"] == ["certain-daemon-test-file"]
+        for decision in decisions
+    )
+
+
 def evaluate(contract, files, threshold, derive_workspace):
     outputs = empty_effects(contract)
     decisions = []
@@ -174,16 +182,17 @@ def evaluate(contract, files, threshold, derive_workspace):
             for effect in rule["effects"]:
                 outputs[effect] = True
         decisions.append({"file": file, "matchedRules": matched_ids, "escalated": False})
-    if derive_workspace and any(outputs[name] for name in (
+    narrow_daemon_tests = daemon_test_file_plan(decisions)
+    if derive_workspace and not narrow_daemon_tests and any(outputs[name] for name in (
         "daemon_tests_required", "web_tests_required", "tools_dev_tests_required", "tools_pack_tests_required"
     )):
         outputs["workspace_validation_required"] = True
-    return outputs, decisions
+    return outputs, decisions, narrow_daemon_tests
 
 
-def enabled_workloads(outputs, ci_mode, full_lanes):
+def enabled_workloads(outputs, ci_mode, full_lanes, narrow_daemon_tests):
     any_scope = any(outputs.values())
-    broad = full_lanes or ci_mode == "hot" or any_scope
+    broad = full_lanes or ((ci_mode == "hot" or any_scope) and not narrow_daemon_tests)
     ui_p0 = full_lanes or outputs["ui_p0_validation_required"]
     enabled = {
         "static_gate": True,
@@ -207,9 +216,10 @@ def build_plan(contract, files, source, threshold, ci_mode, full_lanes, derive_w
     if threshold is None:
         outputs = {effect: True for effect in contract.effects}
         decisions = []
+        narrow_daemon_tests = False
     else:
-        outputs, decisions = evaluate(contract, files, threshold, derive_workspace)
-    enabled, broad = enabled_workloads(outputs, ci_mode, full_lanes)
+        outputs, decisions, narrow_daemon_tests = evaluate(contract, files, threshold, derive_workspace)
+    enabled, broad = enabled_workloads(outputs, ci_mode, full_lanes, narrow_daemon_tests)
     hits = Counter(rule for decision in decisions for rule in decision["matchedRules"])
     shadow_match = contract.matches[contract.shadow["match"]]
     candidate = bool(files) and resolved and all(contract.match(file, shadow_match) for file in files)

@@ -197,9 +197,10 @@ authority.
 structure checks in every applicable run.
 
 Broad app declaration builds, workspace typecheck, and
-`run_workspace_unit_tests` may skip only for a merge-queue plan whose
-certain-tier evaluation claims zero validation effects. PR, manual-hot,
-forced-full, and escalated queue plans retain broad workspace validation.
+`run_workspace_unit_tests` may skip for a pure daemon test-file plan or for a
+merge-queue plan whose certain-tier evaluation claims zero validation effects.
+Forced-full, escalated, mixed, fixture/helper, and production-source plans
+retain broad workspace validation.
 
 ### Confidence tiers
 
@@ -359,11 +360,27 @@ Current evidence:
 
 ### Certain daemon core
 
-Rule `certain-daemon-core` covers `apps/daemon/src/` and
-`apps/daemon/tests/`, excluding `apps/daemon/src/sidecar/` and the
-`daemon-runtime-definition` UI P0 shadow surface. Package manifests, build
-configuration, bins, the packaged sidecar compatibility bridge, and runtime
-definition source/companion tests stay medium-tier.
+Rule `certain-daemon-test-file` covers only `*.test.ts` and `*.test.tsx` below
+`apps/daemon/tests/`. A pure matching plan retains preflight and the complete
+four-shard daemon suite while omitting workspace unit tests, preflight
+typecheck, E2E Vitest, and Playwright. Test fixtures, helpers, snapshots, and
+configuration do not match this route; mixing a test file with production
+source restores the union of the source effects, while unknown or below-tier
+inputs continue to escalate.
+
+The latest 400 first-parent merges contain three pure daemon test-file groups.
+In representative full PR run #7206, the retained four daemon shards consumed
+about 22.7 runner-minutes; the workspace-unit, E2E Vitest, and six UI P0 jobs
+now omitted consumed about 70 runner-minutes. The longest omitted worker ran
+about 14.6 minutes versus 6.6 minutes for the longest retained daemon shard.
+This is a low-frequency route, so its immediate value is faster feedback for
+focused test maintenance rather than large fleet-wide savings.
+
+Rule `certain-daemon-core` covers `apps/daemon/src/` and the remaining
+non-test-file surface under `apps/daemon/tests/`, excluding
+`apps/daemon/src/sidecar/` and the `daemon-runtime-definition` UI P0 shadow
+source surface. Package manifests, build configuration, bins, the packaged
+sidecar compatibility bridge, and runtime definition source stay medium-tier.
 
 A pure matching merge group keeps preflight and workspace typecheck, workspace
 unit coverage, broad E2E Vitest, and the complete UI P0 matrix. It skips web
@@ -390,12 +407,15 @@ The `daemon-runtime-definition` capability is evidence-only. The applied
 `project-collab`, `project-runtime`, and `workspace-restoration`. No job reads
 the shadow candidate as an execution input.
 
-The capability matches changes confined to:
+The capability matches production-source changes confined to:
 
 - `apps/daemon/src/runtimes/defs/`;
 - `capabilities.ts`, `local-profiles.ts`, `metadata.ts`, and `registry.ts`
-  directly under `apps/daemon/src/runtimes/`;
-- the explicit companion-test list in `.github/config/scopes.json`.
+  directly under `apps/daemon/src/runtimes/`.
+
+Companion test-file-only changes now take the daemon-only route and are not
+shadow UI candidates; the shadow is intended to measure production capability
+coupling, not to re-expand a directly owned test workload.
 
 Its four-shard candidate keeps `entry-settings`, `project-workspace`,
 `project-collab`, and `project-runtime`; it would omit

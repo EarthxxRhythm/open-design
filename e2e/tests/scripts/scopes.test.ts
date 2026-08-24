@@ -150,6 +150,21 @@ describe("workflow scope planner", () => {
       enabled: { daemon_unit_tests: true, e2e_vitest: true, ui_p0: true, web_workspace_tests: false },
       trace: { escalations: [] },
     });
+    expect(plan("merge-queue", ["apps/daemon/tests/runtimes/chat-run-lifecycle.test.ts"])).toMatchObject({
+      scopes: {
+        daemon_tests_required: true,
+        run_preflight_typecheck: false,
+        workspace_validation_required: false,
+      },
+      enabled: {
+        daemon_unit_tests: true,
+        e2e_vitest: false,
+        ui_p0: false,
+        web_workspace_tests: false,
+        workspace_unit_tests: false,
+      },
+      trace: { escalations: [], ruleHits: { "certain-daemon-test-file": 1 } },
+    });
     expect(plan("merge-queue", ["apps/desktop/src/main.ts"])).toMatchObject({
       enabled: { windows_tools_pack_payload_tests: false, workspace_unit_tests: true, e2e_vitest: false },
       trace: { escalations: [] },
@@ -167,6 +182,50 @@ describe("workflow scope planner", () => {
     expect(unknown.trace.escalations).toHaveLength(1);
   });
 
+  test("keeps pure daemon test changes on the daemon test workload", () => {
+    const expected = {
+      scopes: {
+        daemon_tests_required: true,
+        run_preflight_typecheck: false,
+        ui_critical_validation_required: false,
+        ui_p0_validation_required: false,
+        workspace_validation_required: false,
+      },
+      enabled: {
+        daemon_unit_tests: true,
+        e2e_vitest: false,
+        playwright_critical: false,
+        ui_p0: false,
+        web_workspace_tests: false,
+        workspace_unit_tests: false,
+      },
+      trace: { escalations: [] },
+    };
+    expect(plan("pr", ["apps/daemon/tests/server-paths.test.ts"])).toMatchObject({
+      ...expected,
+      trace: { escalations: [], ruleHits: { "certain-daemon-test-file": 1 } },
+    });
+    expect(plan("pr", [
+      "apps/daemon/tests/server-paths.test.ts",
+      "apps/daemon/tests/runtimes/chat-run-lifecycle.test.ts",
+    ])).toMatchObject({
+      ...expected,
+      trace: { escalations: [], ruleHits: { "certain-daemon-test-file": 2 } },
+    });
+
+    expect(plan("pr", ["apps/daemon/tests/fixtures/fake-agent.mjs"])).toMatchObject({
+      enabled: { daemon_unit_tests: true, e2e_vitest: true, ui_p0: true, workspace_unit_tests: true },
+      trace: { escalations: [] },
+    });
+    expect(plan("pr", [
+      "apps/daemon/tests/server-paths.test.ts",
+      "apps/daemon/src/server.ts",
+    ])).toMatchObject({
+      enabled: { daemon_unit_tests: true, e2e_vitest: true, ui_p0: true, workspace_unit_tests: true },
+      trace: { escalations: [] },
+    });
+  });
+
   test("keeps the Windows payload workload in forced-full plans", () => {
     expect(plan("full")).toMatchObject({ enabled: { windows_tools_pack_payload_tests: true } });
   });
@@ -177,6 +236,8 @@ describe("workflow scope planner", () => {
     expect(candidate.trace.uiP0Shadow.matrix.map((entry) => entry.name)).toEqual([
       "entry-settings", "project-workspace", "project-collab", "project-runtime",
     ]);
+    expect(plan("pr", ["apps/daemon/tests/runtimes/agent-args.test.ts"]).trace.uiP0Shadow.mode)
+      .toBe("full-fallback");
     expect(plan("pr", ["apps/daemon/src/server.ts"]).trace.uiP0Shadow.mode).toBe("full-fallback");
   });
 
