@@ -2954,6 +2954,97 @@ setInterval(() => {}, 1000);
     }
   });
 
+  it('finishes an idle run through the artifact quiet period after a live artifact is created (#1451)', async () => {
+    const previousInactivity = process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS;
+    const previousQuietPeriod = process.env.OD_CHAT_RUN_ARTIFACT_QUIET_PERIOD_MS;
+    process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS = '1500';
+    process.env.OD_CHAT_RUN_ARTIFACT_QUIET_PERIOD_MS = '100';
+
+    try {
+      const projectId = `proj-${randomUUID()}`;
+      const createProjectResponse = await fetch(`${baseUrl}/api/projects`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: projectId, name: 'Artifact quiet-period fixture' }),
+      });
+      expect(createProjectResponse.ok).toBe(true);
+
+      await withFakeAgent(
+        'opencode',
+        `
+(async () => {
+  const response = await fetch(process.env.OD_DAEMON_URL + '/api/tools/live-artifacts/create', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: 'Bearer ' + process.env.OD_TOOL_TOKEN,
+    },
+    body: JSON.stringify({
+      input: {
+        title: 'Quiet-period artifact',
+        preview: { type: 'html', entry: 'index.html' },
+        document: {
+          format: 'html_template_v1',
+          templatePath: 'template.html',
+          generatedPreviewPath: 'index.html',
+          dataPath: 'data.json',
+          dataJson: { title: 'Quiet-period artifact' },
+        },
+      },
+      templateHtml: '<!doctype html><h1>{{data.title}}</h1>',
+    }),
+  });
+  if (!response.ok) {
+    throw new Error('live-artifact create failed: ' + response.status + ' ' + await response.text());
+  }
+  setInterval(() => {}, 1000);
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`,
+        async () => {
+          const createResponse = await fetch(`${baseUrl}/api/runs`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              agentId: 'opencode',
+              projectId,
+              message: 'create a live artifact and wait',
+            }),
+          });
+          expect(createResponse.status).toBe(202);
+          const { runId } = await createResponse.json() as { runId: string };
+
+          await waitForRunStatus(baseUrl, runId);
+          const statusResponse = await fetch(`${baseUrl}/api/runs/${runId}`);
+          const statusBody = await statusResponse.json() as {
+            status: string;
+            signal: string | null;
+            error?: string | null;
+          };
+
+          expect(statusBody).toMatchObject({
+            status: 'succeeded',
+            signal: 'SIGTERM',
+          });
+          expect(statusBody.error ?? null).toBeNull();
+        },
+      );
+    } finally {
+      if (previousInactivity == null) {
+        delete process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS;
+      } else {
+        process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS = previousInactivity;
+      }
+      if (previousQuietPeriod == null) {
+        delete process.env.OD_CHAT_RUN_ARTIFACT_QUIET_PERIOD_MS;
+      } else {
+        process.env.OD_CHAT_RUN_ARTIFACT_QUIET_PERIOD_MS = previousQuietPeriod;
+      }
+    }
+  });
+
   it('keeps Claude stream runs alive while structured output is still flowing', async () => {
     const previous = process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS;
     process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS = '3000';

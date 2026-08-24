@@ -1451,20 +1451,6 @@ function emitChatAgentEvent(runId, payload) {
   return sink(payload);
 }
 
-// Exported for tests covering the artifact quiet-period plumbing
-// (#1451). The chat run path is a deep closure inside startServer, so
-// pin the hook contract at the emit/handle boundary instead of
-// driving a full fake-agent e2e for every invariant.
-export const __forTestChatRunHandles = activeChatRunHandles;
-
-export function __forTestEmitLiveArtifactEvent(
-  grant: { runId?: string; projectId?: string },
-  action: 'created' | 'updated' | 'deleted',
-  artifact: { id: string; projectId?: string; title?: string; refreshStatus?: string },
-) {
-  return emitLiveArtifactEvent(grant, action, artifact);
-}
-
 function emitLiveArtifactEvent(grant, action, artifact) {
   if (!artifact?.id) return false;
   const payload = {
