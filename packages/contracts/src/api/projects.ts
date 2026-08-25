@@ -54,7 +54,8 @@ export type ProjectScenarioTaskProfile =
   | 'prototype'
   | 'ppt'
   | 'marketing'
-  | 'hyperframes';
+  | 'hyperframes'
+  | 'image';
 
 /**
  * Daemon-owned identity for the scenario currently pinned to a project.

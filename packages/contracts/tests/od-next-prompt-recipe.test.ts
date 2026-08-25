@@ -168,6 +168,36 @@ describe('OD Next V2 prompt recipe', () => {
     expect(resolveOdNextDeckFrameworkMode({ taskType: 'prototype' })).toBeUndefined();
   });
 
+  it('fails closed on a blank task skill for an authored task type', () => {
+    // A prototype/deck/marketing/hyperframes card that decodes blank is a
+    // packaging defect, not an omittable slot.
+    for (const blank of ['', '   \n']) {
+      expect(() => composeOdNextStrategyBundleHeadV2({ ...recipe, taskSkill: blank }))
+        .toThrow(/taskSkill/);
+      expect(() => composeOdNextStrategyRequestPromptV2({ ...recipe, taskSkill: blank }))
+        .toThrow(/taskSkill/);
+    }
+  });
+
+  it('omits the task skill slot only for the rule-card-optional image type', () => {
+    const imageRecipe: OdNextStrategyRequestRecipeV2 = {
+      ...recipe,
+      taskType: 'image',
+      taskSkill: '',
+    };
+    const head = composeOdNextStrategyBundleHeadV2(imageRecipe);
+    expect(head.sessionSkills.taskTypeSkill).toBeUndefined();
+    expect(head.sessionSkills.generalOrchestrationSkill.body.length).toBeGreaterThan(0);
+    const markdown = composeOdNextStrategyRequestPromptV2(imageRecipe);
+    expect(markdown).not.toContain('## Task Skill');
+    // An authored image card, once it lands, flows through unchanged.
+    const authored = composeOdNextStrategyBundleHeadV2({
+      ...imageRecipe,
+      taskSkill: '# Image\n\nProduce the declared composition.',
+    });
+    expect(authored.sessionSkills.taskTypeSkill?.skillName).toBe('image');
+  });
+
   it('states the deliverable rules that only bite once a plan declares more than one', () => {
     // The canonical Plan Contract example carries a single deliverable whose id
     // equals `canonicalDeliverable.id`, so the membership rule reads as a

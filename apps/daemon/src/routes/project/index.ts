@@ -3962,6 +3962,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
         || req.body?.automaticStrategyTaskProfile === 'ppt'
         || req.body?.automaticStrategyTaskProfile === 'marketing'
         || req.body?.automaticStrategyTaskProfile === 'hyperframes'
+        || req.body?.automaticStrategyTaskProfile === 'image'
           ? req.body.automaticStrategyTaskProfile
           : null;
       if (

@@ -76,6 +76,19 @@ describe('bundled OD Next strategy package identity', () => {
       './open-design.json',
       './references/task-profile-mapping.md',
     ]);
+    // The reserved image profile binds like any other task type; its rule
+    // card is intentionally empty, so the loaded task skill is empty text and
+    // the prompt layer omits the task_type_skill slot.
+    const image = createBundledStrategyBindingV2({ plugin, taskType: 'image' });
+    expect(image.selectedTaskProfile).toMatchObject({
+      taskType: 'image',
+      path: './assets/task-profiles/image.md',
+    });
+    const imageAssets = loadBundledStrategyPromptAssetsV2({ plugin, binding: image });
+    expect(imageAssets.taskSkill).toBe('');
+    expect(imageAssets.coreStrategy.length).toBeGreaterThan(0);
+    expect(imageAssets.generalOrchestration.length).toBeGreaterThan(0);
+
     // Resources travel with the profile that declares them only.
     expect(hyperframes.assetDigests.map((asset) => asset.path)).toEqual([
       './SKILL.md',

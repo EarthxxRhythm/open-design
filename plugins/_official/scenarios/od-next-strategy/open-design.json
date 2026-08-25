@@ -77,6 +77,13 @@
             "version": "2.0.0",
             "rollout": "active",
             "projectKinds": ["video"]
+          },
+          {
+            "taskType": "image",
+            "path": "./assets/task-profiles/image.md",
+            "version": "0.0.0",
+            "rollout": "reserved",
+            "projectKinds": ["image"]
           }
         ],
         "taskProfileMapping": {
@@ -98,6 +105,7 @@
         "./assets/task-profiles/ppt.md",
         "./assets/task-profiles/marketing.md",
         "./assets/task-profiles/hyperframes.md",
+        "./assets/task-profiles/image.md",
         "./references/task-profile-mapping.md"
       ]
     },

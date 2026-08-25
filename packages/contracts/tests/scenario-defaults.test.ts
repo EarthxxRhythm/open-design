@@ -17,18 +17,20 @@ import {
 } from '../src/plugins/scenario-defaults.js';
 
 describe('automaticStrategyTaskProfileForRouteId', () => {
-  it('recognizes only the four product-owned OD Next routes', () => {
+  it('recognizes only the product-owned OD Next routes', () => {
     expect(automaticStrategyTaskProfileForRouteId('prototype')).toBe('prototype');
     expect(automaticStrategyTaskProfileForRouteId('deck')).toBe('ppt');
     expect(automaticStrategyTaskProfileForRouteId('marketing')).toBe('marketing');
     expect(automaticStrategyTaskProfileForRouteId('hyperframes')).toBe('hyperframes');
+    // Image owns its own OD Next route even though its rule card is not
+    // authored yet: the run gets core strategy + orchestration only.
+    expect(automaticStrategyTaskProfileForRouteId('image')).toBe('image');
 
     // Task types that own no OD Next route stay unrouted. `wireframe` and
     // `mobile` are catalog action ids, never route ids — the surfaces fold
     // them onto their parent Prototype route before asking.
     expect(automaticStrategyTaskProfileForRouteId('wireframe')).toBeNull();
     expect(automaticStrategyTaskProfileForRouteId('mobile')).toBeNull();
-    expect(automaticStrategyTaskProfileForRouteId('image')).toBeNull();
     expect(automaticStrategyTaskProfileForRouteId('web-clone')).toBeNull();
     expect(automaticStrategyTaskProfileForRouteId('document')).toBeNull();
     expect(automaticStrategyTaskProfileForRouteId('webgl')).toBeNull();
@@ -85,7 +87,6 @@ describe('automaticStrategyTaskProfileForRouteId', () => {
       { kind: 'prototype' as const, intent: 'webgl-experience' as const },
       { kind: 'other' as const, intent: 'document' as const },
       { kind: 'other' as const },
-      { kind: 'image' as const },
       { kind: 'video' as const },
       { kind: 'audio' as const },
       { kind: 'template' as const },
@@ -95,6 +96,19 @@ describe('automaticStrategyTaskProfileForRouteId', () => {
     }
     expect(automaticStrategyTaskProfileForProjectMetadata(null)).toBeNull();
     expect(automaticStrategyTaskProfileForProjectMetadata(undefined)).toBeNull();
+    // The bare Image surface routes; an intent that names another pipeline
+    // still moves it off the route.
+    expect(automaticStrategyTaskProfileForProjectMetadata({ kind: 'image' })).toBe('image');
+    expect(automaticStrategyTaskProfileForProjectMetadata({
+      kind: 'image',
+      intent: 'document',
+    } as never)).toBeNull();
+    // The scenario-binding lane stays closed for image: no bundled plugin
+    // may carry the image profile until an authored rule card exists.
+    expect(defaultScenarioTaskProfileForProjectMetadata(
+      { kind: 'image' },
+      'od-media-generation',
+    )).toBeNull();
   });
 
 });

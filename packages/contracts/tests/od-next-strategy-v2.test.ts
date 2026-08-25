@@ -177,6 +177,40 @@ describe('OD Next V2 bundled declaration and applied identity', () => {
     expect(declaration.promptRecipe).toBe('od-next-plan-build-v2');
   });
 
+  it('rejects a declaration that swaps a mandatory launch profile for image', () => {
+    const declaration = {
+      schema: 'open-design.bundled-strategy/v2',
+      id: 'od-next-strategy',
+      promptRecipe: 'od-next-plan-build-v2',
+      assets: {
+        core: { path: './assets/core.md', version: '2.0.0' },
+        orchestration: { path: './assets/orchestration.md', version: '2.0.0' },
+        taskProfiles: [
+          { taskType: 'prototype', path: './profiles/prototype.md', version: '2', rollout: 'active', projectKinds: ['prototype'] },
+          { taskType: 'ppt', path: './profiles/ppt.md', version: '2', rollout: 'active', projectKinds: ['deck'] },
+          { taskType: 'marketing', path: './profiles/marketing.md', version: '2', rollout: 'active', projectKinds: ['image'] },
+          // hyperframes is missing; image cannot stand in for it.
+          { taskType: 'image', path: './profiles/image.md', version: '0.0.0', rollout: 'reserved', projectKinds: ['image'] },
+        ],
+        taskProfileMapping: { path: './references/mapping.md', version: '2' },
+      },
+    };
+    expect(() => BundledStrategyDeclarationV2Schema.parse(declaration))
+      .toThrow(/missing: hyperframes/);
+    // The five-profile roster with every launch vertical plus image passes.
+    expect(() => BundledStrategyDeclarationV2Schema.parse({
+      ...declaration,
+      assets: {
+        ...declaration.assets,
+        taskProfiles: [
+          ...declaration.assets.taskProfiles.slice(0, 3),
+          { taskType: 'hyperframes', path: './profiles/hyperframes.md', version: '2', rollout: 'active', projectKinds: ['video'] },
+          declaration.assets.taskProfiles[3],
+        ],
+      },
+    })).not.toThrow();
+  });
+
   it('accepts a complete applied content binding and rejects ambiguous profile identity', () => {
     const binding = {
       schema: OD_NEXT_APPLIED_STRATEGY_SCHEMA,

@@ -5,6 +5,7 @@ import {
   OD_NEXT_RUNTIME_STATE_BLOCK,
   OD_NEXT_RUNTIME_STATE_SCHEMA,
   OD_NEXT_STRATEGY_ID,
+  odNextTaskSkillOptionalV2,
   type OpenDesignPlanContractV2,
   type StrategyRuntimeStateV2,
   type StrategyInputStageV2,
@@ -859,13 +860,16 @@ export function composeOdNextStrategyRequestPromptV2(
     input.generalOrchestration,
     'generalOrchestration',
   );
-  const taskSkill = requireText(input.taskSkill, 'taskSkill');
+  const taskSkill = odNextTaskSkillOptionalV2(input.taskType)
+    && !(typeof input.taskSkill === 'string' && input.taskSkill.trim().length > 0)
+    ? ''
+    : requireText(input.taskSkill, 'taskSkill');
   assertOdNextPlanningBuildOnlyV2(coreStrategy, 'coreStrategy');
   assertOdNextPlanningBuildOnlyV2(
     generalOrchestration,
     'generalOrchestration',
   );
-  assertOdNextPlanningBuildOnlyV2(taskSkill, 'taskSkill');
+  if (taskSkill) assertOdNextPlanningBuildOnlyV2(taskSkill, 'taskSkill');
   const deckFrameworkMode = context.deckFrameworkMode
     ?? resolveOdNextDeckFrameworkMode({
       taskType: input.taskType,
@@ -885,7 +889,9 @@ export function composeOdNextStrategyRequestPromptV2(
     composeOdNextStrategyStableRequestContextV2(stableContext, input.executionProfile),
     `## OD Next core strategy\n\n${coreStrategy}`,
     `## OD Next general orchestration\n\n${generalOrchestration}`,
-    `## Task Skill — ${input.taskType}\n\nExactly this one Task Skill is active for the logical task.\n\n${taskSkill}`,
+    taskSkill
+      ? `## Task Skill — ${input.taskType}\n\nExactly this one Task Skill is active for the logical task.\n\n${taskSkill}`
+      : '',
     ...stageBlocks,
     renderMachineOutputSection(input, context),
   ].filter((section) => section.length > 0);
@@ -915,10 +921,18 @@ function verifyOdNextRecipeV2(input: OdNextStrategyRequestRecipeV2): {
   }
   const coreStrategy = requireText(input.coreStrategy, 'coreStrategy');
   const generalOrchestration = requireText(input.generalOrchestration, 'generalOrchestration');
-  const taskSkill = requireText(input.taskSkill, 'taskSkill');
+  // A rule-card-optional task type (currently `image`) ships no authored Task
+  // Skill yet: its slot is omitted rather than injected empty, while core
+  // strategy and orchestration still apply. Every other task type must carry a
+  // non-empty card — an authored vertical whose card decodes blank is a
+  // packaging defect and fails closed here.
+  const taskSkill = odNextTaskSkillOptionalV2(input.taskType)
+    && !(typeof input.taskSkill === 'string' && input.taskSkill.trim().length > 0)
+    ? ''
+    : requireText(input.taskSkill, 'taskSkill');
   assertOdNextPlanningBuildOnlyV2(coreStrategy, 'coreStrategy');
   assertOdNextPlanningBuildOnlyV2(generalOrchestration, 'generalOrchestration');
-  assertOdNextPlanningBuildOnlyV2(taskSkill, 'taskSkill');
+  if (taskSkill) assertOdNextPlanningBuildOnlyV2(taskSkill, 'taskSkill');
   return {
     coreStrategy,
     generalOrchestration,
@@ -977,7 +991,9 @@ export function composeOdNextStrategyBundleHeadV2(
         skillName: 'general_orchestration',
         body: verified.generalOrchestration,
       },
-      taskTypeSkill: { skillName: input.taskType, body: verified.taskSkill },
+      ...(verified.taskSkill
+        ? { taskTypeSkill: { skillName: input.taskType, body: verified.taskSkill } }
+        : {}),
     },
     activeStages: verified.stages,
   };

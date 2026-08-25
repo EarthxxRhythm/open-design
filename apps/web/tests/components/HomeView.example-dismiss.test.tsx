@@ -288,13 +288,19 @@ const DISMISS_CASES: DismissCase[] = [
     pluginId: 'od-new-generation',
   },
   {
-    name: '图片 (media surface, no OD Next route)',
+    // Image owns its own OD Next route now (rule card pending), so the
+    // dismiss lands on the automatic route rather than the pinned media
+    // scenario.
+    name: '图片 (OD Next image route)',
     chipId: 'image',
     cardId: 'example-image-template',
-    automaticStrategyTaskProfile: null,
+    automaticStrategyTaskProfile: 'image',
     projectKind: 'image',
-    projectMetadata: { kind: 'image' },
-    pluginId: 'od-media-generation',
+    // The media composer still stamps its default model; the stamp does not
+    // participate in route derivation and keeps the ordinary media fallback
+    // working when the rollout is off.
+    projectMetadata: { kind: 'image', imageModel: 'vela/gpt-image-2' },
+    pluginId: null,
   },
   {
     name: 'Live artifact (no OD Next route)',

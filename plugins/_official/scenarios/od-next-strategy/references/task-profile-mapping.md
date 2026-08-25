@@ -6,8 +6,9 @@ Use explicit project metadata before interpreting free-form text.
 | --- | --- | --- | --- |
 | `prototype` | `prototype` | `../assets/task-profiles/prototype.md` | active |
 | `ppt` | `deck` | `../assets/task-profiles/ppt.md` | active |
-| `marketing` | `image` or explicit marketing metadata | `../assets/task-profiles/marketing.md` | active |
+| `marketing` | explicit marketing metadata | `../assets/task-profiles/marketing.md` | active |
 | `hyperframes` | `video` with HyperFrames metadata | `../assets/task-profiles/hyperframes.md` | active |
+| `image` | `image` | `../assets/task-profiles/image.md` | reserved (no authored rule card yet; core strategy and general orchestration govern) |
 
 If metadata cannot identify one profile reliably, use task type `generic` when
 the generic contract is sufficient. Otherwise report blocked with the missing

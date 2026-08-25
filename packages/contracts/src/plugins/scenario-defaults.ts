@@ -63,6 +63,7 @@ const AUTOMATIC_STRATEGY_TASK_PROFILE_BY_ROUTE_ID = {
   deck: 'ppt',
   marketing: 'marketing',
   hyperframes: 'hyperframes',
+  image: 'image',
 } as const satisfies Record<string, ProjectScenarioTaskProfile>;
 
 /**
@@ -116,6 +117,7 @@ export function automaticStrategyTaskProfileForProjectMetadata(
   }
   if (metadata?.intent != null) return null;
   if (metadata?.kind === 'deck') return 'ppt';
+  if (metadata?.kind === 'image') return 'image';
   if (metadata?.kind !== 'prototype') return null;
   return 'prototype';
 }

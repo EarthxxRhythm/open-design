@@ -27,9 +27,38 @@ export const StrategyTaskTypeV2Schema = z.enum([
   'ppt',
   'marketing',
   'hyperframes',
+  'image',
   'generic',
 ]);
 export type StrategyTaskTypeV2 = z.infer<typeof StrategyTaskTypeV2Schema>;
+
+/**
+ * Launch verticals every bundled strategy declaration must ship. A declaration
+ * that swaps one of these for an optional profile is a malformed package and
+ * fails schema validation instead of failing later at route selection.
+ */
+export const OD_NEXT_MANDATORY_TASK_TYPES_V2 = [
+  'prototype',
+  'ppt',
+  'marketing',
+  'hyperframes',
+] as const satisfies readonly StrategyTaskTypeV2[];
+
+/**
+ * Task types whose bundled rule card may be intentionally empty because no
+ * authored Task Skill exists yet. For every other task type an empty card is
+ * a packaging defect: prompt composition and Prompt Bundle
+ * serialization/parsing fail closed rather than emitting a prompt without its
+ * specialist instructions.
+ */
+export const OD_NEXT_RULE_CARD_OPTIONAL_TASK_TYPES_V2 = [
+  'image',
+] as const satisfies readonly StrategyTaskTypeV2[];
+
+/** True when `taskType` may legitimately ship no authored Task Skill body. */
+export function odNextTaskSkillOptionalV2(taskType: string): boolean {
+  return (OD_NEXT_RULE_CARD_OPTIONAL_TASK_TYPES_V2 as readonly string[]).includes(taskType);
+}
 
 export const StrategyInputStageV2Schema = z.enum([
   'request',
@@ -151,7 +180,10 @@ export const BundledStrategyDeclarationV2Schema = z.object({
   assets: z.object({
     core: StrategyAssetDeclarationV2Schema,
     orchestration: StrategyAssetDeclarationV2Schema,
-    taskProfiles: z.array(StrategyTaskProfileAssetDeclarationV2Schema).length(4),
+    // The four launch verticals are mandatory; `image` may additionally be
+    // declared once its rule card lands, so the roster is bounded by the
+    // selectable task-type enum rather than pinned to the launch count.
+    taskProfiles: z.array(StrategyTaskProfileAssetDeclarationV2Schema).min(4).max(5),
     taskProfileMapping: StrategyAssetDeclarationV2Schema,
   }).strict(),
 }).strict().superRefine((value, context) => {
@@ -161,6 +193,15 @@ export const BundledStrategyDeclarationV2Schema = z.object({
       code: z.ZodIssueCode.custom,
       path: ['assets', 'taskProfiles'],
       message: 'Each declared strategy task profile must have a unique taskType.',
+    });
+  }
+  const declared = new Set(taskTypes);
+  const missing = OD_NEXT_MANDATORY_TASK_TYPES_V2.filter((taskType) => !declared.has(taskType));
+  if (missing.length > 0) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['assets', 'taskProfiles'],
+      message: `Bundled strategy must declare every launch task profile; missing: ${missing.join(', ')}.`,
     });
   }
 });

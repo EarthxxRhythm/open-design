@@ -67,6 +67,28 @@ describe('EntryShell automatic strategy routing', () => {
     });
   });
 
+  it('accepts an image claim for the Image task surface', () => {
+    // The Image task type owns an OD Next route even though its rule card is
+    // not authored yet; the claim must survive exact-metadata re-derivation.
+    expect(entryStrategyRoutingFields({
+      automaticStrategyTaskProfile: 'image',
+      skillId: null,
+      pluginInputs: { legacy: true },
+    }, { kind: 'image' })).toEqual({
+      skillId: null,
+      automaticStrategyTaskProfile: 'image',
+    });
+    // An image claim on non-image metadata still collapses to the ordinary path.
+    expect(entryStrategyRoutingFields({
+      automaticStrategyTaskProfile: 'image',
+      skillId: null,
+      pluginInputs: { legacy: true },
+    }, { kind: 'video' })).toEqual({
+      skillId: null,
+      pluginInputs: { legacy: true },
+    });
+  });
+
   it('carries the official example reference on the surviving automatic branch', () => {
     expect(entryStrategyRoutingFields({
       automaticStrategyTaskProfile: 'prototype',
