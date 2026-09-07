@@ -1,5 +1,6 @@
 import {
   composeOdNextStrategyContinuationV2,
+  readPrototypePresentationFromPlan,
   type StrategyTaskProjectionV2,
 } from '@open-design/contracts';
 import type Database from 'better-sqlite3';
@@ -243,6 +244,7 @@ export function prepareAutomaticSimpleProductionRun<
     planContractHash: task.planContractHash,
     hostProtocolKey,
     ...(input.locale ? { locale: input.locale } : {}),
+    prototypePresentation: readPrototypePresentationFromPlan(task.planContract),
   });
   let claimed: StrategyTaskExecutionRecord | null = null;
   const meta = input.createMeta(instruction, task.runs.length);
@@ -433,6 +435,7 @@ export function prepareAutomaticStrategyContinuation<
           planContractHash: strategyPlanContractHash(input.parsed.planContract!),
           hostProtocolKey: hostProtocolKey!,
           ...(input.locale ? { locale: input.locale } : {}),
+          prototypePresentation: readPrototypePresentationFromPlan(input.parsed.planContract),
           ...(nativeBuildPackageBindings.length > 0
             ? { nativeBuildPackageBindings }
             : {}),

@@ -18,7 +18,16 @@ import {
   renderLegacyDeckCompatibilityDirective,
   type DeckFrameworkMode,
 } from './deck-framework.js';
-import type { OdNextDeviceFrameContextV2 } from './od-next-device-frame.js';
+import {
+  odNextDeviceFramePath,
+  type OdNextDeviceFrameContextV2,
+  type OdNextDeviceFrameResourceV2,
+} from './od-next-device-frame.js';
+import {
+  PrototypePresentationV1Schema,
+  prototypeProfileRequiresPresentation,
+  type PrototypePresentationV1,
+} from '../plugins/prototype-presentation.js';
 import { serializeOdNextRequestTurnV1 } from './od-next-prompt-bundle.js';
 import type {
   OdNextPromptBundleHeadV2,
@@ -142,13 +151,12 @@ export interface OdNextStrategyStableRequestContextV2 {
     brief?: string | undefined;
   } | undefined;
   /**
-   * The handheld shell Open Design resolved for a phone-app prototype. A fact
-   * in two parts — which shell and why, then the shell source itself — so the
-   * Build holds the real handset markup instead of re-drawing one from memory.
-   * Omitted when no phone platform was resolved; the rule card then points at
-   * the staged shells on disk.
+   * Legacy selected-shell context. New OD Next requests use the neutral
+   * catalog below and select presentation only in the accepted Plan.
    */
   deviceFrame?: OdNextDeviceFrameContextV2 | undefined;
+  /** Only available resource paths, never a platform inferred from request words. */
+  deviceFrameCatalog?: ReadonlyArray<OdNextDeviceFrameResourceV2> | undefined;
   /**
    * The structure-only layout primitives stylesheet the prototype profile
    * ships (`layout.css`), quoted as a fact for every prototype run so the
@@ -193,6 +201,7 @@ export type OdNextStrategyContinuationV2 =
        * this payload is machine structure and stays English.
        */
       locale?: string;
+      prototypePresentation?: PrototypePresentationV1 | null | undefined;
       nativeBuildPackageBindings?: readonly {
         buildPackageId: string;
         nativeAgentHandle: string;
@@ -618,6 +627,12 @@ export function composeOdNextStrategyStableRequestContextV2(
     });
     factualText('device-frame-shell', context.deviceFrame.shellHtml);
   }
+  if (context.deviceFrameCatalog) {
+    factualStructured('device-frame-catalog', {
+      selectedFrame: null,
+      availableShells: context.deviceFrameCatalog,
+    });
+  }
   factualText('layout-primitives', context.layoutPrimitivesCss);
   instructionText('personal-memory', context.memoryBody);
   instructionText('user-custom-instructions', context.userInstructions);
@@ -713,7 +728,16 @@ export function renderOdNextOutputContractV2(
       buildRequirements: [],
       assumptions: [],
       risks: [],
-      taskSpecific: {},
+      taskSpecific: input.taskType === 'prototype' && prototypeProfileRequiresPresentation(input.taskProfileVersion)
+        ? {
+            presentation: {
+              productSurface: 'website',
+              viewport: 'responsive',
+              deviceFrame: 'none',
+              frameSource: 'none',
+            } satisfies PrototypePresentationV1,
+          }
+        : {},
     },
     fullPlan: {
       executionMode: 'simple',
@@ -1048,12 +1072,22 @@ export function composeOdNextStrategyContinuationV2(
           nativeAgentHandle: requireText(binding.nativeAgentHandle, 'nativeAgentHandle'),
           dependsOn: binding.dependsOn.map((dependency) => requireText(dependency, 'dependsOn')),
         })))}\n\`\`\``;
+    const presentation = input.prototypePresentation == null
+      ? null
+      : PrototypePresentationV1Schema.parse(input.prototypePresentation);
+    const presentationBlock = !presentation
+      ? ''
+      : `\n\n## Prototype presentation\n\nUse this presentation from the accepted Plan. Product surface, viewport, and display frame are independent.\n\n${stableJson(presentation)}\n\n${presentation.deviceFrame === 'none'
+          ? 'Build the declared surface without a device frame.'
+          : presentation.frameSource === 'existing-artifact'
+            ? 'Preserve the existing artifact frame and its styling; edit only the planned product content.'
+            : `Selected template: \`${odNextDeviceFramePath(presentation.deviceFrame)}\`. In the existing Build file-write step, have the assembly code read this file, copy its source, and fill its documented product slots. Do not regenerate or print the fixed hardware source into model context. If the file cannot be read, report that exact path as blocked instead of substituting another frame.`}`;
     const hostProtocol = renderChatTurnHostProtocolInstructions(
       input.hostProtocolKey ?? '',
       'od_next_production',
       input.locale,
     ).text;
-    payload = `# OD Next native continuation — production\n\nContinue this native session and execute the frozen Full Plan bound to \`planContractHash=${requireSha256(input.planContractHash, 'planContractHash')}\`. Use the existing in-session Task Profile, Design Spec, Todo plan, and Build Packages. Do not re-seed or restate their full text, do not choose a new route or execution mode, and do not ask another question. Open Design must be able to identify one runnable entry in the delivered files, otherwise the completed task is rejected: it looks for a root \`index.html\`, then a single root-level html file, then a single file matching the project kind. Lay the deliverable out so exactly one of those resolves.${bindingBlock}\n\n## Closing Runtime State\n\nFinish the delivery response with exactly one ${OD_NEXT_RUNTIME_STATE_BLOCK} block written as plain text between its tags, and no Plan Contract block: schema ${OD_NEXT_RUNTIME_STATE_SCHEMA}, route full_plan, inputStage production, executionMode equal to the mode locked by the accepted Plan Contract, outcome completed once every required deliverable is written (otherwise blocked or canceled), reasonCodes [], and no other fields.${hostProtocol ? `\n\nPlace the Closing Runtime State before any final follow-up markers required by the host protocols below.\n\n${hostProtocol}` : ''}`;
+    payload = `# OD Next native continuation — production\n\nContinue this native session and execute the frozen Full Plan bound to \`planContractHash=${requireSha256(input.planContractHash, 'planContractHash')}\`. Use the existing in-session Task Profile, Design Spec, Todo plan, and Build Packages. Do not re-seed or restate their full text, do not choose a new route or execution mode, and do not ask another question. Open Design must be able to identify one runnable entry in the delivered files, otherwise the completed task is rejected: it looks for a root \`index.html\`, then a single root-level html file, then a single file matching the project kind. Lay the deliverable out so exactly one of those resolves.${bindingBlock}${presentationBlock}\n\n## Closing Runtime State\n\nFinish the delivery response with exactly one ${OD_NEXT_RUNTIME_STATE_BLOCK} block written as plain text between its tags, and no Plan Contract block: schema ${OD_NEXT_RUNTIME_STATE_SCHEMA}, route full_plan, inputStage production, executionMode equal to the mode locked by the accepted Plan Contract, outcome completed once every required deliverable is written (otherwise blocked or canceled), reasonCodes [], and no other fields.${hostProtocol ? `\n\nPlace the Closing Runtime State before any final follow-up markers required by the host protocols below.\n\n${hostProtocol}` : ''}`;
   }
   return serializeOdNextRequestTurnV1({
     taskExecutionId: input.taskExecutionId,
