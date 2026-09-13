@@ -138,12 +138,10 @@ describe('OD Next resolver and preflight', () => {
     })).toEqual({ status: 'passed', reasonCodes: [] });
   });
 
-  it('allows only daemon-owned routes and output kinds for the four production profiles', () => {
+  it('allows only daemon-owned routes and output kinds for the two production profiles', () => {
     for (const [taskType, route, outputKind] of [
       ['prototype', 'prototype-html', 'prototype'],
       ['ppt', 'deck-html', 'presentation'],
-      ['marketing', 'marketing-html', 'image'],
-      ['hyperframes', 'hyperframes-html', 'video'],
     ] as const) {
       expect(runExecutionPreflight(resolveDaemonOwnedOdNextExecutionPreflight(
         daemonPlan(taskType, route, outputKind),

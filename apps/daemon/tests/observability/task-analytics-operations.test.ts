@@ -295,10 +295,11 @@ describe('task analytics operations', () => {
         child: { unavailable: 1 },
       })],
     }),
-    record({ id: 'marketing', taskType: 'marketing' }),
+    record({ id: 'generic', taskType: 'generic' }),
     record({
+      // A task recorded before the HyperFrames profile was retired.
       id: 'hyperframes',
-      taskType: 'hyperframes',
+      taskType: 'hyperframes' as unknown as StrategyTaskTypeV2,
       externalSignals: { feedbackCount: 2, blindEvaluationCount: 1 },
     }),
     record({ id: 'unknown', taskType: null, environment: 'dev' }),
@@ -327,9 +328,8 @@ describe('task analytics operations', () => {
     expect(report.dimensions.taskBuckets).toEqual({
       prototype: 1,
       ppt: 1,
-      marketing: 1,
-      hyperframes: 1,
-      unknown: 1,
+      generic: 1,
+      unknown: 2,
     });
     expect(report.dimensions.stages).toEqual({ request: 1, production: 5 });
     expect(report.knownFacts.mainUsageValues).toEqual({

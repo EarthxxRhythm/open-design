@@ -8,7 +8,7 @@
 // "default" plugin for a given project kind / task kind.
 //
 // Creation defaults use the retained scenario infrastructure without pinning
-// a visual template. The four OD Next task profiles are selected independently
+// a visual template. The two OD Next task profiles are selected independently
 // from exact task metadata; untyped tasks choose Skills through Discovery.
 // Media kinds keep od-media-generation for their media contract.
 
@@ -46,8 +46,6 @@ export const DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID =
 const AUTOMATIC_STRATEGY_TASK_PROFILE_BY_ROUTE_ID = {
   prototype: 'prototype',
   deck: 'ppt',
-  marketing: 'marketing',
-  hyperframes: 'hyperframes',
 } as const satisfies Record<string, ProjectScenarioTaskProfile>;
 
 /**
@@ -78,8 +76,7 @@ export function automaticStrategyTaskProfileForRouteId(
  *
  * `intent` is the only field that can move a project OFF a route, because it
  * is the only one that names a different pipeline (`web-clone`,
- * `live-artifact`, `webgl-experience`, `document`, …); the two intents that own
- * their own route are admitted explicitly and every other intent is unrouted.
+ * `live-artifact`, `webgl-experience`, `document`, …); every intent is unrouted.
  *
  * A second-level scene deliberately does NOT narrow the route. `fidelity` and
  * `platformTargets` describe WHAT a Prototype should be — the Prototype task
@@ -93,12 +90,6 @@ export function automaticStrategyTaskProfileForProjectMetadata(
     | null
     | undefined,
 ): ProjectScenarioTaskProfile | null {
-  if (metadata?.intent === 'marketing') {
-    return metadata.kind === 'prototype' ? 'marketing' : null;
-  }
-  if (metadata?.intent === 'hyperframes') {
-    return metadata.kind === 'video' ? 'hyperframes' : null;
-  }
   if (metadata?.intent != null) return null;
   if (metadata?.kind === 'deck') return 'ppt';
   if (metadata?.kind !== 'prototype') return null;

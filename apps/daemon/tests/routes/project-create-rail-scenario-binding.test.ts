@@ -33,7 +33,7 @@ type RailSurface = {
   scenarioPluginId: string;
   /** The chip's `action.inputs`, which ride along in both shapes. */
   pluginInputs?: Record<string, unknown>;
-  /** Claimed by the three cards that own an OD Next route. */
+  /** Claimed by the two cards that own an OD Next route. */
   automaticStrategyTaskProfile?: ProjectScenarioTaskProfile;
 };
 
@@ -49,12 +49,6 @@ const CREATE_RAIL_SURFACES: RailSurface[] = [
     metadata: { kind: 'deck' },
     scenarioPluginId: 'od-new-generation',
     automaticStrategyTaskProfile: 'ppt',
-  },
-  {
-    chipId: 'hyperframes',
-    metadata: { kind: 'video', intent: 'hyperframes', videoModel: 'hyperframes-html' },
-    scenarioPluginId: 'od-new-generation',
-    automaticStrategyTaskProfile: 'hyperframes',
   },
   // The media composer also stamps the picked model / prompt template on the
   // metadata; neither participates in scenario routing, so they are left out.
@@ -123,7 +117,7 @@ const CREATE_RAIL_SURFACES: RailSurface[] = [
 
 /**
  * The cards that own no OD Next route. Only these can reach the create with a
- * plugin pinned: on the other three an example pick travels as an
+ * plugin pinned: on the other two an example pick travels as an
  * `exampleReference` and the automatic route survives.
  */
 const PLUGIN_FORWARDING_SURFACES = CREATE_RAIL_SURFACES.filter(
@@ -271,6 +265,28 @@ describe('create-rail scenario binding', () => {
       provenance: 'explicit_user',
       pluginId: 'od-new-generation',
     });
+  });
+
+  it('gives HyperFrames no OD Next route after its task profile was retired', async () => {
+    const { url } = await daemon();
+    const project = await createProject(url, 'hyperframes', {
+      metadata: { kind: 'video', intent: 'hyperframes', videoModel: 'hyperframes-html' },
+    });
+    expect(project.metadata.strategyBinding).toBeUndefined();
+
+    const response = await fetch(`${url}/api/projects`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: `restore-entry-hyperframes-claim-${process.hrtime.bigint()}`,
+        name: 'restore entry hyperframes claim',
+        conversationMode: 'design',
+        skipDiscoveryBrief: true,
+        metadata: { kind: 'video', intent: 'hyperframes', videoModel: 'hyperframes-html' },
+        automaticStrategyTaskProfile: 'hyperframes',
+      }),
+    });
+    expect(response.status).toBe(400);
   });
 
 });

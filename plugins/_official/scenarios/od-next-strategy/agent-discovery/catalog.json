@@ -42,46 +42,6 @@
         "解释什么是路演"
       ],
       "conflictsWith": []
-    },
-    {
-      "id": "marketing",
-      "name": "Marketing Creative",
-      "description": "Create a campaign-ready marketing visual, advertisement, poster, or social creative.",
-      "taskType": "marketing",
-      "autoSelectable": true,
-      "role": "primary",
-      "outputKinds": ["marketing-creative", "advertisement", "poster", "social-image"],
-      "positiveExamples": [
-        "为新品做一张营销海报",
-        "Create a social campaign visual",
-        "生成一套广告创意图"
-      ],
-      "negativeExamples": [
-        "分析我们的营销漏斗",
-        "只写三条广告文案",
-        "解释品牌定位方法"
-      ],
-      "conflictsWith": []
-    },
-    {
-      "id": "hyperframes",
-      "name": "Hyperframes Motion",
-      "description": "Create a motion-design or video composition with timed scenes, transitions, and animation.",
-      "taskType": "hyperframes",
-      "autoSelectable": true,
-      "role": "primary",
-      "outputKinds": ["motion-design", "video", "animation"],
-      "positiveExamples": [
-        "做一支带转场的产品宣传视频",
-        "Create an animated launch sequence",
-        "制作一个有时间轴的动态视觉"
-      ],
-      "negativeExamples": [
-        "总结这段视频讲了什么",
-        "只提取视频字幕",
-        "解释动画设计原则"
-      ],
-      "conflictsWith": []
     }
   ]
 }

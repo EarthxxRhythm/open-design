@@ -61,7 +61,7 @@ const MAX_RESOURCE_BYTES = 512 * 1024;
 const MAX_RESOURCE_COUNT = 32;
 const MAX_RESOURCE_PACKAGE_BYTES = 2 * 1024 * 1024;
 const CANONICAL_ID = /^[a-z0-9][a-z0-9._-]{0,127}$/;
-const REQUIRED_TASK_PROFILES = ['prototype', 'ppt', 'marketing', 'hyperframes'] as const;
+const REQUIRED_TASK_PROFILES = ['prototype', 'ppt'] as const;
 const CJK_SPAN = /^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+$/u;
 const SEARCH_SPAN = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+|[\p{L}\p{N}]+/gu;
 const CJK_BIGRAM_STOP_WORDS = new Set([
@@ -1118,7 +1118,7 @@ function createCandidate(input: {
     conflictsWith: string[];
   };
   origin:
-    | { kind: 'bundled-task-profile'; taskType: 'prototype' | 'ppt' | 'marketing' | 'hyperframes' }
+    | { kind: 'bundled-task-profile'; taskType: 'prototype' | 'ppt' }
     | { kind: 'built-in-functional' | 'built-in-design-template' };
   version: string;
   contentDigest: string;

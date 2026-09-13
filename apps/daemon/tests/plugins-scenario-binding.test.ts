@@ -64,14 +64,14 @@ describe('project scenario binding provenance', () => {
     db.prepare(`INSERT INTO applied_plugin_snapshots VALUES (?, ?, ?, ?)`)
       .run('snapshot-2', 'project-2', 'od-new-generation', 84);
     db.prepare(`INSERT INTO projects VALUES (?, ?, ?)`)
-      .run('project-2', JSON.stringify({ kind: 'prototype', intent: 'marketing' }), 'snapshot-2');
+      .run('project-2', JSON.stringify({ kind: 'deck' }), 'snapshot-2');
 
     const binding = writeProjectScenarioBinding(db, {
       projectId: 'project-2',
       snapshotId: 'snapshot-2',
       pluginId: 'od-new-generation',
       provenance: 'automatic_default',
-      taskProfile: 'marketing',
+      taskProfile: 'ppt',
       boundAt: 85,
     });
     const metadata = JSON.parse((db.prepare(
@@ -90,7 +90,7 @@ describe('project scenario binding provenance', () => {
     expect(readVerifiedProjectScenarioBinding(db, {
       projectId: 'project-2',
       appliedPluginSnapshotId: 'snapshot-2',
-      metadata: { ...metadata, intent: undefined },
+      metadata: { ...metadata, kind: 'image' },
     })).toBeNull();
     expect(() => writeProjectScenarioBinding(db, {
       projectId: 'project-2',
@@ -106,7 +106,7 @@ describe('project scenario binding provenance', () => {
     expect(automaticScenarioTaskProfile({
       metadata: { kind: 'video', intent: 'hyperframes' },
       pluginId: 'od-new-generation',
-    })).toBe('hyperframes');
+    })).toBeNull();
     db.close();
   });
 });

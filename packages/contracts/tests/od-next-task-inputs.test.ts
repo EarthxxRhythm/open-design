@@ -34,8 +34,6 @@ describe('OD Next task input facts', () => {
   it.each<OdNextProductionTaskTypeV1>([
     'prototype',
     'ppt',
-    'marketing',
-    'hyperframes',
   ])('canonically encodes the %s task configuration', (taskType) => {
     const serialized = serializeOdNextTaskConfigurationV1({
       schema: OD_NEXT_TASK_CONFIGURATION_SCHEMA_V1,

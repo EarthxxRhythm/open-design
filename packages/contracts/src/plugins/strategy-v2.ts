@@ -12,8 +12,6 @@ export const OD_NEXT_BUNDLED_STRATEGY_SCHEMA = 'open-design.bundled-strategy/v2'
 export const StrategyTaskTypeV2Schema = z.enum([
   'prototype',
   'ppt',
-  'marketing',
-  'hyperframes',
   'generic',
 ]);
 export type StrategyTaskTypeV2 = z.infer<typeof StrategyTaskTypeV2Schema>;
@@ -140,7 +138,7 @@ export const BundledStrategyDeclarationV2Schema = z.object({
   assets: z.object({
     core: StrategyAssetDeclarationV2Schema,
     orchestration: StrategyAssetDeclarationV2Schema,
-    taskProfiles: z.array(StrategyTaskProfileAssetDeclarationV2Schema).length(4),
+    taskProfiles: z.array(StrategyTaskProfileAssetDeclarationV2Schema).length(2),
     taskProfileMapping: StrategyAssetDeclarationV2Schema,
   }).strict(),
 }).strict().superRefine((value, context) => {
@@ -186,7 +184,7 @@ export const AppliedStrategyBindingV2Schema = z.union([
   AppliedStrategyBindingBaseV2Schema.extend({
     selectionMode: z.literal('agent-discovery'),
     selectedTaskProfile: z.null(),
-    availableTaskProfiles: z.array(SelectedStrategyTaskProfileV2Schema).length(4),
+    availableTaskProfiles: z.array(SelectedStrategyTaskProfileV2Schema).length(2),
     genericProfileVersion: z.literal('2.0.0'),
     discoveryCatalogRevision: discoveryDigestSchema,
   }).strict(),

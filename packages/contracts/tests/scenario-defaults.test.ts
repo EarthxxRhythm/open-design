@@ -17,11 +17,11 @@ import {
 } from '../src/plugins/scenario-defaults.js';
 
 describe('automaticStrategyTaskProfileForRouteId', () => {
-  it('recognizes only the four product-owned OD Next routes', () => {
+  it('recognizes only the two product-owned OD Next routes', () => {
     expect(automaticStrategyTaskProfileForRouteId('prototype')).toBe('prototype');
     expect(automaticStrategyTaskProfileForRouteId('deck')).toBe('ppt');
-    expect(automaticStrategyTaskProfileForRouteId('marketing')).toBe('marketing');
-    expect(automaticStrategyTaskProfileForRouteId('hyperframes')).toBe('hyperframes');
+    expect(automaticStrategyTaskProfileForRouteId('marketing')).toBeNull();
+    expect(automaticStrategyTaskProfileForRouteId('hyperframes')).toBeNull();
 
     // Task types that own no OD Next route stay unrouted. `wireframe` and
     // `mobile` are catalog action ids, never route ids — the surfaces fold
@@ -44,11 +44,11 @@ describe('automaticStrategyTaskProfileForRouteId', () => {
     expect(automaticStrategyTaskProfileForProjectMetadata({
       kind: 'prototype',
       intent: 'marketing',
-    })).toBe('marketing');
+    })).toBeNull();
     expect(automaticStrategyTaskProfileForProjectMetadata({
       kind: 'video',
       intent: 'hyperframes',
-    })).toBe('hyperframes');
+    })).toBeNull();
 
     // A second-level scene refines WHAT to build, never WHETHER the parent's
     // automatic route applies: the Prototype task profile already branches on
@@ -154,7 +154,7 @@ describe('defaultScenarioPluginIdForKind', () => {
       .toBe('od-media-generation');
   });
 
-  it('limits automatic OD Next profiles to the four approved routes', () => {
+  it('limits automatic OD Next profiles to the two approved routes', () => {
     expect(defaultScenarioTaskProfileForProjectMetadata(
       { kind: 'prototype' },
       'od-new-generation',
@@ -166,11 +166,11 @@ describe('defaultScenarioPluginIdForKind', () => {
     expect(defaultScenarioTaskProfileForProjectMetadata(
       { kind: 'prototype', intent: 'marketing' },
       'od-new-generation',
-    )).toBe('marketing');
+    )).toBeNull();
     expect(defaultScenarioTaskProfileForProjectMetadata(
       { kind: 'video', intent: 'hyperframes' },
       'od-new-generation',
-    )).toBe('hyperframes');
+    )).toBeNull();
     expect(defaultScenarioTaskProfileForProjectMetadata(
       { kind: 'image' },
       'od-media-generation',

@@ -17,15 +17,11 @@ const REPO_ROOT = path.resolve(HERE, '../../../../..');
 const EXAMPLES_DIR = path.join(REPO_ROOT, 'plugins', '_official', 'examples');
 
 /**
- * The default example card of every task type OD Next routes. `marketing`
- * shares Prototype's card; Home has no chip for it, but the daemon does route
- * it, so it belongs in this table.
+ * The default example card of every task type OD Next routes.
  */
 const ROUTED_TASK_TYPES = [
   { taskType: 'prototype', folder: 'web-prototype', pluginId: 'example-web-prototype' },
   { taskType: 'ppt', folder: 'simple-deck', pluginId: 'example-simple-deck' },
-  { taskType: 'marketing', folder: 'web-prototype', pluginId: 'example-web-prototype' },
-  { taskType: 'hyperframes', folder: 'hyperframes', pluginId: 'example-hyperframes' },
 ] as const;
 
 const temporaryRoots: string[] = [];
@@ -90,7 +86,7 @@ describe('a mentioned Skill enters OD Next alongside whatever else the session p
     expect(bodies?.body).toContain('MENTIONED_BODY');
   });
 
-  // ACCEPTANCE for all four routed task types: the card the type binds and a
+  // ACCEPTANCE for all routed task types: the card the type binds and a
   // Skill the user @-mentioned reach the Agent together, in authority order.
   it.each(ROUTED_TASK_TYPES)(
     'carries a mentioned Skill ahead of the $taskType card in one package',

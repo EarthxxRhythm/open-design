@@ -65,7 +65,7 @@ describe('bundled OD Next strategy package identity', () => {
     expect(binding.selectedTaskProfile).toBeNull();
     if (binding.selectionMode !== 'agent-discovery') throw new Error('Expected discovery binding');
     expect(binding.availableTaskProfiles.map((profile) => profile.taskType).sort())
-      .toEqual(['hyperframes', 'marketing', 'ppt', 'prototype']);
+      .toEqual(['ppt', 'prototype']);
     expect(binding.assetDigests.map((asset) => asset.path)).toContain('./agent-discovery/SKILL.md');
     const assets = loadBundledStrategyPromptAssetsV2({ plugin, binding });
     expect(assets.taskSkill).toBe('');
@@ -77,7 +77,7 @@ describe('bundled OD Next strategy package identity', () => {
     const plugin = await resolveStrategyRecord();
     const prototype = createBundledStrategyBindingV2({ plugin, taskType: 'prototype' });
     const repeated = createBundledStrategyBindingV2({ plugin, taskType: 'prototype' });
-    const hyperframes = createBundledStrategyBindingV2({ plugin, taskType: 'hyperframes' });
+    const ppt = createBundledStrategyBindingV2({ plugin, taskType: 'ppt' });
 
     expect(repeated).toEqual(prototype);
     expect(prototype.assetDigests.map((asset) => asset.path)).toEqual([
@@ -93,11 +93,11 @@ describe('bundled OD Next strategy package identity', () => {
       './references/task-profile-mapping.md',
     ]);
     // Resources travel with the profile that declares them only.
-    expect(hyperframes.assetDigests.map((asset) => asset.path)).toEqual([
+    expect(ppt.assetDigests.map((asset) => asset.path)).toEqual([
       './SKILL.md',
       './assets/core-system-prompt.md',
       './assets/general-orchestration.md',
-      './assets/task-profiles/hyperframes.md',
+      './assets/task-profiles/ppt.md',
       './open-design.json',
       './references/task-profile-mapping.md',
     ]);
@@ -106,8 +106,8 @@ describe('bundled OD Next strategy package identity', () => {
       version: '2.2.0',
       path: './assets/task-profiles/prototype.md',
     }));
-    expect(hyperframes.packageHash).not.toBe(prototype.packageHash);
-    expect(hyperframes.selectedTaskProfile.sha256).not.toBe(
+    expect(ppt.packageHash).not.toBe(prototype.packageHash);
+    expect(ppt.selectedTaskProfile.sha256).not.toBe(
       prototype.selectedTaskProfile.sha256,
     );
   });
@@ -135,7 +135,7 @@ describe('bundled OD Next strategy package identity', () => {
     }
     expect(loadBundledStrategyPromptAssetsV2({
       plugin,
-      binding: createBundledStrategyBindingV2({ plugin, taskType: 'hyperframes' }),
+      binding: createBundledStrategyBindingV2({ plugin, taskType: 'ppt' }),
     }).taskResources).toEqual([]);
 
     // A shell edit moves the prototype package hash exactly like a rule-card
@@ -144,13 +144,13 @@ describe('bundled OD Next strategy package identity', () => {
     await cp(SOURCE, folder, { recursive: true });
     const copied = await resolveStrategyRecord(folder);
     const prototypeBaseline = createBundledStrategyBindingV2({ plugin: copied, taskType: 'prototype' });
-    const hyperframesBaseline = createBundledStrategyBindingV2({ plugin: copied, taskType: 'hyperframes' });
+    const pptBaseline = createBundledStrategyBindingV2({ plugin: copied, taskType: 'ppt' });
     const shellPath = path.join(folder, 'assets/task-profiles/prototype/device-frames/neutral.html');
     await writeFile(shellPath, `${await readFile(shellPath, 'utf8')}\n<!-- edited -->\n`);
     expect(createBundledStrategyBindingV2({ plugin: copied, taskType: 'prototype' }).packageHash)
       .not.toBe(prototypeBaseline.packageHash);
-    expect(createBundledStrategyBindingV2({ plugin: copied, taskType: 'hyperframes' }).packageHash)
-      .toBe(hyperframesBaseline.packageHash);
+    expect(createBundledStrategyBindingV2({ plugin: copied, taskType: 'ppt' }).packageHash)
+      .toBe(pptBaseline.packageHash);
     expect(() => loadBundledStrategyPromptAssetsV2({ plugin: copied, binding: prototypeBaseline }))
       .toThrow(/no longer matches/i);
   });

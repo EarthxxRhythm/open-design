@@ -194,8 +194,8 @@ it('exports a local observer snapshot without selecting or reading a task Skill'
   expect(result.body.enabled).toBe(true);
   expect(result.body.transportSchema).toBe('open-design.od-next-prompt-bundle/v2');
   expect(result.body.promptStrategy).toBe('od-next-plan-build-v2');
-  expect(result.body.catalog.candidates).toHaveLength(64);
-  expect(Object.keys(result.body.orchestrationDigests)).toHaveLength(64);
+  expect(result.body.catalog.candidates).toHaveLength(62);
+  expect(Object.keys(result.body.orchestrationDigests)).toHaveLength(62);
   expect(result.body.orchestrationDigests.prototype).toMatch(/^sha256:[0-9a-f]{64}$/);
   expect(result.body.catalogMarkdown).toContain(result.body.catalog.revision);
   expect(result.body.policyMarkdown).toContain('Agent-native Skill Discovery');

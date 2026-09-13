@@ -29,12 +29,12 @@ function syntheticPolicy() {
 }
 
 describe('OD Next controlled rollout', () => {
-  it('owns the four artifact types and internal generic once a mode is asked for, and none until then', () => {
+  it('owns the two artifact types and internal generic once a mode is asked for, and none until then', () => {
     const policy = readOdNextRolloutPolicy({ OD_NEXT_STRATEGY_ROLLOUT: 'active' });
     expect(policy).toMatchObject({
       requestedMode: 'active',
       requestedModeSource: 'env',
-      eligibleTaskTypes: ['prototype', 'ppt', 'marketing', 'hyperframes', 'generic'],
+      eligibleTaskTypes: ['prototype', 'ppt', 'generic'],
       productionActiveApproved: true,
       assignmentPercent: 100,
     });
@@ -51,10 +51,10 @@ describe('OD Next controlled rollout', () => {
       odNextTaskTypeForProjectScenarioBinding({ provenance: 'automatic_default', taskProfile: 'ppt' }),
       odNextTaskTypeForProjectScenarioBinding({ provenance: 'automatic_default', taskProfile: 'marketing' }),
       odNextTaskTypeForProjectScenarioBinding({ provenance: 'automatic_default', taskProfile: 'hyperframes' }),
-    ]).toEqual(['prototype', 'ppt', 'marketing', 'hyperframes']);
+    ]).toEqual(['prototype', 'ppt', null, null]);
     expect(odNextTaskTypeForProjectScenarioBinding({ provenance: 'explicit_user', taskProfile: 'prototype' })).toBeNull();
     expect(odNextTaskTypeForProjectScenarioBinding({ provenance: 'legacy_unknown', taskProfile: 'ppt' })).toBeNull();
-    for (const taskType of ['prototype', 'ppt', 'marketing', 'hyperframes'] as const) {
+    for (const taskType of ['prototype', 'ppt'] as const) {
       expect(evaluateOdNextRollout({
         policy,
         assignmentIdentity: `default:${taskType}`,
@@ -454,12 +454,12 @@ describe('OD Next controlled rollout', () => {
     ])).toBe('route_mode_drift');
   });
 
-  it('requires exact HyperFrames metadata and lets hard off dominate an observe latch', () => {
+  it('requires an exact task profile and lets hard off dominate an observe latch', () => {
     expect(odNextTaskTypeForProjectScenarioBinding({ provenance: 'automatic_default' })).toBeNull();
     expect(odNextTaskTypeForProjectScenarioBinding({
       provenance: 'automatic_default',
-      taskProfile: 'hyperframes',
-    })).toBe('hyperframes');
+      taskProfile: 'ppt',
+    })).toBe('ppt');
     expect(evaluateOdNextRollout({
       policy: { ...syntheticPolicy(), requestedMode: 'off' },
       assignmentIdentity: 'project:conversation',

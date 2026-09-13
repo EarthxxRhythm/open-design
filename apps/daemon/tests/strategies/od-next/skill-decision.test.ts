@@ -17,7 +17,7 @@ import { validateOdNextDirectEditDecision, validateOdNextSkillDecision } from '.
 import { strategyTaskCreateIdentityFixture, strategyTaskTurnText } from '../strategy-task-test-fixtures.js';
 
 const revision = `sha256:${'a'.repeat(64)}`;
-const types = ['prototype', 'ppt', 'marketing', 'hyperframes'] as const;
+const types = ['prototype', 'ppt'] as const;
 const profiles = types.map((taskType) => ({ taskType, version: '2.0.0',
   path: `./assets/task-profiles/${taskType}.md`, sha256: 'b'.repeat(64) }));
 const assets = profiles.map(({ path: assetPath, sha256 }) => ({ path: assetPath, sha256 }))

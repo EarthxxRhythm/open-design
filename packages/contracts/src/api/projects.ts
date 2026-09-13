@@ -52,9 +52,7 @@ export type ProjectScenarioBindingProvenance =
 
 export type ProjectScenarioTaskProfile =
   | 'prototype'
-  | 'ppt'
-  | 'marketing'
-  | 'hyperframes';
+  | 'ppt';
 
 /**
  * Client request for the first-turn Agent to select from Open Design's

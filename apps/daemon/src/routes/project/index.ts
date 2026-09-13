@@ -4010,8 +4010,6 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       const requestedAutomaticStrategyTaskProfile =
         req.body?.automaticStrategyTaskProfile === 'prototype'
         || req.body?.automaticStrategyTaskProfile === 'ppt'
-        || req.body?.automaticStrategyTaskProfile === 'marketing'
-        || req.body?.automaticStrategyTaskProfile === 'hyperframes'
           ? req.body.automaticStrategyTaskProfile
           : null;
       if (

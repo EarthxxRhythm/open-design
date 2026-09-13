@@ -8,8 +8,6 @@ import { automaticStrategyTaskProfileForProjectMetadata } from '@open-design/con
 const TASK_PROFILES = new Set<ProjectScenarioTaskProfile>([
   'prototype',
   'ppt',
-  'marketing',
-  'hyperframes',
 ]);
 
 export function createAutomaticProjectStrategyBinding(input: {

@@ -14,12 +14,12 @@ match the source commit byte-for-byte.
 | Presentation templates | 17 | `design-templates/` |
 | Document templates | 8 | `design-templates/` |
 | Image templates | 5 | `design-templates/` |
-| Primary task profiles | 4 | OD Next `assets/task-profiles/` |
+| Primary task profiles | 2 | OD Next `assets/task-profiles/` |
 | Shared V2 orchestration | 1 | OD Next `assets/general-orchestration.md` |
 
-The source commit adds **60**, not 65, template Skills. There are **64 selectable
-candidates**: 60 auxiliary templates plus `prototype`, `ppt`, `marketing`, and
-`hyperframes`. Counting the shared orchestration as content gives 65; it is
+The source commit adds **60**, not 65, template Skills. There are **62 selectable
+candidates**: 60 auxiliary templates plus `prototype` and `ppt`. Counting the
+shared orchestration as content gives 63; it is
 present in the V2 Bundle and returned with task-profile loads, and is not an independently selectable candidate.
 The Discovery bootstrap is also control instructions rather than a candidate.
 
@@ -50,7 +50,7 @@ See [the V2 Discovery contract](agent-native-skill-discovery-v2.md).
 1. Start the updated branch, create a fresh Design project from Home, leave
    task type/Skill/Plugin unselected, and send the unmodified evaluation query.
 2. Confirm the initial `open-design.od-next-prompt-bundle/v2` carries Core Strategy,
-   general orchestration, `discovery_skill`, this catalogue revision and 64 candidates.
+   general orchestration, `discovery_skill`, this catalogue revision and 62 candidates.
 3. Read `od tools skills status --json` in the run context, or inspect the
    conversation state and `skill_discovery_events` through read-only diagnostics.
 4. Observe the full logical task, including all physical continuations and later

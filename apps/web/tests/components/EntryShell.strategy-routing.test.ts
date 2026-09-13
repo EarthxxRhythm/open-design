@@ -40,8 +40,6 @@ describe('EntryShell automatic strategy routing', () => {
   it.each([
     ['prototype', { kind: 'prototype' as const }],
     ['ppt', { kind: 'deck' as const }],
-    ['marketing', { kind: 'prototype' as const, intent: 'marketing' as const }],
-    ['hyperframes', { kind: 'video' as const, intent: 'hyperframes' as const }],
   ] as const)('lets OD Next own the %s route without implicit plugin inputs', (taskProfile, metadata) => {
     expect(entryStrategyRoutingFields({
       automaticStrategyTaskProfile: taskProfile,
@@ -56,8 +54,6 @@ describe('EntryShell automatic strategy routing', () => {
   it.each([
     ['prototype', { kind: 'prototype' as const }],
     ['ppt', { kind: 'deck' as const }],
-    ['marketing', { kind: 'prototype' as const, intent: 'marketing' as const }],
-    ['hyperframes', { kind: 'video' as const, intent: 'hyperframes' as const }],
   ] as const)('carries an @-mentioned Skill onto the %s route', (taskProfile, metadata) => {
     // The daemon freezes it into `session_skills/user_selected_skills`; the
     // route is still the task type's, so nothing has to be dropped.

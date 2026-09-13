@@ -211,7 +211,7 @@ describe('official Skill Discovery catalog v1', () => {
     expect(discoverySkill).toContain('external side effect');
   });
 
-  it('exposes four basic task profiles and the sixty source-authored template Skills exactly once', async () => {
+  it('exposes two basic task profiles and the sixty source-authored template Skills exactly once', async () => {
     const bundledStrategyPlugin = await resolveStrategyRecord();
     const builtInFunctionalSkillsRoot = FUNCTIONAL_SKILLS_ROOT;
     const builtInDesignTemplatesRoot = DESIGN_TEMPLATES_ROOT;
@@ -252,7 +252,7 @@ describe('official Skill Discovery catalog v1', () => {
     expect(functionalCandidates.map((candidate) => candidate.id).sort()).toEqual(
       officialIdentity.ids,
     );
-    expect(catalog.candidates).toHaveLength(officialIdentity.ids.length + 4);
+    expect(catalog.candidates).toHaveLength(officialIdentity.ids.length + 2);
     expect(catalogMarkdown).toContain('# Official Skill metadata catalog');
     expect(catalogMarkdown).toContain(`- Catalog revision: \`${catalog.revision}\``);
     expect(catalogMarkdown).toContain(`- Candidate count: ${catalog.candidates.length}`);
@@ -268,13 +268,11 @@ describe('official Skill Discovery catalog v1', () => {
         avoidWhen: string[];
       });
     expect(promptRecords).toHaveLength(catalog.candidates.length);
-    expect(promptRecords.slice(0, 4).map((candidate) => candidate.id)).toEqual([
-      'hyperframes',
-      'marketing',
+    expect(promptRecords.slice(0, 2).map((candidate) => candidate.id)).toEqual([
       'ppt',
       'prototype',
     ]);
-    expect(promptRecords.slice(0, 4).every((candidate) => candidate.role === 'primary')).toBe(true);
+    expect(promptRecords.slice(0, 2).every((candidate) => candidate.role === 'primary')).toBe(true);
     expect(promptRecords.every((candidate) => candidate.allowedRoles.length >= 1)).toBe(true);
     expect(promptRecords.every((candidate) => candidate.allowedRoles.length <= 2)).toBe(true);
     expect(promptRecords.every((candidate) => candidate.useWhen.length <= 2)).toBe(true);
@@ -312,8 +310,6 @@ describe('official Skill Discovery catalog v1', () => {
       allowedRoles: ['primary', 'auxiliary'],
     });
     expect(taskProfileCandidates.map((candidate) => candidate.id).sort()).toEqual([
-      'hyperframes',
-      'marketing',
       'ppt',
       'prototype',
     ]);

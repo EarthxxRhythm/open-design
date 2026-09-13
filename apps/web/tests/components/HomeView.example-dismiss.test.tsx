@@ -301,10 +301,10 @@ const DISMISS_CASES: DismissCase[] = [
     name: 'HyperFrames (no second-level rail)',
     chipId: 'hyperframes',
     cardId: 'example-frame-glitch-title',
-    automaticStrategyTaskProfile: 'hyperframes',
+    automaticStrategyTaskProfile: null,
     projectKind: 'video',
     projectMetadata: { kind: 'video', intent: 'hyperframes', videoModel: 'hyperframes-html' },
-    pluginId: null,
+    pluginId: 'od-new-generation',
   },
   {
     // Task types with no automatic route still have a task type to return to:

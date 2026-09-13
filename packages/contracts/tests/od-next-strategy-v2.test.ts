@@ -132,8 +132,8 @@ function planContract(fullPlan = simplePlan()) {
 }
 
 describe('OD Next V2 bundled declaration and applied identity', () => {
-  it('binds an unselected Discovery task to all four immutable profiles, not a made-up generic Skill', () => {
-    const profiles = ['hyperframes', 'marketing', 'ppt', 'prototype'].map((taskType) => ({
+  it('binds an unselected Discovery task to all immutable profiles, not a made-up generic Skill', () => {
+    const profiles = ['ppt', 'prototype'].map((taskType) => ({
       taskType, version: '2.0.0', path: `./profiles/${taskType}.md`, sha256: hash,
     }));
     const binding = {
@@ -183,8 +183,6 @@ describe('OD Next V2 bundled declaration and applied identity', () => {
             taskProfiles: [
               { taskType: 'prototype', path: './profiles/prototype.md', version: '2', rollout: 'active', projectKinds: ['prototype'] },
               { taskType: 'ppt', path: './profiles/ppt.md', version: '2', rollout: 'reserved', projectKinds: ['deck'] },
-              { taskType: 'marketing', path: './profiles/marketing.md', version: '2', rollout: 'reserved', projectKinds: ['image'] },
-              { taskType: 'hyperframes', path: './profiles/hyperframes.md', version: '2', rollout: 'active', projectKinds: ['video'] },
             ],
             taskProfileMapping: { path: './references/mapping.md', version: '2' },
           },
@@ -532,8 +530,6 @@ describe('task profile resources', () => {
       taskProfiles: [
         { taskType: 'prototype', path: './profiles/prototype.md', version: '2.1.0', rollout: 'active', projectKinds: ['prototype'], resources },
         { taskType: 'ppt', path: './profiles/ppt.md', version: '2', rollout: 'reserved', projectKinds: ['deck'] },
-        { taskType: 'marketing', path: './profiles/marketing.md', version: '2', rollout: 'reserved', projectKinds: ['image'] },
-        { taskType: 'hyperframes', path: './profiles/hyperframes.md', version: '2', rollout: 'active', projectKinds: ['video'] },
       ],
       taskProfileMapping: { path: './references/mapping.md', version: '2' },
     },

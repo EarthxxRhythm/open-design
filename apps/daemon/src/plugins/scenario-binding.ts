@@ -48,8 +48,6 @@ export function isProjectScenarioBinding(value: unknown): value is ProjectScenar
       binding.taskProfile === undefined
       || binding.taskProfile === 'prototype'
       || binding.taskProfile === 'ppt'
-      || binding.taskProfile === 'marketing'
-      || binding.taskProfile === 'hyperframes'
     );
 }
 

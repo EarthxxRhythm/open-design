@@ -176,7 +176,7 @@ describe('legacyPrototypeSceneForChipId', () => {
       .filter((chip) => automaticStrategyTaskProfileForRouteId(chip.id) !== null)
       .map((chip) => chip.id)
       .sort();
-    expect(routed).toEqual(['deck', 'hyperframes', 'prototype']);
+    expect(routed).toEqual(['deck', 'prototype']);
     // And a second-level scene has no id of its own to route by, so it can
     // neither claim a route nor strand its parent's.
     for (const scene of subChipsForChip('prototype', [])) {

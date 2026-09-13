@@ -198,7 +198,7 @@ describe('OD Next automatic production through the real server', () => {
     expect(bundle.sessionSkills.taskTypeSkill).toBeUndefined();
     expect(bundle.sessionSkills.discoverySkill?.body).toContain('Agent-native Skill Discovery');
     expect(bundle.sessionSkills.discoverySkill?.body).toContain('prototype');
-    expect(bundle.sessionSkills.discoverySkill?.body).toContain('hyperframes');
+    expect(bundle.sessionSkills.discoverySkill?.body).toContain('ppt');
     expect(getStrategyTaskExecution(database(), terminal.strategyTask!.taskExecutionId)?.planContract).toBeUndefined();
   }, 60_000);
 
@@ -268,7 +268,7 @@ describe('OD Next automatic production through the real server', () => {
     const calls = await readProjectInvocations(fixture.logPath, fixture.projectId);
     expect(calls).toHaveLength(1);
     expect(calls[0]!.stdin).toContain('Agent-native Skill Discovery');
-    expect(calls[0]!.stdin).toContain('Candidate count: 64');
+    expect(calls[0]!.stdin).toContain('Candidate count: 62');
     expect(calls[0]!.stdin).not.toContain('<open_design_prompt_bundle');
     expect(calls[0]!.stdin).toContain(mode === 'chat'
       ? 'Keep this turn conversational' : 'do NOT create the final design artifact first');
@@ -788,7 +788,7 @@ describe('OD Next automatic production through the real server', () => {
     }
   });
 
-  it('routes the four approved automatic profiles while ordinary Image remains media-only', async () => {
+  it('routes the two approved automatic profiles while ordinary Image remains media-only', async () => {
     const fixture = await createPublicRolloutFixture('approved-profiles', 'design');
     started = fixture.started;
     binDir = fixture.binDir;
@@ -815,23 +815,6 @@ describe('OD Next automatic production through the real server', () => {
         taskProfile: 'ppt',
         pluginId: 'example-simple-deck',
       },
-      {
-        ...(await createProjectForScenario(started.url, 'approved-marketing', {
-          kind: 'prototype',
-          intent: 'marketing',
-        }, undefined, 'marketing')),
-        taskProfile: 'marketing',
-        pluginId: 'example-web-prototype',
-      },
-      {
-        ...(await createProjectForScenario(started.url, 'approved-hyperframes', {
-          kind: 'video',
-          intent: 'hyperframes',
-          videoModel: 'hyperframes-html',
-        }, undefined, 'hyperframes')),
-        taskProfile: 'hyperframes',
-        pluginId: 'example-hyperframes',
-      },
     ];
     for (const candidate of approved) {
       expect(candidate.metadata?.strategyBinding).toMatchObject({
@@ -854,7 +837,7 @@ describe('OD Next automatic production through the real server', () => {
             strategyBinding: {
               schemaVersion: 1,
               provenance: 'automatic_default',
-              taskProfile: 'marketing',
+              taskProfile: 'ppt',
               boundAt: Date.now(),
             },
           },

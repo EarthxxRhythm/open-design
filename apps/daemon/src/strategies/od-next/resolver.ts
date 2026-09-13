@@ -279,16 +279,12 @@ export interface OdNextExecutionPreflightInput {
 const DAEMON_OWNED_PRODUCTION_ROUTES = {
   prototype: new Set(['html', 'prototype-html']),
   ppt: new Set(['ppt-html', 'html', 'deck-html']),
-  marketing: new Set(['marketing-html', 'html', 'image-html']),
-  hyperframes: new Set(['hyperframes-html', 'html']),
   generic: new Set(['html', 'file', 'image', 'document', 'source']),
 } as const;
 
 const DAEMON_OWNED_OUTPUT_KINDS = {
   prototype: new Set(['prototype', 'html', 'source']),
   ppt: new Set(['presentation', 'ppt', 'deck', 'html', 'source']),
-  marketing: new Set(['image', 'marketing', 'html', 'source']),
-  hyperframes: new Set(['video', 'hyperframes', 'html', 'source', 'rendered-video']),
   generic: new Set(['html', 'image', 'document', 'pdf', 'text', 'markdown', 'source']),
 } as const;
 
