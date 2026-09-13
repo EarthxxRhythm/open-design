@@ -3641,7 +3641,7 @@ test.each(['codex', 'none'] as const)('AMR %s preserves provider cache and reaso
   });
 });
 
-test.each(['none', 'claude'] as const)('AMR %s buffered model progress requires verified identity and growing content bytes without exposing text', (runtime) => {
+test.each(['none', 'claude', 'codex'] as const)('AMR %s buffered model progress requires verified identity and growing content bytes without exposing text', (runtime) => {
   const child = new FakeAcpChild();
   const progress: number[] = [];
   const events: Array<{ event: string; data: unknown }> = [];

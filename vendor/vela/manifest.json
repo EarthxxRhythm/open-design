@@ -1,7 +1,7 @@
 {
-  "distributionVersion": "0.0.1-test.stream-diagnostics.g3139660",
-  "velaBinaryVersion": "0.0.1-test.stream-diagnostics.g3139660",
-  "velaSourceCommit": "313966021b9fe7d63df40da3fd401e83ec3a2358",
+  "distributionVersion": "0.0.1-test.codex-progress.gc1743f6",
+  "velaBinaryVersion": "0.0.1-test.codex-progress.gc1743f6",
+  "velaSourceCommit": "c1743f6209b40bab66becd62123f8e2294ab0489",
   "openDesignBaselineCommit": "228fa6368e43260dc5dabb7a61202750eaa5349f",
   "platforms": [
     "darwin-arm64"
@@ -20,7 +20,7 @@
     "codex": "0.154.0",
     "claude": "2.1.267",
     "dsh": "0.1.5-rc.1",
-    "none": "0.0.1-test.stream-diagnostics.g3139660"
+    "none": "0.0.1-test.codex-progress.gc1743f6"
   },
   "openCodeSourceCommit": "92ba6a3b82b575cdf1c90f811935ebb6fe256d4a",
   "openCodeBinarySHA256": "b7aeb12c9e8c46a1a97fb33d5b28cee2b0f26f9cc460dd1eb70d17cc7a2cac14",
@@ -28,14 +28,14 @@
   "npmPublished": false,
   "artifacts": [
     {
-      "file": "powerformer-vela-cli-0.0.1-test.stream-diagnostics.g3139660.tgz",
-      "bytes": 9319,
-      "sha256": "47bd90d1493fcd4c1d79e8984333dac2f989f58777d33733f3336192f4a10c8f"
+      "file": "powerformer-vela-cli-0.0.1-test.codex-progress.gc1743f6.tgz",
+      "bytes": 9312,
+      "sha256": "4b5bf183c9097d8103c633ead7b7336cf1889d43757a651466dea1ed21202007"
     },
     {
-      "file": "powerformer-vela-cli-darwin-arm64-0.0.1-test.stream-diagnostics.g3139660.tgz",
-      "bytes": 47917619,
-      "sha256": "0eb5e844baee16a9ed642d820855ce43d91bbadb079b6fe0c0cbfd5e975feeb1"
+      "file": "powerformer-vela-cli-darwin-arm64-0.0.1-test.codex-progress.gc1743f6.tgz",
+      "bytes": 47919119,
+      "sha256": "51cf67fd91a307c5de62997b1425e4589940126f01ae12ddb09565b7bb6e2570"
     }
   ]
 }

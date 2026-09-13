@@ -1058,7 +1058,7 @@ export function attachAcpSession({
     if (obj.method === 'session/update' && update) {
       if (update.sessionUpdate === 'amr_model_output_progress') {
         const progressModel = typeof update.modelId === 'string' ? update.modelId.replace(/^amr\//, '') : '';
-        if ((expectedAmrRuntime === 'none' || expectedAmrRuntime === 'claude')
+        if ((expectedAmrRuntime === 'none' || expectedAmrRuntime === 'claude' || expectedAmrRuntime === 'codex')
           && amrRuntimeEvidence?.actualRuntime === expectedAmrRuntime
           && params?.sessionId === sessionId && sessionId !== null && promptRequestId !== null
           && update.runtime === expectedAmrRuntime && progressModel !== ''
