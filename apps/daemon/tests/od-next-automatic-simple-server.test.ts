@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Agent, fetch as undiciFetch } from 'undici';
 import type {
   AppliedStrategyBindingV2,
   OdNextRuntimeCapabilitySnapshotV1,
@@ -16,6 +17,7 @@ import {
   normalizeAgentObservationV1,
   OD_NEXT_PROMPT_STAGE_CONTRACT_V2,
   parseOdNextPromptBundleV2,
+  parseOdNextIntentResolutionTurnV1,
 } from '@open-design/contracts';
 
 const uuidControl = vi.hoisted(() => ({ forced: [] as string[] }));
@@ -57,6 +59,16 @@ type StartedServer = {
   server: Server;
   shutdown?: () => Promise<void> | void;
 };
+
+// Each fixture owns its HTTP transport; daemon-internal fetch remains untouched.
+const fixtureHttpClients = new Map<string, { owner: StartedServer; dispatcher: Agent }>();
+const fixtureShutdowns = new WeakMap<StartedServer, Promise<void>>();
+function fetch(input: Parameters<typeof undiciFetch>[0], init?: Parameters<typeof undiciFetch>[1]) {
+  const origin = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url).origin;
+  const client = fixtureHttpClients.get(origin);
+  if (!client) throw new Error(`No fixture HTTP client owns ${origin}`);
+  return undiciFetch(input, { ...init, dispatcher: client.dispatcher });
+}
 
 type RunStatus = {
   id: string;
@@ -168,6 +180,75 @@ describe('OD Next automatic production through the real server', () => {
     binDir = null;
   });
 
+  it.each(['intent-question', 'intent-request', 'intent-first-write', 'intent-fail'] as const)(
+    'OPEND-2623 real server: %s uses one native intent supplement and retains source ownership',
+    async (mode) => {
+      const productionPreflight = vi.fn(() => EXECUTION_PREFLIGHT);
+      const fixture = await createFixture(mode, { preflightResolver: productionPreflight });
+      const request = 'Ask the required questions first. Do not create or modify files. INTENT_SERVER_2623';
+      queueFixtureIds(fixture);
+      await postRun(started!.url, createRunRequest(fixture, request));
+      const hasQuestion = mode !== 'intent-request';
+      if (hasQuestion) {
+        const awaiting = await waitForTask(fixture.taskExecutionId, 'clarification_required');
+        expect(awaiting.executionIntent).toBeUndefined();
+        expect(awaiting.runs).toHaveLength(1);
+        await waitForRunTerminal(started!.url, awaiting.latestRunId);
+        const answer = '[form answers — intent-2623]\n- Audience: Investors\n- Constraints: Keep the original no-write request';
+        const response = await fetch(`${started!.url}/api/chat`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ ...createRunRequest(fixture, answer),
+            taskExecutionId: fixture.taskExecutionId,
+            userMessageId: `answer-user-${fixture.projectId}`,
+            assistantMessageId: `answer-assistant-${fixture.projectId}`,
+            clientRequestId: `answer-client-${fixture.projectId}` }),
+        });
+        const responseText = await response.text();
+        expect(response.status, responseText).toBe(200);
+        expect(response.headers.get('content-type')).toContain('text/event-stream');
+        expect(responseText).toContain('event: end');
+      }
+      const blocked = mode === 'intent-first-write' || mode === 'intent-fail';
+      const task = await waitForTask(fixture.taskExecutionId, blocked ? 'blocked' : 'completed');
+      for (const mapping of task.runs) await waitForRunTerminal(started!.url, mapping.runId);
+      const calls = await readProjectInvocations(fixture.logPath, fixture.projectId);
+      expect(calls).toHaveLength(hasQuestion ? 3 : 2);
+      expect(calls.filter(call => call.stdin.includes('native continuation — production'))).toHaveLength(0);
+      expect(task.runs.some(run => ['production', 'contract_repair'].includes(run.inputStage))).toBe(false);
+      expect(productionPreflight).not.toHaveBeenCalled();
+      const supplements = task.runs.filter(run => run.purpose === 'intent_resolution');
+      expect(supplements).toHaveLength(1);
+      const supplement = supplements[0]!;
+      const sent = calls.at(-1)!;
+      expect(sent.argv).toContain('resume');
+      expect(sent.argv).toContain(THREAD_ID);
+      const turn = parseOdNextIntentResolutionTurnV1(sent.stdin);
+      expect(turn.stage).toBe(hasQuestion ? 'clarification' : 'request');
+      expect(turn.taskExecutionId).toBe(task.taskExecutionId);
+      expect(turn.sourceRunId).toBe(task.runs.at(-2)!.runId);
+      expect(turn.payload).toContain(request);
+      expect(sent.stdin).toBe(supplement.finalText.text);
+      expect(task.intentResolution?.attempts).toBe(1);
+      if (mode === 'intent-first-write') {
+        expect(task.blockedContext?.reasonCodes).toContain('od_next_planning_files_changed');
+        expect(await readFile(path.join(calls[0]!.cwd, 'intent-draft.txt'), 'utf8')).toBe('Observed first-turn write.');
+        const evidence = database().prepare(
+          'SELECT run_id, files_written FROM strategy_task_run_write_evidence WHERE task_execution_id = ?',
+        ).all(task.taskExecutionId) as Array<{ run_id: string; files_written: number }>;
+        expect(evidence.find(row => row.run_id === task.initialRunId)?.files_written).toBeGreaterThan(0);
+        expect(evidence.filter(row => row.run_id !== task.initialRunId).every(row => row.files_written === 0)).toBe(true);
+      }
+      if (!blocked) {
+        expect(task.executionIntent).toBe('plan_only');
+        const historyResponse = await fetch(`${started!.url}/api/projects/${fixture.projectId}/conversations/${fixture.conversationId}/messages`);
+        expect(historyResponse.status).toBe(200);
+        const history = JSON.stringify(await historyResponse.json());
+        expect(history).toContain('INTENT_SOURCE_ANSWER_2623');
+        expect(history).not.toContain('open-design-runtime-state');
+      }
+    },
+  );
+
   it('keeps off/observe public POST behavior ordinary and idempotent with zero strategy tasks', async () => {
     const fixture = await createPublicRolloutFixture('inert');
     started = fixture.started;
@@ -197,7 +278,7 @@ describe('OD Next automatic production through the real server', () => {
     const replayed = await postRun(started!.url, body);
     expect(replayed).toMatchObject({ runId: created.runId, reused: true });
     expect(replayed.strategyTask).toBeUndefined();
-    expect((database().prepare('SELECT COUNT(*) AS count FROM strategy_task_executions').get() as { count: number }).count)
+    expect((database().prepare('SELECT COUNT(*) AS count FROM strategy_task_executions WHERE project_id = ?').get(fixture.projectId) as { count: number }).count)
       .toBe(0);
     const invocations = await readProjectInvocations(fixture.logPath, fixture.projectId);
     expect(invocations).toHaveLength(1);
@@ -1488,9 +1569,12 @@ describe('OD Next automatic production through the real server', () => {
     ]);
     const invocationCount = (await readProjectInvocations(fixture.logPath, fixture.projectId)).length;
 
-    database().prepare(
-      'DELETE FROM strategy_task_runs WHERE task_execution_id = ?',
-    ).run(deleted.taskExecutionId);
+    // Deliberately corrupt this task's mapping after removing its new evidence
+    // children. The test still exercises the real missing-mapping rejection.
+    database().transaction(() => {
+      database().prepare('DELETE FROM strategy_task_run_write_evidence WHERE task_execution_id = ?').run(deleted.taskExecutionId);
+      database().prepare('DELETE FROM strategy_task_runs WHERE task_execution_id = ?').run(deleted.taskExecutionId);
+    }).immediate();
     database().prepare(
       `UPDATE strategy_task_runs
           SET final_text = NULL, final_text_utf8_bytes = NULL, final_text_sha256 = NULL
@@ -2486,18 +2570,20 @@ describe('OD Next automatic production through the real server', () => {
   });
 
   async function createFixture(
-    mode: 'repair' | 'direct' | 'complex',
+    mode: 'repair' | 'direct' | 'complex' | IntentServerMode,
     {
       selectedAgentId = 'codex',
       capability,
+      preflightResolver,
     }: {
       selectedAgentId?: string;
       capability?: OdNextRuntimeCapabilitySnapshotV1;
+      preflightResolver?: NonNullable<StartServerOptions['odNextExecutionPreflightResolver']>;
     } = {},
   ) {
     const suffix = `${mode}-${Date.now()}-${++sequence}`;
     if (mode !== 'direct') {
-      const publicFixture = await createPublicRolloutFixture(`chain-${suffix}`, 'design');
+      const publicFixture = await createPublicRolloutFixture(`chain-${suffix}`, 'design', undefined, 'codex-cli 0.147.0', preflightResolver);
       started = publicFixture.started;
       binDir = publicFixture.binDir;
       process.env.OD_NEXT_STRATEGY_ROLLOUT = 'active';
@@ -2510,7 +2596,7 @@ describe('OD Next automatic production through the real server', () => {
         .toString(16)
         .padStart(12, '0')}`;
       const taskExecutionId = `odnext_${taskOwnerUuid.replaceAll('-', '')}`;
-      const plan = planContract(template.snapshotId, template.strategy, mode, capability);
+      const plan = planContract(template.snapshotId, template.strategy, mode.startsWith('intent-') ? 'repair' : mode as 'repair' | 'complex', capability);
       const { bin, logPath } = selectedAgentId === 'claude'
         ? await writeStrategyClaude(binDir, plan)
         : await writeStrategyCodex(binDir, mode, plan);
@@ -2605,7 +2691,7 @@ describe('OD Next automatic production through the real server', () => {
       process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY = '1';
     }
 
-    const plan = planContract(snapshot.snapshotId, snapshot.strategy!, mode, capability);
+    const plan = planContract(snapshot.snapshotId, snapshot.strategy!, mode as 'repair' | 'direct' | 'complex', capability);
     const { bin, logPath } = selectedAgentId === 'claude'
       ? await writeStrategyClaude(binDir, plan)
       : await writeStrategyCodex(binDir, mode, plan);
@@ -2643,6 +2729,7 @@ async function createPublicRolloutFixture(
   conversationMode: 'design' | 'chat' | 'plan' = 'chat',
   pluginId?: string,
   agentCliVersion = 'codex-cli 0.147.0',
+  preflightResolver?: NonNullable<StartServerOptions['odNextExecutionPreflightResolver']>,
 ) {
   const suffix = `${label}-${Date.now()}`;
   const binDir = await mkdtemp(path.join(os.tmpdir(), `od-next-public-${label}-`));
@@ -2651,7 +2738,7 @@ async function createPublicRolloutFixture(
     label,
     agentCliVersion,
   );
-  const started = await startDaemon();
+  const started = await startDaemon(preflightResolver);
   const projectId = `od-next-public-${suffix}`;
   const projectResponse = await fetch(`${started.url}/api/projects`, {
     method: 'POST',
@@ -2847,17 +2934,35 @@ async function startDaemon(
     () => EXECUTION_PREFLIGHT,
   complexResolver: StartServerOptions['odNextComplexProductionResolver'] = null,
 ): Promise<StartedServer> {
-  return await startServer({
+  const started = await startServer({
     port: 0,
     returnServer: true,
     odNextExecutionPreflightResolver: resolver,
     odNextComplexProductionResolver: complexResolver,
   }) as StartedServer;
+  fixtureHttpClients.set(new URL(started.url).origin, { owner: started, dispatcher: new Agent() });
+  return started;
 }
 
-async function stopServer(server: StartedServer | null): Promise<void> {
-  if (!server) return;
+function stopServer(server: StartedServer | null): Promise<void> {
+  if (!server) return Promise.resolve();
+  const existing = fixtureShutdowns.get(server);
+  if (existing) return existing;
+  const pending = stopOwnedServer(server);
+  fixtureShutdowns.set(server, pending);
+  return pending;
+}
+
+async function stopOwnedServer(server: StartedServer): Promise<void> {
   await Promise.resolve(server.shutdown?.());
+  const origin = new URL(server.url).origin;
+  const client = fixtureHttpClients.get(origin);
+  if (client?.owner === server) {
+    fixtureHttpClients.delete(origin);
+    // Runs have settled first. Release only this fixture's keep-alive clients,
+    // including a connection whose idle transition races server.close().
+    await client.dispatcher.destroy();
+  }
   if (server.server.listening) {
     await new Promise<void>((resolve) => server.server.close(() => resolve()));
   }
@@ -3019,6 +3124,7 @@ function runtimeState(input: {
     route: input.route ?? 'full_plan',
     inputStage: input.inputStage ?? 'request',
     outcome: input.outcome,
+    executionIntent: 'produce',
     executionMode: input.executionMode ?? 'simple',
     reasonCodes: [],
   };
@@ -3029,9 +3135,11 @@ function machineBlock(tag: string, value: unknown, fenced = false): string {
   return `<${tag}>\n${fenced ? `\`\`\`json\n${json}\n\`\`\`` : json}\n</${tag}>`;
 }
 
+type IntentServerMode = 'intent-question' | 'intent-request' | 'intent-first-write' | 'intent-fail';
+
 async function writeStrategyCodex(
   dir: string,
-  mode: 'repair' | 'direct' | 'complex',
+  mode: 'repair' | 'direct' | 'complex' | IntentServerMode,
   plan: OpenDesignPlanContractV2,
 ): Promise<{ bin: string; logPath: string }> {
   const bin = path.join(dir, `codex-${mode}`);
@@ -3067,6 +3175,15 @@ async function writeStrategyCodex(
     inputStage: 'production', outcome: 'completed', executionMode: 'complex',
   }));
 
+  const questionText = '<question-form id="intent-2623">{"questions":[{"id":"audience","type":"text","label":"Audience?","required":true}]}</question-form>';
+  const missingIntentPlan = (stage: 'request' | 'clarification') => [
+    'INTENT_SOURCE_ANSWER_2623: The requested plan is available in this response.',
+    machineBlock('open-design-plan-contract', plan),
+    machineBlock('open-design-runtime-state', {
+      schema: 'open-design.strategy-state/v2', route: 'full_plan', inputStage: stage,
+      outcome: 'plan_ready', executionMode: 'simple', reasonCodes: [],
+    }),
+  ].join('\n');
   await writeFile(bin, `#!/usr/bin/env node
 const fs = require('node:fs');
 const path = require('node:path');
@@ -3099,7 +3216,26 @@ function finish() {
     process.exit(2);
   }
   let text;
-  if (fs.existsSync(logPath + '.linked-page')) {
+  if (mode.startsWith('intent-')) {
+    if (stdin.startsWith('<open_design_intent_resolution_turn ')) {
+      if (mode === 'intent-fail') { process.stderr.write('fixture intent supplement exited\\n'); process.exit(2); }
+      const stage = / stage="(request|clarification)"/.exec(stdin)?.[1];
+      if (!argv.includes('resume') || !stage) process.exit(9);
+      text = '<open-design-runtime-state>\\n' + JSON.stringify({
+        schema: 'open-design.strategy-state/v2', route: 'full_plan', inputStage: stage,
+        outcome: 'completed', executionMode: 'simple', executionIntent: 'plan_only', reasonCodes: [],
+      }) + '\\n</open-design-runtime-state>';
+    } else if (stdin.includes('native continuation — clarification')) {
+      text = ${JSON.stringify(missingIntentPlan('clarification'))};
+    } else if (!argv.includes('resume') && stdin.includes('INTENT_SERVER_2623')) {
+      text = mode === 'intent-request' ? ${JSON.stringify(missingIntentPlan('request'))} : ${JSON.stringify(questionText)};
+      if (mode === 'intent-first-write') {
+        const target = path.join(process.cwd(), 'intent-draft.txt');
+        fs.writeFileSync(target, 'Observed first-turn write.');
+        console.log(JSON.stringify({ type: 'item.completed', item: { id: 'first-write', type: 'file_change', changes: [{ path: target, kind: 'add' }], status: 'completed' } }));
+      }
+    } else { process.stderr.write('Unexpected intent fixture invocation\\n'); process.exit(9); }
+  } else if (fs.existsSync(logPath + '.linked-page')) {
     const childFile = fs.readFileSync(logPath + '.linked-page', 'utf8');
     const edited = fs.existsSync(logPath + '.linked-page-edit');
     if (edited || !fs.existsSync(path.join(process.cwd(), childFile))) {
