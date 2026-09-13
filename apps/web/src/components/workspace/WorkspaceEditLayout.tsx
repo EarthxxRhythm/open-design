@@ -16,8 +16,8 @@ interface EditDock {
 
 const EditDockContext = createContext<EditDock | null>(null);
 
-/** Only the visible viewer can occupy the project inspector; retained viewers
- * keep their edit state without leaving a panel in another file's workspace. */
+/** Only the visible viewer can occupy the shared comment/edit inspector;
+ * retained viewers keep their state without leaving a panel in another file's workspace. */
 export function useWorkspaceEditDock(owner: string, visible: boolean) {
   const dock = useContext(EditDockContext);
   const claim = dock?.claim;
@@ -87,7 +87,7 @@ export function WorkspaceEditLayout({ children }: { children: ReactNode }) {
         <div
           className={styles.divider}
           role="separator"
-          aria-label={t('manualEdit.resizePanel')}
+          aria-label={t('workspace.resizePanel')}
           aria-orientation="vertical"
           aria-valuemin={minWidth}
           aria-valuemax={maxWidth}

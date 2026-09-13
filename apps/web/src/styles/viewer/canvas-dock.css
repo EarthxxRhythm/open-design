@@ -1,7 +1,7 @@
 /* -------- Floating preview dock ---------------------------------------
    Ported from the canvas-edit branch (`viewer/canvas.css`): the preview's
-   authoring controls leave the toolbar row and float over the artboard as one
-   pill. Edit and Present each reveal their own set of actions. */
+   authoring controls leave the toolbar row and float over the artboard.
+   Edit and Present each reveal their own set of actions. */
 
 /* The dock is the only absolutely-positioned child the viewer root owns, and
    `:has` keeps the containing block scoped to viewers that actually have one —
@@ -21,8 +21,8 @@
   pointer-events: none;
 }
 .canvas-dock-inner {
-  --canvas-dock-control: var(--bg-fill-tertiary);
-  --canvas-dock-control-hover: var(--bg-fill-secondary);
+  --canvas-dock-control: transparent;
+  --canvas-dock-control-hover: #292929;
   --canvas-dock-gap: var(--spacing-8, 8px);
   /* Match the reference's soft spring without an SVG filter over the entire
      dock. Older browsers keep the ease-out fallback. */
@@ -35,17 +35,11 @@
   gap: var(--canvas-dock-gap);
   max-width: calc(100% - 32px);
   padding: 6px;
-  border: var(--stroke-thin) solid color-mix(in srgb, var(--border) 72%, transparent);
+  border: 0;
   border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--glass-regular, var(--bg-panel)) 96%, transparent);
-  -webkit-backdrop-filter: blur(var(--glass-regular-blur, 28px));
-  backdrop-filter: blur(var(--glass-regular-blur, 28px));
-  /* Soft white bezel around a recessed row of controls. The outer spread
-     supplies the rim without widening the dock's hit box or layout. */
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--bg-panel) 92%, transparent),
-    0 0 0 4px color-mix(in srgb, var(--bg-panel) 52%, transparent),
-    var(--shadow-lg);
+  background: #212121;
+  color: #fff;
+  box-shadow: none;
   pointer-events: auto;
   overflow-x: auto;
   scrollbar-width: none;
@@ -116,7 +110,7 @@
 .canvas-dock-collapsible-inner > :nth-child(2) { --canvas-dock-delay: 180ms; }
 .canvas-dock-collapsible-inner > :nth-child(3) { --canvas-dock-delay: 140ms; }
 .canvas-dock-collapsible-inner > :nth-child(5) { --canvas-dock-delay: 100ms; }
-.canvas-dock-zoom { --canvas-dock-delay: 60ms; }
+.canvas-dock-zoom { --canvas-dock-delay: 260ms; }
 .canvas-dock-present-tools .canvas-dock-collapsible-inner > :nth-child(1) { --canvas-dock-delay: 180ms; }
 .canvas-dock-present-tools .canvas-dock-collapsible-inner > :nth-child(2) { --canvas-dock-delay: 140ms; }
 .canvas-dock-present-tools .canvas-dock-collapsible-inner > :nth-child(3) { --canvas-dock-delay: 100ms; }
@@ -191,17 +185,17 @@
   display: none;
 }
 
-/* Round, dark-on-active dock buttons rather than the flat toolbar ones. */
+/* White controls on a single black dock surface. */
 .canvas-dock .viewer-action {
   flex: none;
   border-radius: var(--radius-pill);
   background: var(--canvas-dock-control);
-  color: var(--text);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--bg-panel) 72%, transparent);
+  color: #fff;
+  box-shadow: none;
 }
 .canvas-dock .viewer-action:hover:not(:disabled) {
   background: var(--canvas-dock-control-hover);
-  color: var(--text-strong);
+  color: #fff;
 }
 .canvas-dock .viewer-action-icon {
   width: 38px;
@@ -212,17 +206,18 @@
 }
 .canvas-dock .viewer-action.active,
 .canvas-dock .viewer-action.active:hover {
-  background: var(--text-strong);
-  color: var(--bg);
+  background: #fff;
+  color: #000;
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--bg-panel) 16%, transparent),
     var(--shadow-sm);
 }
 .canvas-dock .zoom-trigger {
-  min-width: 68px;
+  min-width: 38px;
+  width: 38px;
   height: 38px;
   justify-content: center;
-  padding: 0 14px;
+  padding: 0;
   font-size: 14px;
 }
 .canvas-dock .viewer-comment-count-trigger {
@@ -230,11 +225,10 @@
   height: 38px;
 }
 /* Zoom participates in the width transition, but its popover stays outside
-   the tools' clipping track. A fixed control width prevents its text wrapping
-   while the reserved space grows. */
+   the tools' clipping track. Reserve the same width as the other icons. */
 .canvas-dock .canvas-dock-zoom {
   flex: none;
-  width: 68px;
+  width: 38px;
   opacity: 1;
   visibility: visible;
 }
@@ -249,7 +243,7 @@
 .canvas-dock .viewer-action:disabled {
   background: var(--canvas-dock-control);
   border-color: transparent;
-  color: var(--text-muted);
+  color: #999;
   opacity: 0.38;
   cursor: default;
 }
@@ -269,14 +263,16 @@
   position: relative;
   flex: none;
   height: 38px;
-  padding: 3px;
-  gap: 0;
+  padding: 3px 0;
+  gap: var(--canvas-dock-gap);
   border-radius: var(--radius-pill);
   background: var(--canvas-dock-control);
 }
 .canvas-dock .canvas-dock-mode-seg .viewer-tab {
+  width: 32px;
   height: 32px;
-  padding: 0 15px;
+  padding: 0;
+  color: #fff;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -287,11 +283,15 @@
     background var(--duration-normal, 200ms) var(--curve-easy-ease, ease),
     color var(--duration-normal, 200ms) var(--curve-easy-ease, ease);
 }
+.canvas-dock .canvas-dock-mode-seg .viewer-tab:hover:not(:disabled) {
+  background: var(--canvas-dock-control-hover);
+  color: #fff;
+}
 .canvas-dock .canvas-dock-mode-seg .viewer-tab.active,
 .canvas-dock .canvas-dock-mode-seg .viewer-tab.active:hover:not(:disabled) {
-  background: var(--text-strong);
+  background: #fff;
   border-color: transparent;
-  color: var(--bg);
+  color: #000;
   box-shadow: var(--shadow-sm);
 }
 .canvas-dock .canvas-dock-mode-seg .viewer-tab:disabled {

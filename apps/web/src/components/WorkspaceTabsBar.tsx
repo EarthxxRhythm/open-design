@@ -1506,13 +1506,14 @@ export function WorkspaceTabsBar({
   }, [state]);
 
   function activateTab(tab: WorkspaceChromeTab) {
-    setState((current) => ({
-      tabs: normalizeTabsState(current).tabs.map((item) =>
-        item.id === tab.id ? { ...item, lastActiveAt: Date.now() } : item,
-      ),
-      activeTabId: tab.id,
-    }));
-    navigate(routeForTab(tab));
+    navigate(routeForTab(tab), {
+      onCommit: () => setState((current) => ({
+        tabs: normalizeTabsState(current).tabs.map((item) =>
+          item.id === tab.id ? { ...tab, lastActiveAt: Date.now() } : item,
+        ),
+        activeTabId: tab.id,
+      })),
+    });
   }
 
   function activateTabByOffset(offset: number) {

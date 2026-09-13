@@ -89,20 +89,6 @@
   }
 }
 
-@container edit-preview (max-width: 720px) {
-  /* The generic viewer-toolbar queries also match this container. The
-     canvas mode switches use text rather than those toolbar tab icons. */
-  .layout :global(.canvas-dock-mode-seg .viewer-tab) {
-    width: auto;
-    min-width: 0;
-    padding-inline: 15px;
-  }
-
-  .layout :global(.canvas-dock-mode-seg .viewer-tab-label) {
-    display: inline;
-  }
-}
-
 @container edit-preview (max-width: 500px) {
   .layout :global(.canvas-dock-mode-seg) {
     position: sticky;

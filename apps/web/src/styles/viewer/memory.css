@@ -1006,6 +1006,8 @@
   cursor: default;
 }
 .cc-value > input,
+.cc-value > .cc-number-input,
+.cc-value > .cc-number-input > input,
 .cc-value > select {
   flex: 1 1 auto; min-width: 0; border: none; outline: none;
   background: transparent; font: inherit; color: var(--manual-edit-field-text);
@@ -1014,7 +1016,7 @@
   padding: 0; text-align: right;
   font-variant-numeric: tabular-nums;
 }
-.cc-value > input::placeholder {
+.cc-value input::placeholder {
   color: var(--manual-edit-field-muted);
 }
 .cc-value > select { cursor: pointer; appearance: none; padding-right: 12px; }

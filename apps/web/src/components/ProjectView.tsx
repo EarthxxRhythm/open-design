@@ -2270,7 +2270,6 @@ export function ProjectView({
   const chatTabsDockRef = useWorkspaceTabsDockRef();
   const [historyPortalTarget, setHistoryPortalTarget] = useState<HTMLDivElement | null>(null);
   const [commentInspectorActive, setCommentInspectorActive] = useState(false);
-  const commentInspectorPortalId = useId();
   // Per-session override for the BYOK chat's generate_image tool. Seeded once
   // from the New Project → Media model pick (project.metadata.imageModel) — but
   // only when that pick belongs to the active BYOK provider (see
@@ -9820,9 +9819,8 @@ export function ProjectView({
     workspacePanelMinWidth === 0
       ? 'minmax(0, 1fr)'
       : `minmax(${workspacePanelMinWidth}px, 1fr)`;
-  // The comment panel floats over the workspace now, so opening it must not
-  // touch the split at all: the chat column keeps the width the user set.
-  // (It used to take over this column at COMMENT_INSPECTOR_PANEL_WIDTH.)
+  // Inspectors share the workspace's right dock; the chat column keeps the
+  // width the user set when either comments or editing is opened.
   const splitLeftPanelWidth = chatPanelWidthRef.current;
   const chatPanelAriaMinWidth = Math.min(MIN_CHAT_PANEL_WIDTH, chatPanelMaxWidth);
   const projectActionsToastInChatPane =
@@ -11184,19 +11182,6 @@ export function ProjectView({
             </div>
           )}
         </div>
-        {/* The comment panel is a floating card over the workspace in EVERY
-            state (per product: 任何状态下评论卡片都在这个位置). It used to dock
-            inside the chat column, which put it in a different place —  and
-            made it invisible in full-screen preview, where that column is
-            hidden. Keep the empty host mounted so FileViewer can resolve its
-            portal before opening; `:empty` hides all chrome and hit testing
-            until the localized comment panel is portaled in. Exactly one
-            element ever carries `commentInspectorPortalId`. */}
-        <div
-          id={commentInspectorPortalId}
-          className="comment-float-host"
-          data-testid="comment-float-host"
-        />
         {!workspaceFocused ? (
           <div
             className="split-resize-handle"
@@ -11281,7 +11266,6 @@ export function ProjectView({
           designSystemEditRequest={designSystemEditRequest}
           onConnectRepo={handleConnectRepo}
           githubConnected={githubConnected}
-          commentPortalId={commentInspectorPortalId}
           onCommentModeChange={setCommentInspectorActive}
           fileActionsBefore={projectCollab.enabled ? (
             <PresenceBar

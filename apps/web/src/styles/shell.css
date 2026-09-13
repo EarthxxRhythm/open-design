@@ -986,10 +986,10 @@ html.od-radial-open .workspace-shell {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding-top: 8px;
 }
 .chrome-unified-panel--share {
   gap: 8px;
+  padding-top: 8px;
 }
 .chrome-access-select {
   position: relative;

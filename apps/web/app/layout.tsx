@@ -10,6 +10,11 @@ import '../src/styles/home/index.css';
 // Without these rules the workspace collapses to its toolbar's height.
 import '../src/components/workspace/WorkspaceEditLayout.module.css';
 import '../src/components/ManualEditPanel.module.css';
+import '../src/components/ManualEditColorPopover.module.css';
+import '../src/components/AnimatedNumberInput.module.css';
+import '../src/components/AnimateDigits.module.css';
+import '../src/components/ExportFilenameField.module.css';
+import '../src/components/FileViewerPresentationTools.module.css';
 
 export const metadata: Metadata = {
   title: 'Open Design',

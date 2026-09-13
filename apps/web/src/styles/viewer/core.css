@@ -1191,7 +1191,8 @@
    button is the square its icon needs, sized like the other icon-only controls
    sharing this row. Still flat at rest: transparent fill, transparent border,
    no shadow, so it never reads as a raised chip on the bar. */
-.viewer-viewport-trigger {
+.viewer-viewport-trigger,
+.viewer-share-trigger {
   width: 26px;
   min-width: 26px;
   height: 26px;
@@ -1206,10 +1207,12 @@
   line-height: 1.2;
   box-shadow: none;
 }
-.viewer-viewport-trigger > svg {
+.viewer-viewport-trigger > svg,
+.viewer-share-trigger > svg {
   flex: 0 0 auto;
 }
-.viewer-viewport-trigger:hover:not(:disabled) {
+.viewer-viewport-trigger:hover:not(:disabled),
+.viewer-share-trigger:hover:not(:disabled) {
   border-color: transparent;
   background-color: var(--bg-subtle);
 }

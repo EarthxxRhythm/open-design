@@ -18,7 +18,7 @@ describe('project edit sidebar layout', () => {
     </WorkspaceEditLayout>;
     const view = render(content(true));
     const frame = screen.getByTitle('Preview');
-    const separator = screen.getByRole('separator', { name: 'Resize edit panel' });
+    const separator = screen.getByRole('separator', { name: 'Resize side panel' });
     expect(separator).toHaveAttribute('aria-valuenow', '320');
     fireEvent.keyDown(separator, { key: 'ArrowLeft' });
     expect(separator).toHaveAttribute('aria-valuenow', '330');

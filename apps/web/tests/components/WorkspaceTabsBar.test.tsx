@@ -47,7 +47,7 @@ vi.mock('../../src/router', async () => {
   );
   return {
     ...actual,
-    navigate: vi.fn(),
+    navigate: vi.fn((_route, options) => options?.onCommit?.()),
   };
 });
 
@@ -216,8 +216,15 @@ describe('WorkspaceTabsBar navigation semantics', () => {
       const home = await screen.findByTestId('workspace-home-chrome');
       expect(dock.contains(home)).toBe(true);
       expect(dock.contains(screen.getByTestId('workspace-tabs-dropdown-trigger'))).toBe(true);
+      const storageKey = 'open-design:workspace-tabs:v1';
+      const activeBefore = JSON.parse(localStorage.getItem(storageKey)!).activeTabId;
+      vi.mocked(navigate).mockImplementationOnce(() => undefined);
       fireEvent.click(home);
-      expect(navigate).toHaveBeenCalledWith(homeRoute);
+      expect(navigate).toHaveBeenCalledWith(homeRoute, expect.objectContaining({ onCommit: expect.any(Function) }));
+      expect(JSON.parse(localStorage.getItem(storageKey)!).activeTabId).toBe(activeBefore);
+      const options = vi.mocked(navigate).mock.calls.at(-1)![1];
+      act(() => options?.onCommit?.());
+      await waitFor(() => expect(JSON.parse(localStorage.getItem(storageKey)!).activeTabId).not.toBe(activeBefore));
     } finally {
       cleanup();
       setWorkspaceTabsDock(null);
@@ -849,7 +856,7 @@ describe('WorkspaceTabsBar navigation semantics', () => {
         projectId: 'project-beta',
         conversationId: null,
         fileName: null,
-      });
+      }, expect.objectContaining({ onCommit: expect.any(Function) }));
     });
 
     const previousAllowedDefault = fireEvent.keyDown(document, {
@@ -860,7 +867,7 @@ describe('WorkspaceTabsBar navigation semantics', () => {
 
     expect(previousAllowedDefault).toBe(false);
     await waitFor(() => {
-      expect(navigate).toHaveBeenLastCalledWith(projectRoute);
+      expect(navigate).toHaveBeenLastCalledWith(projectRoute, expect.objectContaining({ onCommit: expect.any(Function) }));
     });
   });
 
