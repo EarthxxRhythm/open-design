@@ -658,6 +658,58 @@ describe('OD-owned Codex thread visibility', () => {
     expect(h.session.completedSuccessfully()).toBe(status !== 'failed');
   });
 
+  it.each([0, 1])('offers an owned interrupted thread for cleanup only after actual close (exit %s)', (code) => {
+    const h = ready(); opened(h);
+    // Optional lookup keeps the baseline executable: no receipt means the
+    // close owner cannot initiate cleanup, rather than a missing-module error.
+    const takeReceipt = () => (h.session as typeof h.session & {
+      takeClosedThreadCleanup?: () => { threadId: string; historyMode: string } | null;
+    }).takeClosedThreadCleanup?.() ?? null;
+    expect(takeReceipt()).toBeNull();
+    h.session.abort();
+    h.child.killed = true;
+    expect(takeReceipt()).toBeNull();
+    h.child.emit('close', code, null);
+    expect(takeReceipt()).toMatchObject({ threadId: 'owned-1', historyMode: 'legacy' });
+    expect(takeReceipt()).toBeNull();
+    expect(h.child.sent('thread/archive')).toBeUndefined();
+    expect(h.session.completedSuccessfully()).toBe(false);
+  });
+
+  it.each([
+    { label: 'user resume', options: { resumeSessionId: 'owned-1' }, version: '0.153.4' },
+    { label: 'mismatched owned resume', options: { resumeSessionId: 'other', resumeSessionOwned: true }, version: '0.153.4' },
+    { label: 'unmanaged', options: { manageThreadVisibility: false }, version: '0.153.4' },
+    { label: 'unknown protocol', options: {}, version: 'unknown' },
+    { label: 'unprotected legacy', options: {}, version: '0.146.0' },
+  ])('does not offer cleanup for $label', ({ options, version }) => {
+    const h = ready(options, version); opened(h); h.child.emit('close', 1, null);
+    expect(h.session.takeClosedThreadCleanup()).toBeNull();
+  });
+
+  it('requires a matching request response, not a thread/started notification alone', () => {
+    const h = ready();
+    h.child.say({ method: 'thread/started', params: { thread: { id: 'notification-only', historyMode: 'paginated' } } });
+    h.child.emit('close', 1, null);
+    h.child.say({ id: h.open.id, result: { thread: { id: 'late-response', historyMode: 'paginated' } } });
+    expect(h.session.takeClosedThreadCleanup()).toBeNull();
+  });
+
+  it.each(['completed', 'failed', 'interrupted'])('leaves terminal %s cleanup with the existing live session', (status) => {
+    const h = ready(); opened(h); completed(h.child, status);
+    h.child.say({ id: h.child.sent('thread/archive')!.id, error: { message: 'active writer' } });
+    h.child.emit('close', 0, null);
+    expect(h.session.takeClosedThreadCleanup()).toBeNull();
+    expect(h.child.frames().filter(f => f.method === 'thread/archive')).toHaveLength(1);
+  });
+
+  it('retains paginated proof for an interrupted owned resume on 0.146.0', () => {
+    const h = ready({ resumeSessionId: 'owned-1', resumeSessionOwned: true }, '0.146.0');
+    h.child.say({ id: h.open.id, result: { thread: { id: 'owned-1', historyMode: 'paginated' } } });
+    h.child.emit('close', null, 'SIGKILL');
+    expect(h.session.takeClosedThreadCleanup()).toMatchObject({ threadId: 'owned-1', historyMode: 'paginated' });
+  });
+
   it('resumes and archives the same protected 0.146.0 history without converting it', () => {
     const h = ready({ resumeSessionId: 'owned-1', resumeSessionOwned: true }, '0.146.0');
     expect(h.open.params.historyMode).toBeUndefined();

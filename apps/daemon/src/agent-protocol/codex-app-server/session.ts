@@ -38,13 +38,24 @@
  * Streaming itself does not require the experimental capability.
  */
 import { createCodexAppServerNormalizer } from './normalize.js';
+import { codexHistoryCapabilities } from './thread-cleanup.js';
 
 type JsonObject = Record<string, unknown>;
 
 export type CodexSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access';
 
+const closedThreadProof = Symbol('closed owned Codex thread');
+
+/** Issued only by this session after its child closes; never reconstructed from a user ID. */
+export interface CodexClosedThreadCleanup {
+  readonly threadId: string;
+  readonly historyMode: 'paginated' | 'legacy';
+  readonly [closedThreadProof]: true;
+}
+
 export interface CodexAppServerSessionOptions {
   child: {
+    once?(event: 'close', listener: () => void): unknown;
     stdout: { on(event: 'data', listener: (chunk: unknown) => void): unknown };
     stdin: {
       write(chunk: string, cb?: (err?: Error | null) => void): unknown;
@@ -84,6 +95,8 @@ export interface CodexAppServerSession {
   completedSuccessfully(): boolean;
   getDurableSessionId(): string | null;
   getLastSessionPath(): string | null;
+  /** Once-only cleanup authority, unavailable until this exact child has closed. */
+  takeClosedThreadCleanup(): CodexClosedThreadCleanup | null;
   stats(): { unknownNotifications: number; unknownItems: number };
 }
 
@@ -145,6 +158,8 @@ export function attachCodexAppServerSession(
   let turnSucceeded = false;
   let handleReported = false;
   let terminalReceived = false;
+  let childClosed = false;
+  let cleanupThread: CodexClosedThreadCleanup | null = null;
   let canArchiveSafely = false;
   let supportsPaginatedHistory = false;
   let protectsLegacyHistory = false;
@@ -251,6 +266,12 @@ export function attachCodexAppServerSession(
         threadId = id;
         canArchiveSafely = opts.manageThreadVisibility === true
           && (protectsLegacyHistory || (supportsPaginatedHistory && thread?.historyMode === 'paginated'));
+        if (canArchiveSafely && ownsThread && id.trim()
+          && (!resumeSessionId || id === resumeSessionId)) {
+          cleanupThread = Object.freeze({ threadId: id,
+            historyMode: thread?.historyMode === 'paginated' ? 'paginated' : 'legacy',
+            [closedThreadProof]: true as const });
+        }
         const path = typeof thread?.path === 'string' ? thread.path : '';
         if (path) rolloutPath = path;
         // `thread/start` is followed by a `thread/started` notification, but
@@ -306,7 +327,7 @@ export function attachCodexAppServerSession(
   }
 
   function handleFrame(frame: JsonObject): void {
-    if (turnEnded) return;
+    if (turnEnded || childClosed) return;
     if (aborted && !terminalReceived && frame.method !== 'turn/completed') return;
     if (!cliReadySeen) {
       cliReadySeen = true;
@@ -408,6 +429,12 @@ export function attachCodexAppServerSession(
     }
   });
 
+  child.once?.('close', () => {
+    childClosed = true;
+    if (archiveTimer) clearTimeout(archiveTimer);
+    pending.clear();
+  });
+
   request(
     'initialize',
     {
@@ -423,14 +450,9 @@ export function attachCodexAppServerSession(
       // history has cross-process archive locks in both; legacy only in the
       // latter. Never convert an existing legacy history or archive it on an
       // older server. Unknown servers retain the existing resumable behavior.
-      const version = typeof result.userAgent === 'string'
-        ? /^[^/\s]+\/(\d+)\.(\d+)\.(\d+)(?:\s|$)/u.exec(result.userAgent) : null;
-      const managed = opts.manageThreadVisibility === true && version !== null;
-      supportsPaginatedHistory = managed
-        && (Number(version[1]) > 0 || Number(version[2]) >= 146);
-      protectsLegacyHistory = managed
-        && (Number(version[1]) > 0 || Number(version[2]) > 153
-          || (Number(version[2]) === 153 && Number(version[3]) >= 4));
+      const capabilities = codexHistoryCapabilities(result.userAgent);
+      supportsPaginatedHistory = opts.manageThreadVisibility === true && capabilities.paginated;
+      protectsLegacyHistory = opts.manageThreadVisibility === true && capabilities.legacy;
       notify('initialized', {});
       openThread();
     },
@@ -453,6 +475,12 @@ export function attachCodexAppServerSession(
     },
     getLastSessionPath(): string | null {
       return rolloutPath;
+    },
+    takeClosedThreadCleanup(): CodexClosedThreadCleanup | null {
+      if (!childClosed || terminalReceived) return null;
+      const receipt = cleanupThread;
+      cleanupThread = null;
+      return receipt;
     },
     stats() {
       return normalizer.stats();
