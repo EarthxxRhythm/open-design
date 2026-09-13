@@ -44,6 +44,7 @@ import {
 } from '../observability/run-terminal-lifecycle.js';
 import { mintRunDoneKey } from './run-done-key.js';
 import { normalizeTelemetryAppVersionInfo } from '../app-version.js';
+import { executionSourceReceiptForNewRun } from './execution-source-receipt.js';
 
 export const TERMINAL_RUN_STATUSES = new Set(['succeeded', 'failed', 'canceled']);
 
@@ -568,6 +569,7 @@ function durableRunState(run) {
       : {}),
     agentId: run.agentId,
     ...(run.appVersionInfo ? { appVersionInfo: run.appVersionInfo } : {}),
+    ...(run.executionSourceReceipt ? { executionSourceReceipt: run.executionSourceReceipt } : {}),
     status: run.status,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
@@ -908,6 +910,7 @@ export function createChatRunService({
           : null,
       agentId: typeof meta.agentId === 'string' && meta.agentId ? meta.agentId : null,
       appVersionInfo,
+      executionSourceReceipt: executionSourceReceiptForNewRun(),
       projectMetadata:
         meta.projectMetadata && typeof meta.projectMetadata === 'object' && !Array.isArray(meta.projectMetadata)
           ? meta.projectMetadata
