@@ -943,13 +943,14 @@
    (home / marketplace, workspace-focused mode) → the strip renders in the
    classic full-width chrome row again. */
 .split-chat-tabs-dock {
+  /* Containing block for the history dropdown docked in this row. */
+  position: relative;
   display: flex;
-  /* Top-aligned, not centered: the 36px dropdown hugs the row's top edge —
-     no headroom above it — leaving only the 4px below to the chat card. */
-  align-items: flex-start;
+  /* Match the preview toolbar centre, including its 1px pane border. */
+  align-items: center;
   gap: 8px;
-  height: 40px;
-  min-height: 40px;
+  height: 48px;
+  min-height: 48px;
   flex: 0 0 auto;
   min-width: 0;
 }
@@ -967,24 +968,25 @@
 .workspace-tabs-chrome:has(.workspace-tab.is-active:not(.is-pinned)) .workspace-tabs-glide {
   display: none;
 }
-/* Collapse-chat control, lifted from the chat card header into the dock row
-   (left of the white tab dropdown). */
+/* Collapse-chat control, lifted from the chat card header into the dock row.
+   Visual order is dropdown → history dock → collapse; the dropdown portals in
+   last, so `order` (dock 1, collapse 2) fixes the sequence. */
 .split-chat-collapse {
   appearance: none;
   cursor: pointer;
   display: grid;
   place-items: center;
   flex: 0 0 auto;
+  order: 2;
   width: 32px;
   height: 32px;
-  /* Dock is top-aligned; re-center this 32px button on the 36px dropdown. */
-  margin-top: 2px;
+  margin-top: 0;
   padding: 0;
   border: 0;
   border-radius: 10px;
-  /* White seat matching the dropdown beside it. */
-  background: #fff;
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--text) 5%, transparent);
+  /* Transparent at rest; the hover seat below is the only fill. */
+  background: transparent;
+  box-shadow: none;
   color: var(--text);
   -webkit-app-region: no-drag;
 }

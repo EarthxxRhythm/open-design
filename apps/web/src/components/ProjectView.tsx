@@ -328,6 +328,7 @@ import type { AnchorWriteBack } from '../comments';
 import { PluginDetailsModal } from './PluginDetailsModal';
 import { DesignSystemPreviewModal } from './DesignSystemPreviewModal';
 import { ChatPane } from './ChatPane';
+import historyDockStyles from './chat/ConversationHistoryDock.module.css';
 import type { ChatSendMeta, ChatSendOutcome } from './ChatComposer';
 import {
   CritiqueTheaterMount,
@@ -2775,6 +2776,8 @@ export function ProjectView({
   // Chat-column dock host for the workspace tab strip (workspaceTabsDock.ts);
   // FileWorkspace registers its own focus-mode host when the chat collapses.
   const chatTabsDockRef = useWorkspaceTabsDockRef();
+  // Toolbar seat for ChatPane's conversation history control (portal host).
+  const [historyPortalTarget, setHistoryPortalTarget] = useState<HTMLDivElement | null>(null);
   const [commentInspectorActive, setCommentInspectorActive] = useState(false);
   const commentInspectorPortalId = useId();
   // Per-session override for the BYOK chat's generate_image tool. Seeded once
@@ -13486,9 +13489,11 @@ export function ProjectView({
               data-testid="workspace-tabs-dock"
               ref={chatTabsDockRef}
             >
-              {/* Collapse-chat control, lifted out of the chat card header to
-                  sit left of the docked tab dropdown (the dropdown portals in
-                  after this button, so flex order stays button → dropdown). */}
+              {/* Conversation controls follow the docked project dropdown:
+                  dropdown → history dock (order 1) → collapse (order 2). The
+                  dropdown portals in after these, so CSS `order` fixes the
+                  visual sequence. */}
+              <div className={historyDockStyles.dock} ref={setHistoryPortalTarget} data-testid="chat-history-dock" />
               <button
                 type="button"
                 className="split-chat-collapse od-tooltip"
@@ -13505,6 +13510,7 @@ export function ProjectView({
           ) : null}
           {activeConversationId || conversationLoadError || emptyConversationReadOnlySettled ? (
             <ChatPane
+              historyPortalTarget={historyPortalTarget}
               // The conversation id is part of the key so switching conversations
               // resets internal scroll/draft state inside ChatPane and ChatComposer.
               key={`${project.id}:${activeConversationId ?? 'conversation-unavailable'}:${chatSeed?.id ?? 'ready'}`}

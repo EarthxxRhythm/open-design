@@ -4150,33 +4150,10 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
   transform-origin: top right;
   animation: pop-in 180ms cubic-bezier(0.23, 1, 0.32, 1);
 }
-.chat-history-menu-head {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  /* No divider, no tinted band — the header shares one continuous surface
-     with the search field and list so the popover reads as a single clean
-     sheet, matching the app's other anchored menus. */
-  padding: 8px 8px 4px;
-}
-.chat-history-menu-title {
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-  font-weight: 600;
-}
-.chat-history-menu-count {
-  color: var(--text-faint);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1;
-  margin-left: 6px;
-}
 .chat-history-search {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 8px;
   /* Matches the app's standard control height (primitives.css `button`); at
      28px this field read as a cramped slot against the list rows below it.
      The inner input stays 20px and is centered by `align-items`. */
@@ -4200,13 +4177,15 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
   border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
 }
 .chat-history-search svg {
-  width: 11px;
-  height: 11px;
+  width: 14px;
+  height: 14px;
   flex: 0 0 auto;
 }
 .chat-history-search input {
   min-width: 0;
   flex: 1;
+  padding: 0;
+  margin: 0;
   height: 20px;
   border: none;
   outline: none;
@@ -4235,9 +4214,8 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
   background: var(--bg-subtle);
   color: var(--text);
 }
-/* `.chat-history-new` 那一组(下拉里的「新建」按钮)已随按钮删除 ——
-   产品裁决 2026-09-03:新建入口只留面板头那枚图标键,见
-   `components/ChatPane.tsx` 的 `.chat-history-menu-head` 处注释。 */
+/* The "new session" button now sits beside the search field; its row and
+   button styles live in components/chat/ConversationHistoryDock.module.css. */
 .chat-history-list {
   display: flex;
   flex-direction: column;
@@ -4277,8 +4255,7 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
   align-items: center;
   gap: 6px;
   min-height: 32px;
-  /* Roomier left inset so the title has breathing room from the card edge;
-     right keeps room for the hover delete button. */
+  /* Roomier left inset so the title has breathing room from the card edge. */
   padding: 4px 6px 4px 12px;
   border-radius: var(--radius);
   background: transparent;
@@ -4294,12 +4271,11 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
     border-color 160ms cubic-bezier(0.23, 1, 0.32, 1),
     color 160ms cubic-bezier(0.23, 1, 0.32, 1);
 }
-.chat-conv-item:hover {
+.chat-conv-item:hover,
+.chat-conv-item.active {
   background: color-mix(in srgb, var(--bg-subtle) 72%, transparent);
 }
 .chat-conv-item.active {
-  background: color-mix(in srgb, var(--accent-tint) 76%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 18%, transparent);
   color: var(--text-strong);
 }
 .chat-conv-item:focus-within {
@@ -4341,25 +4317,6 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
   width: 10px;
   height: 10px;
 }
-.chat-conv-item-del {
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: var(--text-faint);
-  border-radius: var(--radius-sm);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0;
-  transition:
-    opacity 140ms cubic-bezier(0.23, 1, 0.32, 1),
-    background-color 140ms cubic-bezier(0.23, 1, 0.32, 1),
-    color 140ms cubic-bezier(0.23, 1, 0.32, 1);
-}
-.chat-conv-item:hover .chat-conv-item-del { opacity: 1; }
-.chat-conv-item-del:hover { background: var(--red-bg); color: var(--red); }
 
 /* ============================================================
    Scroll-to-bottom button (chat)

@@ -2921,7 +2921,7 @@ test('[P1] read-only project viewers do not see conversation fork actions', asyn
   await expect(page.getByTestId('assistant-fork-button')).toHaveCount(0);
 });
 
-test('[P1] project detail conversations menu supports new chat, search, counts, and run duration metadata', async ({ page }) => {
+test('[P1] project detail conversations menu supports new chat, search, and recency metadata', async ({ page }) => {
   const { projectId, conversations } = await seedProjectConversationHistory(page);
   await routeConversationHistoryFixtures(page, projectId, conversations);
 
@@ -2931,15 +2931,21 @@ test('[P1] project detail conversations menu supports new chat, search, counts, 
   await page.getByTestId('conversation-history-trigger').click();
   const menu = page.getByTestId('conversation-history-menu');
   await expect(menu).toBeVisible();
-  await expect(page.getByTestId('conversation-history-count')).toHaveText('3');
-
+  // The dropdown no longer shows a heading, a count, per-row message counts
+  // or run durations (OPEND-3087, Demo #8113): rows carry only the title and
+  // the time since the last update. The fixtures are 30s / 2m / 7m old at
+  // seed time, so allow one minute of drift while the page loads.
+  const rows = page.getByTestId('conversation-list').locator('.chat-conv-item');
+  await expect(rows).toHaveCount(3);
   await expect(page.getByTestId(`conversation-select-${conversations[0]!.id}`)).toContainText('Runway final polish');
-  await expect(page.getByTestId(`conversation-meta-${conversations[0]!.id}`)).toHaveText('8 msg · 5m 42s');
-  await expect(page.getByTestId(`conversation-meta-${conversations[1]!.id}`)).toHaveText('6 msg · 19m 00s');
-  await expect(page.getByTestId(`conversation-meta-${conversations[2]!.id}`)).toContainText('6 msg ·');
+  await expect(page.getByTestId(`conversation-meta-${conversations[0]!.id}`)).toHaveText(/^(now|1m)$/);
+  await expect(page.getByTestId(`conversation-meta-${conversations[1]!.id}`)).toHaveText(/^[23]m$/);
+  await expect(page.getByTestId(`conversation-meta-${conversations[2]!.id}`)).toHaveText(/^[78]m$/);
+  await expect(page.getByTestId('conversation-history-count')).toHaveCount(0);
+  await expect(menu.getByTestId(/^conversation-delete-/)).toHaveCount(0);
 
   await page.getByTestId('conversation-history-search').fill('font audit');
-  await expect(page.getByTestId('conversation-history-count')).toHaveText('1 / 3');
+  await expect(rows).toHaveCount(1);
   await expect(page.getByTestId(`conversation-item-${conversations[1]!.id}`)).toBeVisible();
   await expect(page.getByTestId(`conversation-item-${conversations[0]!.id}`)).toHaveCount(0);
 
@@ -2948,18 +2954,17 @@ test('[P1] project detail conversations menu supports new chat, search, counts, 
     return request.method() === 'POST'
       && request.url().endsWith(`/api/projects/${projectId}/conversations`);
   });
-  // The "new conversation" control lives in the panel header, not in the open
-  // dropdown — the dropdown's duplicate was removed (product ruling
-  // 2026-09-03: one entry point only). Clicking it still dismisses the menu,
-  // which is what the count assertion below pins.
-  await page.getByTestId('chat-new-conversation').click();
+  // The single "new conversation" control sits inside the dropdown beside the
+  // search field. Clicking it still dismisses the menu, which is what the
+  // count assertion below pins.
+  await menu.getByTestId('chat-new-conversation').click();
   await newConversationRequestPromise;
   await expect(page.getByTestId('conversation-history-menu')).toHaveCount(0);
 
   await page.getByTestId('conversation-history-trigger').click();
-  await expect(page.getByTestId('conversation-history-count')).toHaveText('4');
+  await expect(rows).toHaveCount(4);
   await expect(page.getByTestId('conversation-select-conv-new-history')).toContainText('Untitled');
-  await expect(page.getByTestId('conversation-meta-conv-new-history')).toHaveText('0 msg · now');
+  await expect(page.getByTestId('conversation-meta-conv-new-history')).toHaveText(/^(now|1m)$/);
 });
 
 test('[P0] project detail share menu copies the current share link for uploaded html artifacts', async ({ page }) => {

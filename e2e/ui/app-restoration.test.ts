@@ -732,7 +732,10 @@ test('[P0] @critical reloading the project keeps the latest conversation selecte
   await expect(historyList.locator('.chat-conv-item')).toHaveCount(2);
 });
 
-test('[P0] @critical deleting the active conversation selects the remaining conversation in history', async ({ page }) => {
+// Parked (OPEND-3087, Demo #8113): the history dropdown no longer carries a
+// per-row delete button, so this flow has no UI entry point. The steps are kept
+// verbatim so it can be re-enabled once a delete entry point returns.
+test.skip('[P0] @critical deleting the active conversation selects the remaining conversation in history', async ({ page }) => {
   page.on('dialog', async (dialog: Dialog) => {
     await dialog.accept();
   });
@@ -2355,9 +2358,9 @@ async function startNewConversation(page: Page) {
   // it, and the `toHaveCount(0)` below only means something if it was open.
   await page.getByTestId('conversation-history-trigger').click();
   await expect(page.getByTestId('conversation-list')).toBeVisible();
-  // The "new conversation" control lives in the panel header — the dropdown's
-  // duplicate was removed (product ruling 2026-09-03: one entry point only).
-  await page.getByTestId('chat-new-conversation').click();
+  // The single "new conversation" control sits inside the history dropdown,
+  // beside the search field (OPEND-3087); creating dismisses the dropdown.
+  await page.getByTestId('conversation-history-menu').getByTestId('chat-new-conversation').click();
   await expect(page.getByTestId('conversation-list')).toHaveCount(0);
   await expect
     .poll(() => new URL(page.url()).pathname, { timeout: 10_000 })

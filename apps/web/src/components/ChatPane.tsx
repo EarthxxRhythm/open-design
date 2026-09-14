@@ -1,3 +1,5 @@
+import { conversationMetaLabel } from '../runtime/chat/conversation-time';
+export { conversationMetaLabel } from '../runtime/chat/conversation-time';
 import { QuoteBar } from './chat/QuoteBar';
 import { chatLogSelfResizeObserveDisabled } from '../runtime/chat-scroll-experiments';
 import { shouldShowJumpToLatest } from '../runtime/chat/jump-to-latest';
@@ -49,6 +51,7 @@ import {
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
+import historyStyles from './chat/ConversationHistoryDock.module.css';
 import { hasOdCard, OD_NEXT_STRATEGY_ID, type ProjectMediaTask } from '@open-design/contracts';
 import { useAnalytics } from '../analytics/provider';
 import { getResolvedDeviceId } from '../analytics/client';
@@ -768,12 +771,7 @@ interface Props {
   conversations: Conversation[];
   activeConversationId: string | null;
   // The conversation whose history the live `messages` array currently
-  // reflects. Null while a switch is mid-flight (or after a load failure),
-  // which is exactly when `messages.length` must NOT be trusted as the active
-  // conversation's count — see `conversationMessageCount`. Callers that do not
-  // track this (mounts whose loader resets/retags `messages` asynchronously)
-  // leave it undefined and fall back to the persisted `conversation.messageCount`
-  // for a stable list count.
+  // reflects. Null while a switch is mid-flight (or after a load failure).
   messagesConversationId?: string | null;
   onSelectConversation: (id: string) => void;
   onDeleteConversation: (id: string) => void;
@@ -980,6 +978,10 @@ interface Props {
   collapseControlLifted?: boolean;
   backLabel?: string;
   projectHeader?: ReactNode;
+  // Host element for the conversation history control. When set (the project
+  // route's toolbar dock) the trigger + dropdown portal there; otherwise they
+  // render in place at the end of the card header.
+  historyPortalTarget?: HTMLElement | null;
   designSystemPicker?: ReactNode;
   config?: AppConfig;
 }
@@ -1267,26 +1269,7 @@ function byMediaTaskCreationOrder(a: ProjectMediaTask, b: ProjectMediaTask): num
   return 0;
 }
 
-/**
- * 面板头那两枚字形。**路径逐字节取自稿子** `729fa43ce7` 的
- * `docs/design/chat-panel/src/body-scene.html:7-8`,不手抄、不换库。
- *
- * ## 为什么不走共享的 `<Icon name=…>`
- *
- * 稿子这两枚都是**描边**(`fill="none" stroke="currentColor"`,吃
- * `src/components.css:159` 的全局 `stroke-width: 1.75px` + round/round)。
- * 而 `components/Icon.tsx` 里凡是命中 `REMIX_ICON` 映射表的名字一律走**实心**
- * remix 路径 —— `history` / `plus` 两个名字都在表里,拿不到描边形。
- * 把名字从那张表里摘掉是**全站**行为(`arrow-up` 一个名字就有 6 处调用,
- * 其中两处在聊天面板之外),属于要单独拍板的改动;这里只把影响锁在面板头内,
- * 按仓库既有的做法(`ChatPane` 里的 `.msg-att-eye`、`RunErrorCard` 的
- * `AlertIcon`)直接内联稿子的路径。
- *
- * 1.75 是**用户单位**,跟着 viewBox 缩放 —— 与 `chat/primitives/icons.tsx` 的
- * `STROKE_ICON` 同一条约定,那里有完整推导。尺寸维持面板头现有的 16(稿子
- * `src/scene-shell.css:32` 是 15,但盒子也是 26 而不是产品的 28;
- * 那一组尺寸差不在本轮范围内)。
- */
+/** The new-session glyph keeps the design draft's stroke form at 16px. */
 const HEAD_GLYPH = {
   width: 16,
   height: 16,
@@ -1299,13 +1282,11 @@ const HEAD_GLYPH = {
   'aria-hidden': true,
 } as const;
 
-/** 描边时钟 + 回退箭头(`src/body-scene.html:7`)—— 不是实心对话气泡 */
+/** Filled discuss-line glyph (Demo #8113), sized like the other head icons. */
 function ChatHistoryGlyph(): ReactElement {
   return (
-    <svg {...HEAD_GLYPH}>
-      <path d="M3 12a9 9 0 109-9 9 9 0 00-6.4 2.6L3 8" />
-      <path d="M3 4v4h4" />
-      <path d="M12 7v5l3 2" />
+    <svg width={16} height={16} viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true">
+      <path d="M14 22.5L11.2 19H6C5.44772 19 5 18.5523 5 18V7.10256C5 6.55028 5.44772 6.10256 6 6.10256H22C22.5523 6.10256 23 6.55028 23 7.10256V18C23 18.5523 22.5523 19 22 19H16.8L14 22.5ZM15.8387 17H21V8.10256H7V17H11.2H12.1613L14 19.2984L15.8387 17ZM2 2H19V4H3V15H1V3C1 2.44772 1.44772 2 2 2Z" />
     </svg>
   );
 }
@@ -1461,6 +1442,7 @@ export function ChatPane({
   collapseControlLifted,
   backLabel,
   projectHeader,
+  historyPortalTarget,
   designSystemPicker,
   config,
 }: Props) {
@@ -4266,6 +4248,127 @@ export function ChatPane({
     ? { minHeight: composerSlotHeight > 0 ? composerSlotHeight : undefined }
     : undefined;
 
+  const historyControl = (
+    <div
+      className={`chat-history-wrap chat-session-switcher${showConvList ? ' open' : ''}`}
+      ref={historyWrapRef}
+    >
+      {/*
+        * 面板头第一颗图标键。稿子 `729fa43ce7`:
+        * `docs/design/chat-panel/src/body-scene.html:7`
+        *   `<button class="mod-tip-b" aria-label="历史会话" data-tip="历史会话">`
+        *
+        * **不再用原生 `title`** —— 稿子 `src/components.css:2684-2686` 点名反对:
+        * 「原生 tip 要等半秒到两秒(各家浏览器不一,不可控),等到时手已经点下去了,
+        * 起不到『先告诉你再点』的作用;而且原生样式跟不上这套配色。」
+        * 换成产品统一的 `od-tooltip` + `data-tooltip`(`TooltipLayer`)。
+        *
+        * `mod-tip-b` = 气泡翻到按钮**下方**(`src/components.css:2720-2721`:
+        * 面板头贴着面板顶边,朝上的气泡会顶出去),对应 `data-tooltip-placement="bottom"`。
+        */}
+      <button
+        type="button"
+        className="chat-session-trigger icon-only od-tooltip"
+        data-testid="conversation-history-trigger"
+        data-tooltip={t('chat.conversationsTitle')}
+        data-tooltip-placement="bottom"
+        aria-label={t('chat.conversationsAria')}
+        aria-haspopup="menu"
+        aria-expanded={showConvList}
+        onClick={() => {
+          setShowConvList((v) => {
+            const next = !v;
+            if (next) {
+              trackChatPanelClick(analytics.track, {
+                page_name: 'chat_panel',
+                area: 'chat_panel',
+                element: 'history',
+              });
+            }
+            return next;
+          });
+        }}
+      >
+        <ChatHistoryGlyph />
+      </button>
+      {showConvList ? (
+        <div className="chat-history-menu" role="menu" data-testid="conversation-history-menu">
+          {/* Search and "new session" share one row (Demo #8113): the new
+              session entry moved out of the card header into the dropdown. */}
+          <div className={historyStyles.searchRow}>
+            <label className="chat-history-search">
+              <Icon name="search" size={14} />
+              <input
+                type="search"
+                value={conversationSearch}
+                onChange={(event) => setConversationSearch(event.currentTarget.value)}
+                placeholder={t('chat.conversationsSearchPlaceholder')}
+                data-testid="conversation-history-search"
+              />
+              {conversationSearch ? (
+                <button
+                  type="button"
+                  className="chat-history-search-clear"
+                  onClick={() => setConversationSearch('')}
+                  aria-label={t('chat.comments.clear')}
+                >
+                  <Icon name="close" size={10} />
+                </button>
+              ) : null}
+            </label>
+            {onNewConversation ? (
+              <button
+                type="button"
+                className="chat-session-trigger chat-new-conversation od-tooltip"
+                data-testid="chat-new-conversation"
+                data-tooltip={t('chat.newSession')}
+                data-tooltip-placement="bottom"
+                aria-label={t('chat.newSession')}
+                disabled={newConversationDisabled}
+                onClick={() => {
+                  if (newConversationDisabled) return;
+                  trackChatPanelClick(analytics.track, {
+                    page_name: 'chat_panel',
+                    area: 'chat_panel',
+                    element: 'new_chat',
+                  });
+                  onNewConversation();
+                  setShowConvList(false);
+                }}
+              >
+                <NewSessionGlyph />
+              </button>
+            ) : null}
+          </div>
+          <div className="chat-history-list" data-testid="conversation-list">
+            {conversations.length === 0 ? (
+              <div className="chat-history-empty">
+                {t('chat.emptyConversations')}
+              </div>
+            ) : filteredConversations.length === 0 ? (
+              <div className="chat-history-empty">
+                {t('chat.conversationsNoMatches')}
+              </div>
+            ) : (
+              filteredConversations.map((c) => (
+                <ConversationRow
+                  key={c.id}
+                  conversation={c}
+                  active={c.id === activeConversationId}
+                  onSelect={() => {
+                    onSelectConversation(c.id);
+                    setShowConvList(false);
+                  }}
+                  t={t}
+                />
+              ))
+            )}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+
   return (
     /* `chatSeam` 是 --chat-* 的唯一定义处。少了它,聊天树里所有 var(--chat-…) 静默落空 ——
        比如壳头「进行中」那句用 background-clip: text 上色,渐变一失效字就成透明的,
@@ -4301,164 +4404,11 @@ export function ChatPane({
           {projectHeader ? (
             <span className="chat-project-header-title">{projectHeader}</span>
           ) : null}
-          <div
-            className={`chat-history-wrap chat-session-switcher${showConvList ? ' open' : ''}`}
-            ref={historyWrapRef}
-          >
-            {/*
-              * 面板头第一颗图标键。稿子 `729fa43ce7`:
-              * `docs/design/chat-panel/src/body-scene.html:7`
-              *   `<button class="mod-tip-b" aria-label="历史会话" data-tip="历史会话">`
-              *
-              * **不再用原生 `title`** —— 稿子 `src/components.css:2684-2686` 点名反对:
-              * 「原生 tip 要等半秒到两秒(各家浏览器不一,不可控),等到时手已经点下去了,
-              * 起不到『先告诉你再点』的作用;而且原生样式跟不上这套配色。」
-              * 换成产品统一的 `od-tooltip` + `data-tooltip`(`TooltipLayer`)。
-              *
-              * `mod-tip-b` = 气泡翻到按钮**下方**(`src/components.css:2720-2721`:
-              * 面板头贴着面板顶边,朝上的气泡会顶出去),对应 `data-tooltip-placement="bottom"`。
-              *
-              * ⚠️ 原来的 `title` 还把当前会话标题拼在后面(`… · {activeConversation.title}`)。
-              * 稿子的 tip 是**常量**,所以这里跟稿子走;那半句要不要找地方安置,待产品拍。
-              */}
-            <button
-              type="button"
-              className="chat-session-trigger icon-only od-tooltip"
-              data-testid="conversation-history-trigger"
-              data-tooltip={t('chat.conversationsTitle')}
-              data-tooltip-placement="bottom"
-              aria-label={t('chat.conversationsAria')}
-              aria-haspopup="menu"
-              aria-expanded={showConvList}
-              onClick={() => {
-                setShowConvList((v) => {
-                  const next = !v;
-                  if (next) {
-                    trackChatPanelClick(analytics.track, {
-                      page_name: 'chat_panel',
-                      area: 'chat_panel',
-                      element: 'history',
-                    });
-                  }
-                  return next;
-                });
-              }}
-            >
-              <ChatHistoryGlyph />
-            </button>
-            {showConvList ? (
-              <div className="chat-history-menu" role="menu" data-testid="conversation-history-menu">
-                <div className="chat-history-menu-head">
-                  <span className="chat-history-menu-title">
-                    {t('chat.conversationsHeading')}
-                    <span className="chat-history-menu-count">
-                      <span data-testid="conversation-history-count">
-                      {filteredConversations.length === conversations.length
-                        ? compactCount(conversations.length)
-                        : `${compactCount(filteredConversations.length)} / ${compactCount(conversations.length)}`}
-                      </span>
-                    </span>
-                  </span>
-                  {/*
-                    * 这里原来还有一颗「新建」。**产品裁决 2026-09-03:新建入口只留
-                    * 面板头那枚图标键**(`data-testid="chat-new-conversation"`,
-                    * 稿子 `729fa43ce7:docs/design/chat-panel/src/body-scene.html:8`)——
-                    * 同一个动作不该有两个口子。
-                    *
-                    * 删掉不影响可达性:两颗本来就同一个 `onNewConversation` 门槛
-                    * (`onNewConversation ? … : null`)、同一个 `newConversationDisabled`,
-                    * 面板头那枚在侧边聊天(`workspace/SideChatTab.tsx`)与只读项目下
-                    * 一样渲染。这一行只剩标题 + 计数,`.chat-history-menu-head` 本来就
-                    * 不画分隔线,不会留下空分区。 */}
-                </div>
-                <label className="chat-history-search">
-                  <Icon name="search" size={12} />
-                  <input
-                    type="search"
-                    value={conversationSearch}
-                    onChange={(event) => setConversationSearch(event.currentTarget.value)}
-                    placeholder={t('chat.conversationsSearchPlaceholder')}
-                    data-testid="conversation-history-search"
-                  />
-                  {conversationSearch ? (
-                    <button
-                      type="button"
-                      className="chat-history-search-clear"
-                      onClick={() => setConversationSearch('')}
-                      aria-label={t('chat.comments.clear')}
-                    >
-                      <Icon name="close" size={10} />
-                    </button>
-                  ) : null}
-                </label>
-                <div className="chat-history-list" data-testid="conversation-list">
-                  {conversations.length === 0 ? (
-                    <div className="chat-history-empty">
-                      {t('chat.emptyConversations')}
-                    </div>
-                  ) : filteredConversations.length === 0 ? (
-                    <div className="chat-history-empty">
-                      {t('chat.conversationsNoMatches')}
-                    </div>
-                  ) : (
-                    filteredConversations.map((c) => (
-                      <ConversationRow
-                        key={c.id}
-                        conversation={c}
-                        active={c.id === activeConversationId}
-                        messageCount={conversationMessageCount(c, activeConversationId, messagesConversationId, messages.length)}
-                        onSelect={() => {
-                          onSelectConversation(c.id);
-                          setShowConvList(false);
-                        }}
-                        onDelete={() => onDeleteConversation(c.id)}
-                        t={t}
-                      />
-                    ))
-                  )}
-                </div>
-              </div>
-            ) : null}
-          </div>
-          {/*
-            * 面板头第二颗图标键「新会话」。稿子 `729fa43ce7`:
-            * `docs/design/chat-panel/src/body-scene.html:8`
-            *   `<button class="mod-tip-b" aria-label="新会话" data-tip="新会话">
-            *      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            *        <path d="M12 5v14M5 12h14"/></svg></button>`
-            * —— 紧挨着「历史会话」,同样 `mod-tip-b` ⇒ 气泡朝下。
-            *
-            * 行为**不新开一条**:走的就是既有的 `onNewConversation`,连
-            * `newConversationDisabled` 一起沿用。
-            *
-            * **产品裁决 2026-09-03:这是新建会话的唯一入口** —— 历史下拉里那颗
-            * 「新建」(`conversation-history-new`)已经删了,理由见上面那段注释。
-            * e2e 的定位器一并改到这颗:`e2e/ui/app.test.ts`、
-            * `e2e/ui/app-restoration.test.ts`、`e2e/ui/project-management-flows.test.ts`。
-            */}
-          {onNewConversation ? (
-            <button
-              type="button"
-              className="chat-session-trigger chat-new-conversation od-tooltip"
-              data-testid="chat-new-conversation"
-              data-tooltip={t('chat.newSession')}
-              data-tooltip-placement="bottom"
-              aria-label={t('chat.newSession')}
-              disabled={newConversationDisabled}
-              onClick={() => {
-                if (newConversationDisabled) return;
-                trackChatPanelClick(analytics.track, {
-                  page_name: 'chat_panel',
-                  area: 'chat_panel',
-                  element: 'new_chat',
-                });
-                onNewConversation();
-                setShowConvList(false);
-              }}
-            >
-              <NewSessionGlyph />
-            </button>
-          ) : null}
+          {historyPortalTarget
+            /* The dock host lives outside the chat tree, so the portal
+               re-applies the --chat-* seam for the control's own styles. */
+            ? createPortal(<div {...chatSeam()}>{historyControl}</div>, historyPortalTarget)
+            : historyControl}
         </div>
         {tab === 'chat' ? (
           <>
@@ -5128,6 +5078,7 @@ export function ChatPane({
               {chatLogTray}
             </div>
             <QueuedSendStrip
+              key={activeConversationId ?? projectId ?? 'draft'}
               containerRef={queuedSendStripRef}
               items={queuedItems}
               editingId={editingQueuedSendId}
@@ -7059,47 +7010,15 @@ function filterConversations(
   });
 }
 
-function conversationMessageCount(
-  conversation: Conversation,
-  activeConversationId: string | null,
-  messagesConversationId: string | null,
-  activeMessageCount: number,
-): number | null {
-  // The live `messages` array is authoritative for the active conversation —
-  // it stays fresh as a run streams new turns in — but ONLY once it has
-  // actually loaded for that conversation. While a switch is mid-flight (or a
-  // load failed) `messages` is reset to [] and `messagesConversationId` no
-  // longer matches the active id; trusting `messages.length` there renders a
-  // phantom "0 msg". Fall back to the persisted server count until the live
-  // array catches up.
-  if (
-    conversation.id === activeConversationId &&
-    messagesConversationId === activeConversationId
-  ) {
-    return activeMessageCount;
-  }
-  return typeof conversation.messageCount === 'number' ? conversation.messageCount : null;
-}
-
-function compactCount(value: number): string {
-  if (value < 1000) return String(value);
-  const compact = Math.floor(value / 100) / 10;
-  return `${compact}k`;
-}
-
 function ConversationRow({
   conversation,
   active,
-  messageCount,
   onSelect,
-  onDelete,
   t,
 }: {
   conversation: Conversation;
   active: boolean;
-  messageCount: number | null;
   onSelect: () => void;
-  onDelete: () => void;
   t: TranslateFn;
 }) {
   const displayTitle =
@@ -7123,25 +7042,8 @@ function ConversationRow({
         className="chat-conv-item-meta"
         data-testid={`conversation-meta-${conversation.id}`}
       >
-        {messageCount !== null ? `${compactCount(messageCount)} msg · ` : ''}
         {conversationMetaLabel(conversation, t)}
       </span>
-      <button
-        type="button"
-        className="chat-conv-item-del"
-        data-testid={`conversation-delete-${conversation.id}`}
-        title={t('chat.deleteConversation')}
-        onClick={(e) => {
-          e.stopPropagation();
-          if (
-            confirm(t('chat.deleteConversationConfirm', { title: displayTitle }))
-          ) {
-            onDelete();
-          }
-        }}
-      >
-        <Icon name="close" size={12} />
-      </button>
     </div>
   );
 }
@@ -7742,50 +7644,3 @@ function isProgrammaticBrandAssistantMessage(message: ChatMessage | null | undef
   );
 }
 
-function relTime(ts: number, t: TranslateFn): string {
-  const diff = Date.now() - ts;
-  const min = 60_000;
-  const hr = 60 * min;
-  const day = 24 * hr;
-  if (diff < min) return t('common.now');
-  if (diff < hr) return t('common.minutesShort', { n: Math.floor(diff / min) });
-  if (diff < day) return t('common.hoursShort', { n: Math.floor(diff / hr) });
-  if (diff < 7 * day) return t('common.daysShort', { n: Math.floor(diff / day) });
-  return new Date(ts).toLocaleDateString();
-}
-
-export function conversationMetaLabel(
-  conversation: Conversation,
-  t: TranslateFn,
-): string {
-  const latestRun = conversation.latestRun;
-  if (
-    latestRun &&
-    (latestRun.status === 'succeeded' ||
-      latestRun.status === 'failed' ||
-      latestRun.status === 'canceled') &&
-    typeof conversation.totalDurationMs === 'number' &&
-    Number.isFinite(conversation.totalDurationMs)
-  ) {
-    return formatDurationShort(conversation.totalDurationMs);
-  }
-  if (
-    latestRun &&
-    (latestRun.status === 'succeeded' ||
-      latestRun.status === 'failed' ||
-      latestRun.status === 'canceled') &&
-    typeof latestRun.durationMs === 'number' &&
-    Number.isFinite(latestRun.durationMs)
-  ) {
-    return formatDurationShort(latestRun.durationMs);
-  }
-  return relTime(conversation.updatedAt, t);
-}
-
-function formatDurationShort(ms: number): string {
-  const s = Math.max(0, ms) / 1000;
-  if (s < 60) return `${s.toFixed(s < 10 ? 1 : 0)}s`;
-  const m = Math.floor(s / 60);
-  const rem = Math.floor(s - m * 60);
-  return `${m}m ${rem.toString().padStart(2, '0')}s`;
-}
