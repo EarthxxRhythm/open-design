@@ -18,7 +18,8 @@
         "web": {"inputs": ["suite://web"], "runnerClass": "mac", "products": "manifest", "reusable": true},
         "desktop": {"inputs": ["suite://desktop"], "runnerClass": "mac", "products": "manifest", "reusable": true},
         "packaged": {"inputs": ["suite://packaged"], "runnerClass": "mac", "products": "manifest", "reusable": true},
-        "web-tests": {"inputs": ["suite://web", "apps/web/tests/", "apps/web/vitest.config.ts"], "runnerClass": "mac", "products": "none", "reusable": true}
+        "web-tests-1": {"inputs": ["suite://web", "apps/web/tests/", "apps/web/vitest.config.ts"], "runnerClass": "mac", "products": "none", "reusable": true},
+        "web-tests-2": {"inputs": ["suite://web", "apps/web/tests/", "apps/web/vitest.config.ts"], "runnerClass": "mac", "products": "none", "reusable": true}
       }
     }
   }

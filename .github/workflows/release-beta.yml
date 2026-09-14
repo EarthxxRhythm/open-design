@@ -101,12 +101,17 @@ jobs:
           retention-days: 7
 
   tests:
-    name: "[test] web source and test-input result"
+    name: "[test] web source and test-input result (${{ matrix.shard }}/2)"
     needs: plan
     if: needs.plan.outputs.test_run == 'true'
     runs-on: macos-14
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     env:
+      OD_WEB_OUTPUT_MODE: ""
       EXPERIMENT_PLAN: ${{ needs.plan.outputs.plan }}
       OD_WORKLOAD_RESULTS_BASE_URL: ${{ secrets.OD_WORKLOAD_RESULTS_BASE_URL }}
       CLOUDFLARE_R2_WORKLOAD_RESULTS_URL: ${{ secrets.CLOUDFLARE_R2_WORKLOAD_RESULTS_URL }}
@@ -127,4 +132,6 @@ jobs:
       - name: "[setup] test dependencies"
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: "[test] run real web tests and publish successful proof"
-        run: python3 .github/scripts/release/architecture_experiment.py test
+        env:
+          EXPERIMENT_SHARD: ${{ matrix.shard }}
+        run: python3 .github/scripts/release/architecture_experiment.py test --shard "$EXPERIMENT_SHARD"

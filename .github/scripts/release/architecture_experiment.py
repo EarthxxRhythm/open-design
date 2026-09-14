@@ -68,7 +68,7 @@ def contract():
 
 
 def key(identity: str, digest: str, name: str) -> str:
-    if identity not in {*ORDER, "web-tests"} or not c.DIGEST_RE.fullmatch(digest):
+    if identity not in {*ORDER, "web-tests-1", "web-tests-2"} or not c.DIGEST_RE.fullmatch(digest):
         raise RuntimeError("invalid experimental cache identity")
     if name not in {"result.json", "output.tgz"}:
         raise RuntimeError("only reusable experimental result objects are allowed")
@@ -118,7 +118,7 @@ def plan(round_name: str) -> None:
               "planSeconds": time.monotonic() - start,
               "policy": "receipt-only probe; product digest verified by materializer"}
     write_json(STATE / "plan.json", result)
-    append_outputs({"plan": c.canonical_json(result), "test_run": str(not records['web-tests']['hit']).lower()})
+    append_outputs({"plan": c.canonical_json(result), "test_run": str(any(not row['hit'] for name, row in records.items() if name.startswith('web-tests-'))).lower()})
     print(json.dumps({"round": round_name, "hits": {k: v['hit'] for k, v in records.items()}, "planSeconds": result['planSeconds']}, indent=2))
 
 
@@ -165,7 +165,7 @@ def publish(identity: str, expected: dict) -> dict:
     client = storage()
     products = {}
     size = 0
-    if identity != "web-tests":
+    if not identity.startswith("web-tests-"):
         archive = STATE / f"{identity}.tgz"
         paths = outputs(identity)
         if not paths or any(not (ROOT / path).exists() for path in paths):
@@ -182,18 +182,23 @@ def publish(identity: str, expected: dict) -> dict:
     return {"uploadedBytes": size, "publishSeconds": time.monotonic() - start}
 
 
-def execute(test_only: bool) -> None:
+def execute(test_only: bool, shard: int = 1) -> None:
     result = json.loads(os.environ["EXPERIMENT_PLAN"])
     prepare(result["round"])
     STATE.mkdir(parents=True, exist_ok=True)
     reports = {}
     if test_only:
+        identity = f"web-tests-{shard}"
+        if result['nodes'][identity]['hit']:
+            print(f"[skip] {identity}: existing successful result")
+            return
         # Tests consume package declarations, not the release's Next build.
         command(["pnpm", "--filter", "@open-design/web^...", "--workspace-concurrency=4", "--if-present", "run", "build"])
         start = time.monotonic()
-        command(["pnpm", "--filter", "@open-design/web", "test"])
-        reports["web-tests"] = {"action": "test", "seconds": time.monotonic() - start,
-                                **publish("web-tests", result['nodes']['web-tests']['expected'])}
+        command(["pnpm", "--filter", "@open-design/web", "run", "build:sidecar"])
+        command(["pnpm", "--filter", "@open-design/web", "exec", "vitest", "run", "-c", "vitest.config.ts", "--maxWorkers=2", f"--shard={shard}/2"])
+        reports[identity] = {"action": "test", "seconds": time.monotonic() - start,
+                             **publish(identity, result['nodes'][identity]['expected'])}
     else:
         for identity in ORDER:
             row = result["nodes"][identity]
@@ -256,6 +261,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["plan", "build", "test", "setup", "native"])
     parser.add_argument("--round", choices=["cold", "hot", "source", "test"], default="cold")
+    parser.add_argument("--shard", type=int, choices=[1, 2], default=1)
     args = parser.parse_args()
     guard()
     if args.command == "plan":
@@ -265,4 +271,4 @@ if __name__ == "__main__":
     elif args.command == "native":
         native()
     else:
-        execute(args.command == "test")
+        execute(args.command == "test", args.shard)
