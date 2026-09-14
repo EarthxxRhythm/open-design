@@ -9,7 +9,11 @@ import type {
 } from "@open-design/contracts/api/touchpointTestRuntime";
 import { getOpenDesignHost, OPEN_DESIGN_HOST_VERSION } from "@open-design/host";
 import { mountTouchpoint } from "./touchpoint-lifecycle";
-import { navigateCampaignTarget, resolveCampaignTarget, requireCampaignAction } from "./touchpoint-navigation";
+import {
+	navigateCampaignTarget,
+	resolveCampaignTarget,
+	requireCampaignAction,
+} from "./touchpoint-navigation";
 import {
 	type TouchpointLifecycleLoad,
 	resolveAuthorizationDeadline,
@@ -23,6 +27,7 @@ import {
 	useState,
 	useSyncExternalStore,
 } from "react";
+import { useI18n } from "../i18n";
 import styles from "./TestCampaignModal.module.css";
 import {
 	emitWebTouchpointDiagnostic,
@@ -137,16 +142,35 @@ export async function dispatchTestCampaignAction(
 	actionId: string,
 ): Promise<boolean> {
 	const session = currentTestSession;
-	const placement = TEST_CAMPAIGN_PLACEMENTS.find((key) => key === decision.placementKey);
+	const placement = TEST_CAMPAIGN_PLACEMENTS.find(
+		(key) => key === decision.placementKey,
+	);
 	const target = resolveCampaignTarget(decision.staticActions, actionId);
-	if (session && placement && session.isAuthorized() && session.decisions.get(placement) === decision && decision.testContext.scheduleState === "active" && decisionMatchesSelection(decision, session.context, session.deployment, placement) && navigator.userActivation?.isActive && target) {
+	if (
+		session &&
+		placement &&
+		session.isAuthorized() &&
+		session.decisions.get(placement) === decision &&
+		decision.testContext.scheduleState === "active" &&
+		decisionMatchesSelection(
+			decision,
+			session.context,
+			session.deployment,
+			placement,
+		) &&
+		navigator.userActivation?.isActive &&
+		target
+	) {
 		try {
 			if (await navigateCampaignTarget(target)) return true;
 		} catch {
 			// Report host navigation failure through the same action contract.
 		}
 	}
-	emitWebTouchpointDiagnostic({ code: "touchpoint_action_denied", detail: actionId });
+	emitWebTouchpointDiagnostic({
+		code: "touchpoint_action_denied",
+		detail: actionId,
+	});
 	return false;
 }
 
@@ -166,7 +190,6 @@ export function readCampaignHostLocale(): string {
 		"en-US"
 	);
 }
-
 
 function testPlacementIds(deployment: TestDeployment): TestCampaignPlacement[] {
 	return TEST_CAMPAIGN_PLACEMENTS.filter((key) =>
@@ -203,9 +226,7 @@ function decisionMatchesSelection(
 		isSelectedTestCampaignDecision(decision, context, placementKey) &&
 		decision.activityId === deployment.activityId &&
 		decision.testContext.testerMemberId === context.testerMemberId &&
-		["before", "active", "ended"].includes(
-			decision.testContext.scheduleState,
-		) &&
+		["before", "active", "ended"].includes(decision.testContext.scheduleState) &&
 		expectedSnapshotMatches(decision, deployment) &&
 		touchpointStaticActionsMatch(
 			decision.staticActions,
@@ -320,8 +341,7 @@ export function recordVisibleTestTouchpoint(
 	acceptanceState.set(key, "in-flight");
 	void recordTestAcceptance({
 		deploymentId: session.deployment.id,
-		snapshotHash:
-			session.deployment.snapshotHash ?? decision.snapshotHash ?? "",
+		snapshotHash: session.deployment.snapshotHash ?? decision.snapshotHash ?? "",
 		placementKey,
 		locale: decision.content.locale,
 		scenario: session.context.scenario,
@@ -337,7 +357,6 @@ export function recordVisibleTestTouchpoint(
 			});
 		});
 }
-
 
 export type TestTouchpointMountProps = Readonly<{
 	decision: TestDecision;
@@ -394,10 +413,17 @@ export function TestTouchpointMount({
 			},
 			onError: (error) =>
 				emitWebTouchpointDiagnostic({
-						code: error,
+					code: error,
 				}),
 		});
-	}, [decision, isAuthorized, onCloseControlChange, onVisible, placementKey, requestClose]);
+	}, [
+		decision,
+		isAuthorized,
+		onCloseControlChange,
+		onVisible,
+		placementKey,
+		requestClose,
+	]);
 	return (
 		<div
 			ref={containerRef}
@@ -418,7 +444,6 @@ function validIso(value: unknown): value is string {
 	);
 }
 
-
 /** Real Electron Test harness for all enabled OpenDesign placements. */
 export function TestCampaignModal({
 	authenticated,
@@ -427,13 +452,13 @@ export function TestCampaignModal({
 	authenticated: boolean;
 	sessionSubject?: string | null;
 }) {
+	const { locale } = useI18n();
 	const compatible = supportsHost(authenticated);
 	const owner = sessionSubject ?? null;
 	const [showControls] = useState(
 		() =>
 			typeof window !== "undefined" &&
-			new URLSearchParams(window.location.search).get("cmsTestControls") ===
-				"1",
+			new URLSearchParams(window.location.search).get("cmsTestControls") === "1",
 	);
 	const [catalog, setCatalog] = useState<{
 		owner: string | null;
@@ -465,25 +490,37 @@ export function TestCampaignModal({
 				const value = (await response.json()) as { deployments?: TestDeployment[] };
 				if (cancelled || controller.signal.aborted) return;
 				const available = (value.deployments ?? []).filter(
-					(candidate) => typeof candidate.id === "string" && testPlacementIds(candidate).length > 0,
+					(candidate) =>
+						typeof candidate.id === "string" &&
+						testPlacementIds(candidate).length > 0,
 				);
 				setCatalog({ owner, deployments: available });
-				if (!showControls && available[0]) setSelection({ owner, deployment: available[0] });
+				if (!showControls && available[0])
+					setSelection({ owner, deployment: available[0] });
 			})
 			.catch(() => {
 				if (!cancelled && !controller.signal.aborted)
 					setCatalog({ owner, deployments: [] });
 			});
-		return () => { cancelled = true; controller.abort(); };
+		return () => {
+			cancelled = true;
+			controller.abort();
+		};
 	}, [compatible, owner, showControls]);
 
 	const adapter = useMemo(() => {
 		if (!deployment) return null;
 		const selected = deployment;
 		const placements = testPlacementIds(selected);
-		const selectionKey = selected.id + ":" + (selected.snapshotHash ?? "");
+		// A snapshot may be renewed without remounting only within the same UI language.
+		const selectionKey = JSON.stringify([
+			selected.id,
+			selected.snapshotHash ?? "",
+			locale,
+		]);
 		let context: TestContext | null = null;
-		let windowBounds: Readonly<{ startsAt: number; endsAt: number }> | null = null;
+		let windowBounds: Readonly<{ startsAt: number; endsAt: number }> | null =
+			null;
 		const load = async (
 			signal: AbortSignal,
 			active: TestRuntimeValue | null,
@@ -501,93 +538,208 @@ export function TestCampaignModal({
 				if (!response.ok) throw new Error("realtime_test_runtime_required");
 				const next = (await response.json()) as TestContext;
 				if (!current()) return { kind: "retain" };
-				if (!next || next.deploymentId !== selected.id || next.scenario !== "realtime" || "simulatedAt" in next || !validIso(next.updatedAt))
+				if (
+					!next ||
+					next.deploymentId !== selected.id ||
+					next.scenario !== "realtime" ||
+					"simulatedAt" in next ||
+					!validIso(next.updatedAt)
+				)
 					return { kind: "clear" };
 				context = next;
 			}
 			const selectedContext = context;
-			const loaded = await Promise.all(placements.map(async (placementKey) => {
-				const query = new URLSearchParams({ deploymentId: selected.id, placementKey, locale: readCampaignHostLocale() });
-				const response = await fetch("/api/touchpoints/test-runtime?" + query, { cache: "no-store", signal });
-				if (!current()) return null;
-				if (!response.ok) throw new Error("touchpoint_test_load_failed");
-				const decision = (await response.json()) as TestDecision;
-				if (!current()) return null;
-				if (!decision || !decisionMatchesSelection(decision, selectedContext, selected, placementKey))
-					throw new Error("touchpoint_decision_mismatch");
-				if (!validIso(decision.serverTime) || !validIso(decision.startsAt) || !validIso(decision.endsAt) || !validIso(decision.authorizationExpiresAt) || decision.testContext.scenario !== "realtime" || "simulatedAt" in decision.testContext)
-					throw new Error("realtime_test_runtime_required");
-				const serverTime = Date.parse(decision.serverTime);
-				const startsAt = Date.parse(decision.startsAt);
-				const endsAt = Date.parse(decision.endsAt);
-				if (startsAt >= endsAt) throw new Error("realtime_test_runtime_required");
-				const expected = serverTime < startsAt ? "before" : serverTime < endsAt ? "active" : "ended";
-				if (decision.testContext.scheduleState !== expected) throw new Error("realtime_test_runtime_required");
-				const capabilities = placementKey === TEST_CAMPAIGN_MODAL_PLACEMENT ? supportedCapabilities : placementCapabilities;
-				if (!supportsWebTouchpointCapabilities(decision.content, decision.requiredCapabilities, capabilities))
-					throw new Error("touchpoint_capability_unsupported");
-				if (expected === "ended")
-					return { placementKey, decision, startsAt, endsAt, serverTime, validForMs: 0 };
-				const deadline = resolveAuthorizationDeadline(decision, 60_000, true);
-				if (deadline === null) throw new Error("realtime_test_runtime_required");
-				return { placementKey, decision, startsAt, endsAt, serverTime, validForMs: deadline - serverTime };
-			}));
+			const loaded = await Promise.all(
+				placements.map(async (placementKey) => {
+					const query = new URLSearchParams({
+						deploymentId: selected.id,
+						placementKey,
+						locale,
+					});
+					const response = await fetch("/api/touchpoints/test-runtime?" + query, {
+						cache: "no-store",
+						signal,
+					});
+					if (!current()) return null;
+					if (!response.ok) throw new Error("touchpoint_test_load_failed");
+					const decision = (await response.json()) as TestDecision;
+					if (!current()) return null;
+					if (
+						!decision ||
+						!decisionMatchesSelection(
+							decision,
+							selectedContext,
+							selected,
+							placementKey,
+						)
+					)
+						throw new Error("touchpoint_decision_mismatch");
+					if (
+						!validIso(decision.serverTime) ||
+						!validIso(decision.startsAt) ||
+						!validIso(decision.endsAt) ||
+						!validIso(decision.authorizationExpiresAt) ||
+						decision.testContext.scenario !== "realtime" ||
+						"simulatedAt" in decision.testContext
+					)
+						throw new Error("realtime_test_runtime_required");
+					const serverTime = Date.parse(decision.serverTime);
+					const startsAt = Date.parse(decision.startsAt);
+					const endsAt = Date.parse(decision.endsAt);
+					if (startsAt >= endsAt) throw new Error("realtime_test_runtime_required");
+					const expected =
+						serverTime < startsAt
+							? "before"
+							: serverTime < endsAt
+								? "active"
+								: "ended";
+					if (decision.testContext.scheduleState !== expected)
+						throw new Error("realtime_test_runtime_required");
+					const capabilities =
+						placementKey === TEST_CAMPAIGN_MODAL_PLACEMENT
+							? supportedCapabilities
+							: placementCapabilities;
+					if (
+						!supportsWebTouchpointCapabilities(
+							decision.content,
+							decision.requiredCapabilities,
+							capabilities,
+						)
+					)
+						throw new Error("touchpoint_capability_unsupported");
+					if (expected === "ended")
+						return {
+							placementKey,
+							decision,
+							startsAt,
+							endsAt,
+							serverTime,
+							validForMs: 0,
+						};
+					const deadline = resolveAuthorizationDeadline(decision, 60_000, true);
+					if (deadline === null) throw new Error("realtime_test_runtime_required");
+					return {
+						placementKey,
+						decision,
+						startsAt,
+						endsAt,
+						serverTime,
+						validForMs: deadline - serverTime,
+					};
+				}),
+			);
 			if (!current()) return { kind: "retain" };
 			const decisions = loaded.filter(
 				(item): item is NonNullable<typeof item> => item !== null,
 			);
 			if (decisions.length !== placements.length) return { kind: "retain" };
 			const first = decisions[0];
-			if (!first || decisions.some((item) => item.startsAt !== first.startsAt || item.endsAt !== first.endsAt))
+			if (
+				!first ||
+				decisions.some(
+					(item) => item.startsAt !== first.startsAt || item.endsAt !== first.endsAt,
+				)
+			)
 				throw new Error("touchpoint_decision_mismatch");
-			if (windowBounds && (windowBounds.startsAt !== first.startsAt || windowBounds.endsAt !== first.endsAt))
+			if (
+				windowBounds &&
+				(windowBounds.startsAt !== first.startsAt ||
+					windowBounds.endsAt !== first.endsAt)
+			)
 				throw new Error("touchpoint_decision_mismatch");
 			windowBounds = { startsAt: first.startsAt, endsAt: first.endsAt };
-			if (decisions.some((item) => item.decision.testContext.scheduleState === "ended")) return { kind: "clear", ended: true };
-			if (decisions.some((item) => item.decision.testContext.scheduleState === "before"))
-				return { kind: "waiting", retryAfterMs: Math.max(...decisions.map((item) => item.startsAt - item.serverTime)) };
+			if (
+				decisions.some(
+					(item) => item.decision.testContext.scheduleState === "ended",
+				)
+			)
+				return { kind: "clear", ended: true };
+			if (
+				decisions.some(
+					(item) => item.decision.testContext.scheduleState === "before",
+				)
+			)
+				return {
+					kind: "waiting",
+					retryAfterMs: Math.max(
+						...decisions.map((item) => item.startsAt - item.serverTime),
+					),
+				};
 			const validForMs = Math.min(...decisions.map((item) => item.validForMs));
 			if (validForMs <= 0) return { kind: "clear" };
-			const session = active?.selectionKey === selectionKey ? active : Object.freeze<TestRuntimeValue>({
-				selectionKey, deployment: selected, context: selectedContext,
-				decisions: new Map(decisions.map((item) => [item.placementKey, item.decision])),
-			});
+			const session =
+				active?.selectionKey === selectionKey
+					? active
+					: Object.freeze<TestRuntimeValue>({
+							selectionKey,
+							deployment: selected,
+							context: selectedContext,
+							decisions: new Map(
+								decisions.map((item) => [item.placementKey, item.decision]),
+							),
+						});
 			return { kind: "decision", value: session, key: selectionKey, validForMs };
 		};
 		return { selectionKey, load };
-	}, [deployment]);
+	}, [deployment, locale]);
 
-	const load = useCallback((signal: AbortSignal, active: TestRuntimeValue | null) =>
-		adapter ? adapter.load(signal, active) : Promise.resolve({ kind: "clear" } as const), [adapter]);
+	const load = useCallback(
+		(signal: AbortSignal, active: TestRuntimeValue | null) =>
+			adapter
+				? adapter.load(signal, active)
+				: Promise.resolve({ kind: "clear" } as const),
+		[adapter],
+	);
 	const lifecycle = useTouchpointLifecycle<TestRuntimeValue>({
 		enabled: compatible && adapter !== null,
 		identity: adapter ? owner + ":" + adapter.selectionKey : null,
 		load,
-		onError: (error) => emitWebTouchpointDiagnostic({ code: error instanceof Error ? error.message : "touchpoint_test_load_failed" }),
+		onError: (error) =>
+			emitWebTouchpointDiagnostic({
+				code:
+					error instanceof Error ? error.message : "touchpoint_test_load_failed",
+			}),
 	});
-	const runtimeSession = useMemo(() => lifecycle.current && Object.freeze<TestRuntimeSession>({
-		...lifecycle.current,
-		isAuthorized: () => lifecycle.isCurrent(lifecycle.generation),
-	}), [lifecycle.current, lifecycle.generation, lifecycle.isCurrent]);
+	const runtimeSession = useMemo(
+		() =>
+			lifecycle.current &&
+			Object.freeze<TestRuntimeSession>({
+				...lifecycle.current,
+				isAuthorized: () => lifecycle.isCurrent(lifecycle.generation),
+			}),
+		[lifecycle.current, lifecycle.generation, lifecycle.isCurrent],
+	);
 	useEffect(() => {
 		if (!deployment) {
 			publishedSession.current = null;
 			clearTestRuntimeSession();
 			return;
 		}
-		const session = runtimeSession ?? Object.freeze<TestRuntimeSession>({
-			selectionKey: adapter?.selectionKey ?? deployment.id + ":" + (deployment.snapshotHash ?? ""),
-			deployment,
-			context: { deploymentId: deployment.id, scenario: "realtime", updatedAt: "" },
-			decisions: new Map<TestCampaignPlacement, TestDecision>(),
-			isAuthorized: () => false,
-		});
+		const session =
+			runtimeSession ??
+			Object.freeze<TestRuntimeSession>({
+				selectionKey:
+					adapter?.selectionKey ??
+					deployment.id + ":" + (deployment.snapshotHash ?? ""),
+				deployment,
+				context: {
+					deploymentId: deployment.id,
+					scenario: "realtime",
+					updatedAt: "",
+				},
+				decisions: new Map<TestCampaignPlacement, TestDecision>(),
+				isAuthorized: () => false,
+			});
 		publishedSession.current = session;
 		setTestRuntimeSession(session);
 	}, [adapter, deployment, runtimeSession]);
-	useEffect(() => () => {
-		if (currentTestSession === publishedSession.current) clearTestRuntimeSession();
-	}, []);
+	useEffect(
+		() => () => {
+			if (currentTestSession === publishedSession.current)
+				clearTestRuntimeSession();
+		},
+		[],
+	);
 
 	if (!showControls || !compatible || deployments.length === 0) return null;
 	return (
