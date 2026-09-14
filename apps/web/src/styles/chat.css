@@ -9,11 +9,10 @@
   gap: 4px;
   padding: 8px 12px;
   border-bottom: none;
-  /* Sticky over the translucent chat pane: frosted glass masks messages
-     scrolling beneath (glass tokens are theme-aware). */
-  background: var(--glass-regular);
-  -webkit-backdrop-filter: var(--glass-backdrop);
-  backdrop-filter: var(--glass-backdrop);
+  /* Transparent: the transcript softens as it passes under this row via the
+     progressive blur edge mounted inside .chat-log-viewport (ChatScrollEdge),
+     so the header paints no glass tint or cap of its own. */
+  background: transparent;
   min-width: 0;
   height: 38px;
   position: sticky;
@@ -23,23 +22,6 @@
      so the header must clear both chat overlays or the rail's transparent
      20px hit zone steals clicks from the menu's trailing edge. */
   z-index: 9;
-}
-.chat-project-header::after {
-  content: '';
-  position: absolute;
-  top: 100%;
-  right: 0;
-  left: 0;
-  height: var(--spacing-18);
-  pointer-events: none;
-  /* Extend the regular glass material into the scroll area, then fade both
-     its tint and blur so messages pass under a soft edge instead of a hard
-     horizontal cutoff. */
-  background: linear-gradient(to bottom, var(--glass-regular), transparent);
-  -webkit-backdrop-filter: var(--glass-backdrop);
-  backdrop-filter: var(--glass-backdrop);
-  -webkit-mask-image: linear-gradient(to bottom, currentColor, transparent);
-  mask-image: linear-gradient(to bottom, currentColor, transparent);
 }
 .chat-project-back {
   width: 28px;

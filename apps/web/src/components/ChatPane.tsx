@@ -127,6 +127,7 @@ import { AssistantMessage, type QuestionFormSubmitHandler } from './AssistantMes
 import { chatSeam } from './chat/ChatRoot';
 import { PlanPill } from './chat/PlanPill';
 import { QueuedSendStack } from './chat/QueuedSendStack';
+import { ChatScrollEdge } from './chat/ChatScrollEdge';
 import { planPillState } from '../runtime/chat/plan-pill';
 import {
   assistantMessageNeverHadARun,
@@ -4415,6 +4416,7 @@ export function ChatPane({
           <>
             <div className={`chat-log-wrap${chatLogTray ? ' has-chat-log-tray' : ''}`}>
               <div className="chat-log-viewport">
+                <ChatScrollEdge scrollRef={logRef} />
                 <ChatMessageRail
                   items={chatRenderItems}
                   loading={loading}
