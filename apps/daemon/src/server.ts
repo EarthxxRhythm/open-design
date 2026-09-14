@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { amrFirstOutputTimeoutMs } from './runtimes/defs/amr.js';
 import type {
   DesktopExportArtifactInput,
   DesktopExportArtifactResult,
@@ -13656,7 +13657,7 @@ export async function startServer({
     // earlier, so we keep only the new `runStartTimeMs` declaration.
     const runStartTimeMs = Date.now();
     const firstOutputTimeoutMs =
-      resolveChatRunFirstOutputTimeoutMs(def.firstOutputTimeoutMs);
+      resolveChatRunFirstOutputTimeoutMs(amrFirstOutputTimeoutMs(selectedAmrRuntime, def.firstOutputTimeoutMs));
     const artifactQuietPeriodMs = resolveChatRunArtifactQuietPeriodMs();
     // Grace before the inactivity watchdog escalates a stalled child from
     // SIGTERM to SIGKILL. Env-tunable like its OD_CHAT_RUN_* cancel-grace

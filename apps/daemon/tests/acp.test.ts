@@ -4124,3 +4124,23 @@ test('createJsonLineStream still assembles a legitimate multiline JSON response'
 
   assert.deepEqual(received.map((message) => message.id), [5]);
 });
+
+test.each(['none', 'claude', 'codex'] as const)('AMR %s error replies preserve usage and correlated response evidence', (runtime) => {
+  const child = new FakeAcpChild();
+  const evidence: unknown[] = [];
+  const events: Array<{ event: string; data: any }> = [];
+  const session = attachAcpSession({ child: child as never, prompt: 'Build', model: 'gpt-6-astra-high', expectedAmrRuntime: runtime,
+    send: (event, data) => events.push({ event, data }), onAmrRuntimeEvidence: value => evidence.push(value) });
+  const sessionId = `${runtime}-${'a'.repeat(32)}`;
+  writeAcpResult(child, 1, {});
+  writeAcpResult(child, 2, { sessionId, durableSessionId: sessionId, runtime, runtimeVersion: '1.0.0' });
+  writeAcpResult(child, 3, { modelId: 'amr/gpt-6-astra-high' });
+  const modelResponses = [{ requestedModelId: 'gpt-6-astra-high', requestId: 'failed-request', responseId: 'partial-response', responseModelId: 'backend-model' }];
+  writeAcpError(child, 4, { code: -32602, message: 'output interrupted', data: {
+    runtime, runtimeVersion: '1.0.0', modelId: 'gpt-6-astra-high', modelResponses,
+    usage: { inputTokens: 100, outputTokens: 20, totalTokens: 120 },
+  } });
+  expect(session.hasFatalError()).toBe(true);
+  expect(evidence.at(-1)).toMatchObject({ modelResponses });
+  expect(events.some(row => row.event === 'agent' && row.data.type === 'usage' && row.data.usage.output_tokens === 20)).toBe(true);
+});

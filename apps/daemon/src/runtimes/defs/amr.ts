@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execAgentFile } from './shared.js';
-import type { ModelCapability, ModelCost, ModelMetadata } from '@open-design/contracts';
+import type { AmrRuntime, ModelCapability, ModelCost, ModelMetadata } from '@open-design/contracts';
 import type { RuntimeAgentDef, RuntimeBuildOptions, RuntimeModelOption } from '../types.js';
 
 const AMR_MODELS_TIMEOUT_MS = 10_000;
@@ -700,3 +700,13 @@ export const amrAgentDef = {
   // while still bounding the user's wait and one safe same-run retry.
   firstOutputTimeoutMs: 2 * 60 * 1000,
 } satisfies RuntimeAgentDef;
+
+/** Model-only reasoning may produce no stream deltas for several minutes.
+ * Keep a finite wait, separate from the 30-minute whole-answer deadline.
+ */
+export const AMR_DIRECT_MODEL_FIRST_OUTPUT_TIMEOUT_MS = 10 * 60 * 1000;
+
+/** Preserve every harness timeout; only model-only reasoning needs a longer first-output window. */
+export function amrFirstOutputTimeoutMs(runtime: AmrRuntime | undefined, defaultMs: number | undefined): number | undefined {
+  return runtime === 'none' ? AMR_DIRECT_MODEL_FIRST_OUTPUT_TIMEOUT_MS : defaultMs;
+}
