@@ -162,10 +162,18 @@ export function AvatarMenu({
 
       const margin = 16;
       const gap = 8;
-      const width = Math.min(208, window.innerWidth - margin * 2);
+      // The popover stays inside the composer shell it belongs to: its left
+      // and right bounds are the shell's own edges (viewport margin as the
+      // outer floor), and it right-aligns to the trigger so a narrow shell
+      // never pushes the menu past the card. Outside a shell (no
+      // `.composer-shell` ancestor) it falls back to the viewport bounds.
+      const composer = triggerRef.current?.closest('.composer-shell')?.getBoundingClientRect();
+      const minLeft = Math.max(margin, composer?.left ?? margin);
+      const maxRight = Math.min(window.innerWidth - margin, composer?.right ?? window.innerWidth - margin);
+      const width = Math.min(208, Math.max(0, maxRight - minLeft));
       const left = Math.min(
-        Math.max(rect.left, margin),
-        window.innerWidth - width - margin,
+        Math.max(composer ? rect.right - width : rect.left, minLeft),
+        maxRight - width,
       );
 
       if (placement === 'up') {
@@ -203,9 +211,15 @@ export function AvatarMenu({
     };
 
     updatePosition();
+    // The composer shell grows and shrinks with the draft (auto-height editor,
+    // attachment band), which moves the trigger without a window resize.
+    const composer = triggerRef.current?.closest('.composer-shell');
+    const resizeObserver = composer ? new ResizeObserver(updatePosition) : null;
+    if (composer) resizeObserver?.observe(composer);
     window.addEventListener('resize', updatePosition);
     window.addEventListener('scroll', updatePosition, true);
     return () => {
+      resizeObserver?.disconnect();
       window.removeEventListener('resize', updatePosition);
       window.removeEventListener('scroll', updatePosition, true);
     };

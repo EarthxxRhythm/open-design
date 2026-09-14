@@ -758,7 +758,7 @@ const DEFAULT_CHAT_PANEL_WIDTH = 460;
 const MIN_CHAT_PANEL_WIDTH = 345;
 const MAX_CHAT_PANEL_WIDTH = 720;
 const MIN_WORKSPACE_PANEL_WIDTH = 400;
-const SPLIT_RESIZE_HANDLE_WIDTH = 8;
+const SPLIT_RESIZE_HANDLE_WIDTH = 4;
 const BYOK_OPENCODE_UNAVAILABLE_MESSAGE =
   'BYOK API runs require OpenCode. Install OpenCode, then rescan local agents in Settings before retrying.';
 const BYOK_PROVIDER_REQUIRED_MESSAGE =
@@ -11763,7 +11763,7 @@ export function ProjectView({
               )}
               designSystemPicker={(
                 <DesignSystemPicker
-                  variant="icon"
+                  variant="home"
                   designSystems={designSystems}
                   selectedId={projectDesignSystemId ?? null}
                   workspaceContext={projectRunWorkspaceContext}

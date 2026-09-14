@@ -1531,7 +1531,7 @@
      giving a 10px tab-to-content spacing (was 18px). Bottom/left stay 8px; the
      slot's overflow:hidden (shell.css) clips the card's shadow cleanly at the
      slot edge. Right side is 0 so the gap to the workspace card is just the
-     8px resize-handle column (not 8+8+8=24px). */
+     4px resize-handle column (not 8+4+8=20px). */
   padding: 0 0 8px 8px;
   background: var(--veil-page, transparent);
 }
@@ -1542,13 +1542,15 @@
   border: none;
   border-radius: var(--radius-lg);
   box-shadow: none;
-  /* Pure-white frosted glass: a white tint over the regular blur so the chat
-     panel reads paper-white instead of showing the raw ground. Dark theme
-     falls back to the standard Regular material, and the degraded blocks
-     below flatten it to a solid surface. */
-  background: color-mix(in srgb, #fff 85%, transparent);
-  -webkit-backdrop-filter: var(--material-regular-backdrop);
-  backdrop-filter: var(--material-regular-backdrop);
+  /* Product decision (OPEND-3090, per the #8113 Demo): the card paints
+     nothing of its own, so the app wash / window vibrancy shows through the
+     chat column exactly as it does through the gutter around it. The earlier
+     85% white frost over the Regular blur is gone on purpose; do not bring it
+     back. Dark theme still falls back to the standard Regular material, and
+     the degraded blocks below flatten the card to a solid surface. */
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
   overflow: hidden;
 }
 [data-theme='dark'] .app .split-chat-slot > .pane {
@@ -1571,8 +1573,8 @@
 }
 .app .split-resize-handle {
   --split-resize-gradient-surface: #fff;
-  width: 8px;
-  min-width: 8px;
+  width: var(--project-chat-handle-width, 4px);
+  min-width: 0;
   background: transparent;
 }
 
