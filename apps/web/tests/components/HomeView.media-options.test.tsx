@@ -109,19 +109,18 @@ describe('HomeView media composer options', () => {
     expect(screen.getByTestId('home-hero-template-clear')).toBeTruthy();
   });
 
-  it('drops the Home composer mode picker and still submits in Design mode', async () => {
+  it('defaults to Design mode with no mode picker in the composer', async () => {
     stubFetch();
     const onSubmit = vi.fn();
     renderHome({ onSubmit });
 
     await screen.findByTestId('home-hero-input');
 
-    // 设计 is the app default AND the default SELECTION: the composer opens with
-    // the Design pill showing, so the mode the request will run in is stated on
-    // screen rather than hidden behind a neutral glyph. The submitted payload
-    // carries design either way.
-    // The 「设计」 pill was removed from the Home composer footer; Home creates
-    // keep running in the app default — design — which the payload states.
+    // 设计 is the app default, and since the mode chip left the Home composer
+    // (2026-09-08, product) it is also the only mode Home submits — nothing on
+    // this surface can move it any more. Absence is pinned in full by
+    // `HomeView.mode-picker-removed.test.tsx`; this spec keeps the payload half
+    // of the pair, so a picker coming back cannot quietly change what Home runs.
     expect(screen.queryByTestId('composer-mode-trigger')).toBeNull();
 
     await setHomePrompt('Create a clean loading animation');

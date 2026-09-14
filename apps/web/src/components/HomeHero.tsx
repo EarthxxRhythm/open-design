@@ -24,6 +24,7 @@ import type {
   RefObject,
 } from 'react';
 import type {
+  ChatSessionMode,
   ConnectorDetail,
   DesignSystemSummary,
   InputFieldSpec,
@@ -147,6 +148,13 @@ interface Props {
   // showing: the host seeds the prompt with `scenario.text`, binds the
   // scenario's template, and creates the project -- one-click "just start".
   onSubmitScenario?: (scenario: PlaceholderScenario) => void;
+  // Wiring for the dormant `ComposerModePicker` (see the composer footer
+  // below). Nothing in HomeHero reads these while the picker is off screen —
+  // the host keeps its own `sessionMode` state, which now stays on the app
+  // default. They are kept declared so the HomeView call site (and the restore
+  // path) stays intact.
+  sessionMode?: ChatSessionMode;
+  onSessionModeChange?: (mode: ChatSessionMode) => void;
   activePluginTitle: string | null;
   // True when the active plugin chip shows a user-picked plugin (Community card
   // or example-prompt preset) rather than a task-type chip's default plugin —
@@ -180,6 +188,7 @@ interface Props {
   onAddWorkspaceContext?: (item: WorkspaceContextItem) => void;
   onRemoveWorkspaceContext?: (id: string) => void;
   onAddConnector?: () => void;
+  onAddPlugin?: () => void;
   onAddMcp?: () => void;
   onOpenPluginDetails?: (record: InstalledPluginRecord) => void;
   onOpenSkillDetails?: (skill: SkillSummary) => void;
@@ -365,6 +374,7 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
     onAddWorkspaceContext = () => undefined,
     onRemoveWorkspaceContext = () => undefined,
     onAddConnector = () => undefined,
+    onAddPlugin = () => undefined,
     onAddMcp = () => undefined,
     onOpenPluginDetails = () => undefined,
     onOpenSkillDetails = () => undefined,
@@ -2181,13 +2191,61 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
               onSubmenuOpen={(submenu) => {
                 // Home never passes the working-dir submenu (it keeps its own
                 // footer picker), so only the resource submenus reach here.
-                if (submenu === 'workingDir') return;
+                if (submenu === 'toolbox' || submenu === 'workingDir') return;
                 trackHomeChatComposerClick(analytics.track, {
                   page_name: 'home',
                   area: 'chat_composer',
                   element: 'plus_submenu_open',
                   resource_kind: PLUS_SUBMENU_RESOURCE_KIND[submenu],
                 });
+              }}
+              onSearchUsed={(submenu) => {
+                trackHomeChatComposerClick(analytics.track, {
+                  page_name: 'home',
+                  area: 'chat_composer',
+                  element: 'plus_search',
+                  resource_kind: PLUS_SUBMENU_RESOURCE_KIND[submenu],
+                });
+              }}
+              connectors={connectorOptions}
+              onPickConnector={(connector) => {
+                trackHomeChatComposerClick(analytics.track, {
+                  page_name: 'home',
+                  area: 'chat_composer',
+                  element: 'plus_pick',
+                  resource_kind: 'connector',
+                  resource_id: connector.id,
+                });
+                pickConnector(connector);
+              }}
+              onAddConnector={() => {
+                trackHomeChatComposerClick(analytics.track, {
+                  page_name: 'home',
+                  area: 'chat_composer',
+                  element: 'plus_add',
+                  resource_kind: 'connector',
+                });
+                onAddConnector();
+              }}
+              plugins={pluginOptions}
+              onPickPlugin={(record) => {
+                trackHomeChatComposerClick(analytics.track, {
+                  page_name: 'home',
+                  area: 'chat_composer',
+                  element: 'plus_pick',
+                  resource_kind: 'plugin',
+                  resource_id: record.id,
+                });
+                pickPlugin(record);
+              }}
+              onAddPlugin={() => {
+                trackHomeChatComposerClick(analytics.track, {
+                  page_name: 'home',
+                  area: 'chat_composer',
+                  element: 'plus_add',
+                  resource_kind: 'plugin',
+                });
+                onAddPlugin();
               }}
               skills={skillOptions}
               onPickSkill={(skill) => {
@@ -2199,6 +2257,26 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
                   resource_id: skill.id,
                 });
                 pickSkill(skill);
+              }}
+              mcpServers={mcpOptions}
+              onPickMcp={(server) => {
+                trackHomeChatComposerClick(analytics.track, {
+                  page_name: 'home',
+                  area: 'chat_composer',
+                  element: 'plus_pick',
+                  resource_kind: 'mcp',
+                  resource_id: server.id,
+                });
+                pickMcp(server);
+              }}
+              onAddMcp={() => {
+                trackHomeChatComposerClick(analytics.track, {
+                  page_name: 'home',
+                  area: 'chat_composer',
+                  element: 'plus_add',
+                  resource_kind: 'mcp',
+                });
+                onAddMcp();
               }}
               onAttachFiles={() => {
                 trackHomeChatComposerClick(analytics.track, {
@@ -2325,6 +2403,24 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
             ) : null}
           </div>
           <div className="home-hero__foot-right">
+            {/* No mode picker on Home (2026-09-08, product): the 「设计 ×」 chip
+                used to sit here, left of the model switcher. The project
+                composer dropped the same chooser first (2026-08-19 — see the
+                matching comment in `ChatComposer.tsx`); Home was the last
+                surface still carrying it, and every Home request defaulted
+                past it to Design anyway.
+
+                Behaviour is unchanged, only the control is gone: `HomeView`
+                still owns the `sessionMode` state that feeds `conversationMode`
+                (plus the task profile and plugin provenance), and with nothing
+                calling `setSessionMode` it stays on the app default, `design`.
+
+                To restore: re-add `import { ComposerModePicker } from
+                './ComposerModePicker'`, re-destructure the `sessionMode` /
+                `onSessionModeChange` props (still declared above, still passed
+                by `HomeView`), and render the picker here with the
+                `trackComposerSessionModeClick` call it had. Pinned by
+                `tests/components/HomeView.mode-picker-removed.test.tsx`. */}
             {executionSwitcher ? (
               <div className="home-hero__execution-switcher">
                 {executionSwitcher}

@@ -87,8 +87,15 @@ interface NormalizedResource {
   resource_type: string;
 }
 
+type ResourceEventProperties = NormalizedResource & {
+  tag: string;
+  async_attr: boolean;
+  defer_attr: boolean;
+  crossorigin_mode: string;
+};
+
 interface ResourceWindow {
-  properties: Record<string, unknown>;
+  properties: ResourceEventProperties;
   repeatCount: number;
   timer: number;
 }
@@ -116,7 +123,7 @@ export function installResourceErrorObserver(): () => void {
 
   const startWindow = (
     key: string,
-    properties: Record<string, unknown>,
+    properties: ResourceEventProperties,
   ): void => {
     if (windows.size >= MAX_TRACKED_RESOURCES) {
       const oldestKey = windows.keys().next().value as string | undefined;
@@ -146,7 +153,7 @@ export function installResourceErrorObserver(): () => void {
     if (src == null) return;
     const tag = target.tagName.toLowerCase();
     const resource = normalizeResource(src, tag);
-    const properties: Record<string, unknown> = {
+    const properties: ResourceEventProperties = {
       ...resource,
       tag,
       // crossorigin / async / defer are useful signals for diagnosing
@@ -194,7 +201,7 @@ export function installResourceErrorObserver(): () => void {
 }
 
 function reportResourceEvent(
-  properties: Record<string, unknown>,
+  properties: ResourceEventProperties,
   eventKind: 'first' | 'repeat_summary',
   repeatCount: number,
 ): void {
@@ -202,6 +209,7 @@ function reportResourceEvent(
     'client_resource_error',
     {
       ...properties,
+      monitoring_kind: `${properties.category}|${eventKind}`,
       event_kind: eventKind,
       repeat_count: repeatCount,
     },

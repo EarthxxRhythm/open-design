@@ -47,7 +47,6 @@ function renderPending(overrides: Partial<Parameters<typeof ProjectCreationPendi
         projectName="Coffee shop landing page"
         prompt="Make a landing page for a coffee shop"
         agentId="claude"
-        onBack={() => undefined}
         {...overrides}
       />
     </I18nProvider>,
@@ -63,20 +62,22 @@ describe('ProjectCreationPendingView', () => {
     expect(screen.getByText('Preparing...')).toBeTruthy();
   });
 
-  it('lists staged attachments as user-message chips in send order', () => {
+  it('lists staged attachments as user-message cards in send order', () => {
     renderPending({
-      attachments: [
+      files: [
         new File(['brief'], 'brief.txt', { type: 'text/plain' }),
         new File(['png'], 'mood.png', { type: 'image/png' }),
       ],
     });
 
-    const chips = screen.getByTestId('pending-user-attachments').querySelectorAll('.user-attachment');
-    expect(Array.from(chips).map((chip) => chip.textContent)).toEqual(['1brief.txt', '2mood.png']);
-    expect(chips[1]!.className).toContain('staged-image');
-    expect(chips[1]!.querySelector('img')?.getAttribute('src')).toBe('blob:preview-1');
-    // The chips are labels, not openable files: nothing has been uploaded.
-    expect(Array.from(chips).every((chip) => (chip as HTMLButtonElement).disabled)).toBe(true);
+    const row = screen.getByTestId('pending-attachment-row');
+    const cards = row.querySelectorAll('.msg-att-doc, .msg-att-img');
+    expect(Array.from(cards).map((card) => card.className)).toEqual(['msg-att-doc', 'msg-att-img']);
+    expect(cards[0]!.querySelector('.msg-att-base')?.textContent).toBe('brief');
+    expect(cards[0]!.querySelector('.msg-att-ext')?.textContent).toBe('.txt');
+    expect(cards[1]!.querySelector('img')?.getAttribute('src')).toBe('blob:preview-1');
+    // The cards are labels, not openable files: nothing has been uploaded.
+    expect(row.querySelector('button')).toBeNull();
   });
 
   it('keeps image previews alive through a StrictMode double mount', () => {
@@ -89,14 +90,13 @@ describe('ProjectCreationPendingView', () => {
           <ProjectCreationPendingView
             projectName="Coffee shop landing page"
             prompt="Make a landing page"
-            attachments={[new File(['png'], 'mood.png', { type: 'image/png' })]}
-            onBack={() => undefined}
-          />
+            files={[new File(['png'], 'mood.png', { type: 'image/png' })]}
+              />
         </I18nProvider>
       </StrictMode>,
     );
 
-    const src = screen.getByTestId('pending-user-attachments').querySelector('img')?.getAttribute('src');
+    const src = screen.getByTestId('pending-attachment-row').querySelector('img')?.getAttribute('src');
     expect(src).toBeTruthy();
     expect(createdUrls).toContain(src);
     expect(revokedUrls).not.toContain(src);
@@ -119,7 +119,7 @@ describe('ProjectCreationPendingView', () => {
   });
 
   it('starts no project-owned request while the project is unconfirmed', async () => {
-    renderPending({ attachments: [new File(['brief'], 'brief.txt', { type: 'text/plain' })] });
+    renderPending({ files: [new File(['brief'], 'brief.txt', { type: 'text/plain' })] });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     const projectReads = fetchMock.mock.calls

@@ -1160,10 +1160,11 @@ test('[P0] signed-out Local setup can navigate the surviving rail destinations',
 test('[P0] @critical home composer delegates the picked prototype scenario to daemon authority', async ({ page }) => {
   await gotoEntryHome(page);
 
-  // The Home composer has no mode picker any more — every Home create runs in
-  // the default design mode (asserted on the request body below) — and it
-  // starts typeless (#7635), so the Prototype type is picked from the row.
+  // The mode chip left the Home composer (2026-09-08, product) — Design is
+  // still what this request routes as, it just is not stated on a control any
+  // more. The routing itself is asserted from the request body below.
   await expect(page.getByTestId('composer-mode-trigger')).toHaveCount(0);
+  // Home starts typeless (#7635), so the Prototype type is picked from the row.
   await pickHomeTemplate(page, 'prototype');
 
   const input = page.getByTestId('home-hero-input');

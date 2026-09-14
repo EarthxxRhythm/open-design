@@ -1,22 +1,32 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { AgentIcon } from './AgentIcon';
 import { ChatComposer } from './ChatComposer';
 import { Icon } from './Icon';
+import { useWorkspaceTabsDockRef } from './workspaceTabsDock';
 import { useI18n } from '../i18n';
+import { formatAttachmentSize, splitFileName } from '../runtime/chat/attachment';
+import { looksLikeImageName } from '../runtime/chat/staged-attachment';
 import { agentDisplayName, agentIconId } from '../utils/agentLabels';
 import styles from './ProjectCreationPendingView.module.css';
 
 interface Props {
   projectName: string;
   prompt: string;
-  /** Home composer attachments that will upload once the project exists. */
-  attachments?: readonly File[];
+  /** The files the user staged on Home. Still local `File` objects here. */
+  files?: readonly File[];
   agentId?: string | null;
-  onBack: () => void;
 }
 
-const EMPTY_ATTACHMENTS: readonly File[] = [];
+/** One staged file, resolved to everything the card needs without a request. */
+interface PendingAttachmentCard {
+  key: string;
+  base: string;
+  ext: string;
+  size: string | null;
+  kind: 'image' | 'file';
+}
+
 const ensureNoPendingProject = () => Promise.resolve(null);
 const ignorePendingComposerAction = () => undefined;
 const makePendingComposerInert = (node: HTMLDivElement | null) => {
@@ -26,16 +36,13 @@ const makePendingComposerInert = (node: HTMLDivElement | null) => {
   node?.setAttribute('inert', '');
 };
 
-function attachmentKind(file: File): 'image' | 'file' {
-  return file.type.startsWith('image/') ? 'image' : 'file';
-}
-
-/** Object URL for an image chip, or null where unavailable (e.g. jsdom). */
+/** Object URL for an image card, or null where unavailable (e.g. jsdom). */
 function createPreviewUrl(file: File): string | null {
   try {
     if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') return null;
     return URL.createObjectURL(file);
   } catch {
+    // Hardened/older contexts: fall back to the doc card's grey plate.
     return null;
   }
 }
@@ -44,7 +51,7 @@ function revokePreviewUrl(url: string): void {
   try {
     URL.revokeObjectURL?.(url);
   } catch {
-    /* no-op */
+    // Already revoked, or unsupported — nothing to clean up.
   }
 }
 
@@ -55,39 +62,66 @@ function revokePreviewUrl(url: string): void {
  * or persisted yet, so no project-owned API, SSE, file, or presence reads may
  * start from this surface.
  *
- * Everything it shows comes from the creation record itself (name, prompt,
- * staged attachments), so the surface renders on the very tick the request is
- * sent and does not depend on the optimistic row surviving a project-list
- * refresh. The composer at the bottom is the real ChatComposer made inert:
- * the frame already looks like the project the user is about to land in, and
+ * "Read-free" is about the network, not about the screen. Everything this
+ * frame draws is already in this tab: the project name and prompt the user
+ * just typed, the workspace tab strip App already renders, and the staged
+ * files — which are `File` objects the picker handed us, so their thumbnails
+ * come from `URL.createObjectURL`, not from `/api/projects/:id/raw`.
+ *
+ * The layout is copied from the frame that replaces it (ProjectView's split,
+ * ChatPane's header and user message, DesignFilesPanel's empty state) so the
+ * hand-off does not re-flow the page. Where a control cannot work yet it is
+ * rendered disabled rather than omitted — an omitted control moves everything
+ * next to it, which is exactly the jump this frame is here to avoid.
+ *
+ * The composer at the bottom is the real ChatComposer made inert: the frame
+ * already looks like the project the user is about to land in, and
  * ProjectView's own composer takes over in place once the id is confirmed.
  */
 export function ProjectCreationPendingView({
   projectName,
   prompt,
-  attachments = EMPTY_ATTACHMENTS,
+  files,
   agentId,
-  onBack,
 }: Props) {
   const { t } = useI18n();
   const agentName = agentDisplayName(agentId) ?? t('assistant.role');
   const iconId = agentIconId(agentId);
-  // Image chips preview the staged file itself; the upload has not happened
+  // Same registry ProjectView uses, so WorkspaceTabsBar portals the real strip
+  // above the chat card here too and the chrome row stays collapsed across the
+  // hand-off instead of rising for one frame.
+  const tabsDockRef = useWorkspaceTabsDockRef();
+
+  const cards = useMemo<PendingAttachmentCard[]>(() => {
+    const staged = files ?? [];
+    return staged.map((file, index) => {
+      const { base, ext } = splitFileName(file.name);
+      return {
+        key: `${index}:${file.name}`,
+        base,
+        ext,
+        size: formatAttachmentSize(file.size),
+        kind: looksLikeImageName(file.name, file.type) ? 'image' as const : 'file' as const,
+      };
+    });
+  }, [files]);
+
+  // Image cards preview the staged file itself; the upload has not happened
   // yet, so there is no project raw URL to point at. Creation and revocation
-  // are paired inside one `attachments`-keyed effect (the StrictMode-safe
-  // shape from DesignSystemAssetDropzone): the cleanup revokes exactly the
-  // URLs its own setup created, so StrictMode's simulated unmount cannot leave
-  // a memoized list of dead blob: links for the remount to hand to <img>.
+  // are paired inside one `files`-keyed effect (the StrictMode-safe shape from
+  // DesignSystemAssetDropzone): the cleanup revokes exactly the URLs its own
+  // setup created, so StrictMode's simulated unmount cannot leave a memoized
+  // list of dead blob: links for the remount to hand to <img>.
   const [previewUrls, setPreviewUrls] = useState<ReadonlyArray<string | null>>([]);
   useEffect(() => {
-    const next = attachments.map((file) =>
-      attachmentKind(file) === 'image' ? createPreviewUrl(file) : null,
+    const next = (files ?? []).map((file) =>
+      looksLikeImageName(file.name, file.type) ? createPreviewUrl(file) : null,
     );
     setPreviewUrls(next);
     return () => {
       for (const url of next) if (url) revokePreviewUrl(url);
     };
-  }, [attachments]);
+  }, [files]);
 
   // The `.app` shell belongs to App.tsx, which wraps this view and ProjectView
   // in the same element so React reconciles one `div.app` across the hand-off
@@ -96,17 +130,24 @@ export function ProjectCreationPendingView({
     <>
       <div className={`split ${styles.split}`} data-testid="project-creation-pending-view">
         <div className="split-chat-slot">
+          {/* Workspace tab-strip dock, identical to ProjectView's. */}
+          <div
+            className="split-chat-tabs-dock"
+            data-testid="workspace-tabs-dock"
+            ref={tabsDockRef}
+          >
+            <button
+              type="button"
+              className="split-chat-collapse"
+              disabled
+              tabIndex={-1}
+              aria-hidden="true"
+            >
+              <Icon name="panel-left" size={16} />
+            </button>
+          </div>
           <div className={`pane ${styles.chatPane}`}>
             <div className="chat-project-header">
-              <button
-                type="button"
-                className="chat-project-back"
-                onClick={onBack}
-                title={t('project.backToProjects')}
-                aria-label={t('project.backToProjects')}
-              >
-                <Icon name="arrow-left" size={16} />
-              </button>
               <span className="chat-project-header-title">
                 <span className="chat-project-title-line">
                   <span className="title" data-testid="pending-project-title">
@@ -114,49 +155,60 @@ export function ProjectCreationPendingView({
                   </span>
                 </span>
               </span>
+              <div className="chat-history-wrap chat-session-switcher">
+                <button
+                  type="button"
+                  className="chat-session-trigger icon-only"
+                  disabled
+                  tabIndex={-1}
+                  aria-hidden="true"
+                >
+                  <Icon name="comment" size={16} />
+                </button>
+              </div>
             </div>
             <div className="chat-log-wrap">
               <div className="chat-log" aria-busy="true">
-                {prompt || attachments.length > 0 ? (
+                {prompt || cards.length > 0 ? (
                   <div className="msg user">
-                    {attachments.length > 0 ? (
-                      <div
-                        className="user-attachments"
-                        data-testid="pending-user-attachments"
-                      >
-                        {attachments.map((file, index) => {
-                          const kind = attachmentKind(file);
-                          const previewUrl = previewUrls[index] ?? null;
-                          return (
-                            <button
-                              type="button"
-                              key={`${file.name}:${file.size}:${index}`}
-                              className={`user-attachment staged-${kind}`}
-                              disabled
-                              title={file.name}
-                            >
-                              <span
-                                className="staged-order"
-                                aria-label={`Attachment ${index + 1}`}
-                              >
-                                {index + 1}
+                    {/* Attachments above, bubble below, right edges aligned —
+                        the same `.msg-stack` the transcript uses. */}
+                    <div className="msg-stack">
+                      {cards.length > 0 ? (
+                        <div className="msg-att-wrap">
+                          <div
+                            className="user-attachments msg-att"
+                            data-testid="pending-attachment-row"
+                          >
+                            {cards.map((card, index) => (card.kind === 'image' && previewUrls[index] ? (
+                              <span key={card.key} className="msg-att-img">
+                                <span className="msg-att-ph">
+                                  <img className="msg-att-mini" src={previewUrls[index] ?? undefined} alt="" />
+                                </span>
                               </span>
-                              {previewUrl ? (
-                                <img src={previewUrl} alt={file.name} />
-                              ) : (
-                                <Icon name="file" size={14} />
-                              )}
-                              <span className="staged-name">{file.name}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    ) : null}
-                    {prompt ? (
-                      <div className="user-text-wrap">
-                        <div className="user-text user-bubble">{prompt}</div>
-                      </div>
-                    ) : null}
+                            ) : (
+                              <span key={card.key} className="msg-att-doc">
+                                <Icon name="file" size={15} className="msg-att-fi" />
+                                <span className="msg-att-tx">
+                                  <span className="msg-att-nm">
+                                    <span className="msg-att-base">{card.base}</span>
+                                    {card.ext ? (
+                                      <span className="msg-att-ext">{card.ext}</span>
+                                    ) : null}
+                                  </span>
+                                  <span className="msg-att-meta">{card.size ?? ''}</span>
+                                </span>
+                              </span>
+                            )))}
+                          </div>
+                        </div>
+                      ) : null}
+                      {prompt ? (
+                        <div className="user-text-wrap">
+                          <div className="user-text user-bubble">{prompt}</div>
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                 ) : null}
                 <div className="msg assistant">
@@ -218,9 +270,48 @@ export function ProjectCreationPendingView({
               <Icon name="plus" size={16} />
             </span>
           </div>
-          <div className={styles.workspaceBody}>
-            <span className={styles.workspaceTitle}>{t('designFiles.crumbs')}</span>
-            <span className={styles.workspaceEmpty}>{t('designFiles.empty')}</span>
+          {/* DesignFilesPanel's own shell and empty pill, so the sentence sits
+              in the same place before and after the hand-off. */}
+          <div className="df-panel">
+            <div className="df-main">
+              <div className="df-topbar">
+                <div className="df-topbar-left">
+                  <nav className="df-breadcrumbs" aria-label={t('designFiles.crumbs')}>
+                    <span className="df-breadcrumb-current">{t('designFiles.crumbs')}</span>
+                  </nav>
+                </div>
+                <div className="df-topbar-right" />
+              </div>
+              <div className="df-body">
+                <div className="df-empty" data-testid="pending-design-files-empty">
+                  <div className="df-empty-pill">
+                    <span className="df-empty-title">{t('designFiles.empty')}</span>
+                    <div className="df-empty-actions">
+                      <button type="button" className="df-empty-cta df-empty-cta-primary" disabled>
+                        <Icon name="pencil" size={13} />
+                        <span>{t('designFiles.newSketch')}</span>
+                      </button>
+                      <button type="button" className="df-empty-cta df-empty-cta-doc" disabled>
+                        <Icon name="file" size={13} />
+                        <span>{t('designFiles.newDocument')}</span>
+                      </button>
+                      <button type="button" className="df-empty-cta df-empty-cta-upload" disabled>
+                        <Icon name="upload" size={13} />
+                        <span>{t('designFiles.upload.label')}</span>
+                      </button>
+                      <button type="button" className="df-empty-cta df-empty-cta-secondary" disabled>
+                        <Icon name="globe" size={13} />
+                        <span>{t('workspace.newBrowser')}</span>
+                      </button>
+                      <button type="button" className="df-empty-cta df-empty-cta-tertiary" disabled>
+                        <Icon name="blocks" size={14} />
+                        <span>{t('dsManager.createTitle')}</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </section>
       </div>

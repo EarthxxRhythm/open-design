@@ -774,16 +774,28 @@ test('[P1] home left rail expands and collapses from the shell controls', async 
   await expect(expand).toHaveAttribute('aria-expanded', 'false');
 });
 
-test('[P1] home composer plus menu exposes the attachment entry and no resource submenus', async ({ page }) => {
+test('[P1] home composer plus menu exposes attachment, connector, plugin, and MCP entries', async ({ page }) => {
   await gotoEntryHome(page);
+
+  const input = page.getByTestId('home-hero-input');
 
   await page.getByTestId('home-hero-plus-trigger').click();
   await expect(page.getByTestId('composer-plus-attach')).toBeVisible();
-  // Plugins, connectors and MCP were removed from this menu; they stay
-  // reachable from their own surfaces.
-  await expect(page.getByTestId('composer-plus-plugins')).toHaveCount(0);
-  await expect(page.getByTestId('composer-plus-connectors')).toHaveCount(0);
-  await expect(page.getByTestId('composer-plus-mcp')).toHaveCount(0);
+  await expect(page.getByTestId('composer-plus-connectors')).toBeVisible();
+  await expect(page.getByTestId('composer-plus-plugins')).toBeVisible();
+  await expect(page.getByTestId('composer-plus-mcp')).toBeVisible();
+
+  await page.getByTestId('composer-plus-connectors').click();
+  await expect(page.getByText(/No connected connectors/i)).toBeVisible();
+
+  await page.getByTestId('composer-plus-plugins').click();
+  await page.getByRole('menuitem', { name: /Web Prototype/i }).click();
+  await expect(input).toContainText(/Web Prototype/i);
+
+  await page.getByTestId('home-hero-plus-trigger').click();
+  await page.getByTestId('composer-plus-mcp').click();
+  await page.getByRole('menuitem', { name: /Docs MCP/i }).click();
+  await expect(input).toContainText(/Docs MCP/i);
 
   await page.getByTestId('home-hero-file-input').setInputFiles('../package.json');
   await expect(page.getByTestId('home-hero-staged-files')).toContainText('package.json');
@@ -1384,14 +1396,26 @@ test('[P0] empty home composer submits the active prototype suggestion without e
   await expect(page).toHaveURL(/\/projects\//);
 });
 
-test('[P1] home composer has no mode picker and always creates in design mode', async ({ page }) => {
+// This spec used to drive the Home mode chip: pick 「提问」, submit, and check
+// the request switched to `conversationMode: 'chat'` with no plugin. The chip
+// left the Home composer (2026-09-08, product — see the comment at its old slot
+// in `HomeHero.tsx`), so Home has no surface that can select Ask any more and
+// that half is unreachable from here rather than broken.
+//
+// What survives is the half that still describes Home: with no picker on
+// screen, every Home submission routes Design and carries a plugin. Ask/Plan
+// routing itself is untouched and still covered where it is still reachable —
+// the project side keeps its stored session mode (`project-management-flows`
+// "project detail turns carry the stored design session mode…").
+test('[P1] home composer routes every request as design with no mode picker on screen', async ({ page }) => {
   await routeProjectCreates(page);
   await routeRunsAccepted(page);
   await gotoEntryHome(page);
 
-  // The 「设计」 mode pill was removed from the Home composer footer; the
-  // per-conversation picker now lives only in the project chat composer.
   await expect(page.getByTestId('composer-mode-trigger')).toHaveCount(0);
+  await expect(page.getByTestId('composer-mode-clear')).toHaveCount(0);
+  await expect(page.getByTestId('composer-mode-menu')).toHaveCount(0);
+
   await page.getByTestId('home-hero-input').fill('Design the screens from this brief.');
 
   const designRequestPromise = page.waitForRequest((request) =>

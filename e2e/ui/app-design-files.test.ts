@@ -757,7 +757,7 @@ test('[P1] new Excalidraw sketch emits analytics dimensions', async ({ page }) =
   });
   await routeMockAgents(page);
 
-  const projectId = await createProjectViaApi(page, 'Plan and sketch analytics');
+  const projectId = await createProjectViaApi(page, 'Sketch analytics');
   await page.goto(`/projects/${projectId}`, { waitUntil: 'domcontentloaded' });
   await expectWorkspaceReady(page);
   // The session-mode picker left the composer (#7635), so `session_mode_toggle`

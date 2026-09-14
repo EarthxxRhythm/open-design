@@ -21,6 +21,16 @@ const pendingNormalization = new Set([
   'apps/web/src/styles/home/entry-layout.css',
   'apps/web/src/components/EntryNavRail.module.css',
   'apps/web/src/styles/workspace/design-files.css',
+  // The chat panel (#7518) draws to its own delivered spec, which uses 400 for
+  // bare buttons, record rows and pills (see `w77-bare-button-weight.test.ts`).
+  // Reconciling that spec with the ladder is tracked with the chat module port
+  // (OPEND-2553), not with the sync that brought the two side by side.
+  'apps/web/src/components/chat/AmrOwnerTopUpDialog.module.css',
+  'apps/web/src/components/chat/PlanPill.module.css',
+  'apps/web/src/components/chat/UpgradeCard.module.css',
+  'apps/web/src/components/chat/primitives/record.module.css',
+  'apps/web/src/styles/chat.css',
+  'apps/web/src/styles/viewer/composio.css',
 ]);
 
 function cssFiles(root: string): string[] {
@@ -134,7 +144,9 @@ describe('product UI font-weight normalization', () => {
     expect(albertFaces).toHaveLength(2);
     for (const face of albertFaces) expect(face[0]).toMatch(/font-weight:\s*100 900;/);
     expect(baseCss).toMatch(
-      /@font-face\s*\{[^}]*font-family:\s*"JiduMono Pro";[^}]*font-weight:\s*400;/s,
+      // The static face is declared at 500: the chat panel's typography
+      // baseline (see the docblock above that @font-face) requests 500.
+      /@font-face\s*\{[^}]*font-family:\s*"JiduMono Pro";[^}]*font-weight:\s*500;/s,
     );
   });
 });

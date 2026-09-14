@@ -127,6 +127,11 @@ describe('project run list survives daemon restart', () => {
           retriedProjectId,
           succeededRunId,
         });
+      }, {
+        // The fake codex emits generic artifact output, not OD Next protocol
+        // blocks; OD Next is the default route since #7876, so pin the classic
+        // route or every fake turn is blocked as an invalid deliverable.
+        env: { OD_NEXT_STRATEGY_ROLLOUT: 'off' },
       });
 
       // Full restart over the same persisted data. Nothing in memory survives
@@ -143,6 +148,11 @@ describe('project run list survives daemon restart', () => {
           retriedProjectId,
           succeededRunId,
         });
+      }, {
+        // The fake codex emits generic artifact output, not OD Next protocol
+        // blocks; OD Next is the default route since #7876, so pin the classic
+        // route or every fake turn is blocked as an invalid deliverable.
+        env: { OD_NEXT_STRATEGY_ROLLOUT: 'off' },
       });
     } finally {
       await rm(externalRoot, { force: true, recursive: true });

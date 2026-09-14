@@ -224,6 +224,7 @@ interface Props {
   onRefreshFiles: (
     options?: { fresh?: boolean },
   ) => Promise<FileRefreshResult | void> | FileRefreshResult | void;
+  onManualFileWritten?: (file: ProjectFile) => void;
   isDeck: boolean;
   streaming?: boolean;
   /**
@@ -240,7 +241,11 @@ interface Props {
   runInFlight?: boolean;
   commentQueueOnSend?: boolean;
   commentSendDisabled?: boolean;
-  openRequest?: { name: string; nonce: number } | null;
+  // `openBatch`, when present, is the complete ordered list of files to open as
+  // tabs in one commit — a finished turn's artifacts (OPEND-2588). `name` is
+  // still the one that ends up active, and is opened whether or not the batch
+  // names it.
+  openRequest?: { name: string; nonce: number; openBatch?: readonly string[] } | null;
   browserOpenRequest?: BrowserOpenRequest | null;
   // Browser tab whose <webview> must stay mounted even while another workspace
   // tab is active. Set for programmatic brand extraction: the chat "Continue
@@ -250,10 +255,10 @@ interface Props {
   pinnedBrowserTabId?: string | null;
   // Open the named file AND surface its Share/Export menu. Drives the chat-side
   // "Share" next-step action without a dedicated share backend.
-  shareRequest?: { name: string; nonce: number } | null;
+  shareRequest?: { name: string; nonce: number; anchorId?: string } | null;
   // Open the named file AND surface its Download/Export menu. Drives the
   // chat-side "Download" next-step action.
-  downloadRequest?: { name: string; nonce: number } | null;
+  downloadRequest?: { name: string; nonce: number; anchorId?: string } | null;
   // Flip a deck preview to a given slide when a queued chat send starts. Mirrors
   // `shareRequest`: the named file is activated (if open) and the matching
   // FileViewer consumes the nonce to navigate.
@@ -373,6 +378,8 @@ interface Props {
   viewerOnly?: boolean;
   /** First-open placeholder: do not mount cached/write-capable workspace tabs. */
   materializationPending?: boolean;
+  /** See DesignFilesPanel's `filesAuthoritative`. */
+  filesAuthoritative?: boolean;
   /** Optional override for the read-only notice text. */
   readonlyNotice?: string;
   /**
@@ -1313,6 +1320,7 @@ export function FileWorkspace({
   filesRefreshKey = 0,
   filesGeneration,
   onRefreshFiles,
+  onManualFileWritten,
   isDeck,
   streaming,
   runInFlight = false,
@@ -1385,6 +1393,7 @@ export function FileWorkspace({
   headerActions,
   viewerOnly = false,
   materializationPending = false,
+  filesAuthoritative = true,
   readonlyNotice,
   fileSyncBadge = null,
 }: Props) {
@@ -2084,6 +2093,11 @@ export function FileWorkspace({
       setPersistedActive(name);
       return;
     }
+    const batch = openRequest.openBatch;
+    if (batch && batch.length > 0) {
+      openFiles(batch, name);
+      return;
+    }
     openFile(name, { forcePersist: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openRequest]);
@@ -2168,6 +2182,33 @@ export function FileWorkspace({
       setActiveTab(name);
     });
   }
+  // Open several files as tabs in ONE commit and activate `focusName`.
+  //
+  // A loop over openFile() cannot express this: each call activates what it
+  // opens, so the last file would take the focus that auto-open deliberately
+  // assigned (OPEND-2588), and every call after the first would be dropped
+  // whenever `afterActiveManualEditSettles` defers them — it keeps only the
+  // newest deferred activation. Files already open are left alone rather than
+  // duplicated, which is what makes a re-open of something the turn already
+  // surfaced mid-stream a no-op.
+  function openFiles(names: readonly string[], focusName: string) {
+    afterActiveManualEditSettles(() => {
+      setUploadError(null);
+      const currentTabs = tabsStateRef.current.tabs;
+      const nextTabs = [...currentTabs];
+      for (const name of [...names, focusName]) {
+        if (name && !nextTabs.includes(name)) nextTabs.push(name);
+      }
+      const openedNewTab = nextTabs.length !== currentTabs.length;
+      const nextBrowserTabs = openedNewTab
+        ? reanchorBrowserTabsToCurrentOrder(orderedWorkspaceTabs, browserTabs)
+        : browserTabs;
+      if (nextBrowserTabs !== browserTabs) setBrowserTabs(nextBrowserTabs);
+      commitTabsState(workspaceTabsState(nextTabs, focusName, nextBrowserTabs));
+      setActiveTab(focusName);
+    });
+  }
+
   openFileRef.current = openFile;
 
   const handleBrowserPageSnapshotToast = useCallback((event: BrowserPageSnapshotToastEvent) => {
@@ -2725,6 +2766,7 @@ export function FileWorkspace({
       workspaceContext,
     );
     if (!file) return;
+    onManualFileWritten?.(file);
     await onRefreshFiles();
     await refreshProjectFolders();
     openFile(file.name, { forcePersist: true });
@@ -3353,11 +3395,21 @@ export function FileWorkspace({
     return byFile;
   }, [previewComments]);
   const activeFileShareRequest = useMemo(
-    () => (shareRequest ? { name: shareRequest.name, request: { nonce: shareRequest.nonce } } : null),
+    () => (shareRequest
+      ? {
+          name: shareRequest.name,
+          request: { nonce: shareRequest.nonce, anchorId: shareRequest.anchorId },
+        }
+      : null),
     [shareRequest],
   );
   const activeFileDownloadRequest = useMemo(
-    () => (downloadRequest ? { name: downloadRequest.name, request: { nonce: downloadRequest.nonce } } : null),
+    () => (downloadRequest
+      ? {
+          name: downloadRequest.name,
+          request: { nonce: downloadRequest.nonce, anchorId: downloadRequest.anchorId },
+        }
+      : null),
     [downloadRequest],
   );
   const activeFileSlideNavRequest = useMemo(
@@ -3391,6 +3443,7 @@ export function FileWorkspace({
         file.name === 'brand.html' ? onBrandExtractionStopRequest : undefined
       }
       onFileSaved={refreshFilesWithoutResult}
+      onFileWritten={onManualFileWritten}
       onOpenFileReplacing={stableOpenFileReplacing}
       commentPortalId={workspaceActive ? commentPortalId : undefined}
       onCommentModeChange={workspaceActive ? onCommentModeChange : undefined}
@@ -3768,7 +3821,7 @@ export function FileWorkspace({
     let frame = 0;
     const measure = () => {
       frame = 0;
-      setTabsOverflowing(tabBar.scrollWidth > tabBar.clientWidth + 1);
+      setTabsOverflowing(measureWorkspaceTabBarAfterResize(tabBar));
     };
     const requestMeasure = () => {
       if (frame) window.cancelAnimationFrame(frame);
@@ -4195,10 +4248,16 @@ export function FileWorkspace({
           />
         </div>
       ) : null}
-      {viewerOnly && !initialMaterializationPending ? (
+      {/* The banner asserts a reason ("this is a shared project"), so it renders
+          only when the caller knows one. `viewerOnly` is fail-closed and is also
+          true while ownership is still unproven -- falling back to the generic
+          copy there told a personal project's owner it was someone else's
+          shared project for as long as the workspace context took to resolve
+          (OPEND-2283). Controls stay disabled either way; only the claim waits. */}
+      {viewerOnly && readonlyNotice && !initialMaterializationPending ? (
         <div className="workspace-readonly-notice" role="status">
           <Icon name="lock" size={14} />
-          <span>{readonlyNotice ?? t('workspace.readonlyNotice')}</span>
+          <span>{readonlyNotice}</span>
         </div>
       ) : null}
       <div className="ws-body">
@@ -4312,6 +4371,7 @@ export function FileWorkspace({
             filesRefreshKey={filesRefreshKey}
             viewerOnly={viewerOnly}
             downloadPending={fileSyncBadge === 'downloading'}
+            filesAuthoritative={filesAuthoritative}
             rootDirName={rootDirName}
             reloading={reloading}
             running={runInFlight}
@@ -8529,6 +8589,19 @@ export function scrollWorkspaceTabIntoView(
   } else if (tabRect.right > barRect.right) {
     tabBar.scrollLeft += tabRect.right - barRect.right;
   }
+}
+
+/**
+ * Re-measure the strip after its workspace track changes width. Resizing the
+ * split does not change `activeTab`, so the active-tab effect above does not
+ * run; without this resize path the viewport can clip all but the filename's
+ * ellipsis even though the tab itself still preserves its icon and close
+ * control at the intended width.
+ */
+export function measureWorkspaceTabBarAfterResize(tabBar: HTMLDivElement): boolean {
+  const activeTab = tabBar.querySelector<HTMLElement>('.ws-tab.active');
+  if (activeTab) scrollWorkspaceTabIntoView(tabBar, activeTab);
+  return tabBar.scrollWidth > tabBar.clientWidth + 1;
 }
 
 export function scrollWorkspaceTabsWithWheel(
