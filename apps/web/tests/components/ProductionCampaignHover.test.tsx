@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { overlaySpy, diagnosticSpy } = vi.hoisted(() => ({
-	overlaySpy: vi.fn(() => <div data-testid="production-hover-overlay" />),
+	overlaySpy: vi.fn(({ entry }: { entry?: { locale?: string } }) => <div data-testid="production-hover-overlay">{entry?.locale}</div>),
 	diagnosticSpy: vi.fn(),
 }));
 type HostGlobal = typeof globalThis & { __productionHoverHost?: unknown };
@@ -24,6 +24,7 @@ vi.mock(
 );
 
 import { ProductionCampaignHover } from "../../src/components/ProductionCampaignHover";
+import { I18nProvider, useI18n } from "../../src/i18n";
 
 const content = (placementKey: string) => ({
 	id: `version-${placementKey}`,
@@ -74,6 +75,10 @@ const decision = (
 	],
 	...overrides,
 });
+function LocaleSwitch() {
+	const { setLocale } = useI18n();
+	return <button onClick={() => setLocale("zh-CN")}>Switch locale</button>;
+}
 
 beforeEach(() => {
 	vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -206,14 +211,6 @@ describe("ProductionCampaignHover", () => {
 			<ProductionCampaignHover authenticated sessionSubject="account-a" />,
 		);
 		await screen.findByTestId("production-hover-overlay");
-		expect(fetchMock).toHaveBeenCalledWith(
-			"/api/touchpoints/production-runtime?placementKey=opend.home.hover-entry&locale=en-US",
-			expect.objectContaining({ cache: "no-store" }),
-		);
-		expect(fetchMock).toHaveBeenCalledWith(
-			"/api/touchpoints/production-runtime?placementKey=opend.home.hover-layer&locale=en-US",
-			expect.objectContaining({ cache: "no-store" }),
-		);
 		expect(
 			(
 				overlaySpy.mock.calls as unknown as Array<[Record<string, unknown>]>
@@ -535,5 +532,34 @@ describe("ProductionCampaignHover", () => {
 			code: "touchpoint_load_failed",
 			detail: "http_410",
 		});
+	});
+	it("loads a zh-CN pair with the same decision IDs and fences late en pair responses after a client locale switch", async () => {
+		(globalThis as HostGlobal).__productionHoverHost = { client: { type: "desktop", osLocale: "en-US" } } ;
+		let resolveLateEntry: ((response: Response) => void) | undefined;
+		let resolveLateLayer: ((response: Response) => void) | undefined;
+		const lateEntry = new Promise<Response>((resolve) => { resolveLateEntry = resolve; });
+		const lateLayer = new Promise<Response>((resolve) => { resolveLateLayer = resolve; });
+		const localized = (placementKey: string, locale: string) => {
+			const base = content(placementKey);
+			return decision(placementKey, { content: { ...base, locale, manifest: { ...base.manifest, placements: [{ ...base.manifest.placements[0], locales: [locale] }] } } });
+		};
+		const fetchMock = vi.fn((url: string) => {
+			const entry = url.includes("hover-entry");
+			if (fetchMock.mock.calls.length === 3) return lateEntry;
+			if (fetchMock.mock.calls.length === 4) return lateLayer;
+			return Promise.resolve(new Response(JSON.stringify(localized(entry ? "opend.home.hover-entry" : "opend.home.hover-layer", url.includes("locale=zh-CN") ? "zh-CN" : "en-US")), { status: 200 }));
+		});
+		vi.stubGlobal("fetch", fetchMock);
+		render(<I18nProvider initial="en"><LocaleSwitch /><ProductionCampaignHover authenticated sessionSubject="account-a" /></I18nProvider>);
+		await screen.findByTestId("production-hover-overlay");
+		window.dispatchEvent(new Event("focus"));
+		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+		await act(async () => { screen.getByRole("button", { name: "Switch locale" }).click(); });
+		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(6));
+		await waitFor(() => expect(screen.getByTestId("production-hover-overlay")).toHaveTextContent("zh-CN"));
+		resolveLateEntry?.(new Response(JSON.stringify(localized("opend.home.hover-entry", "en-US")), { status: 200 }));
+		resolveLateLayer?.(new Response(JSON.stringify(localized("opend.home.hover-layer", "en-US")), { status: 200 }));
+		await Promise.resolve();
+		expect(screen.getByTestId("production-hover-overlay")).toHaveTextContent("zh-CN");
 	});
 });

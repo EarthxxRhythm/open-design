@@ -1,5 +1,5 @@
-import { readCampaignHostLocale } from "./TestCampaignModal";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useI18n } from "../i18n";
 import { getOpenDesignHost } from "@open-design/host";
 import { openExternalUrl } from "../providers/registry";
 import {
@@ -181,6 +181,11 @@ export async function dispatchProductionCampaignAction(
 }
 /** Production v2 modal shares the Test adapter; it does not fall back to a frame when bytes or runtime identity fail. */
 type AuthorizedDecision = Decision & { sessionSubject: string };
+type OpenPresentation = Readonly<{
+	sessionSubject: string;
+	activityId: string;
+	deadline: number;
+}>;
 export function ProductionCampaignModal({
 	authenticated,
 	sessionSubject,
@@ -188,40 +193,86 @@ export function ProductionCampaignModal({
 	authenticated: boolean;
 	sessionSubject: string | null;
 }) {
+	const { locale } = useI18n();
 	const testRuntime = useTestRuntime();
 	const testDecision = testRuntime?.decisions.get(PLACEMENT);
 	const [testClosed, setTestClosed] = useState(false);
 	const [closed, setClosed] = useState(false);
+	const openPresentation = useRef<OpenPresentation | null>(null);
+	const clearOpenPresentation = useCallback(() => {
+		openPresentation.current = null;
+	}, []);
 	const elementRef = useRef<HTMLDivElement | null>(null);
 	const modalRef = useRef<HTMLDivElement | null>(null);
 	const restoreFocus = useRef<HTMLElement | null>(null);
-	const locale = readCampaignHostLocale();
-	const productionEnabled = !testRuntime && authenticated && !!sessionSubject && getOpenDesignHost()?.client.type === "desktop" && !!locale;
+	const productionEnabled = !testRuntime && authenticated && !!sessionSubject && getOpenDesignHost()?.client.type === "desktop";
 	const load = useCallback(
 		async (signal: AbortSignal, active: AuthorizedDecision | null): Promise<TouchpointLifecycleLoad<AuthorizedDecision>> => {
 			if (!locale || !sessionSubject) return { kind: "clear" };
+			const requestedAt = Date.now();
 			const loaded = await loadProductionTouchpointDecision(PLACEMENT, locale, signal, active?.touchpointDecisionId);
-			if (loaded.kind === "revoked") return active && loaded.receipt.touchpointDecisionId === active.touchpointDecisionId && loaded.receipt.deploymentId === active.deploymentId && loaded.receipt.activityId === active.activityId && loaded.receipt.contentVersionId === active.content.id ? { kind: "clear" } : { kind: "retain" };
-			if (loaded.kind === "no-decision") return active ? { kind: "retain" } : { kind: "clear" };
+			if (signal.aborted) return { kind: "clear" };
+			if (loaded.kind === "revoked") {
+				clearOpenPresentation();
+				return active && loaded.receipt.touchpointDecisionId === active.touchpointDecisionId && loaded.receipt.deploymentId === active.deploymentId && loaded.receipt.activityId === active.activityId && loaded.receipt.contentVersionId === active.content.id ? { kind: "clear" } : { kind: "retain" };
+			}
+			if (loaded.kind === "no-decision") {
+				clearOpenPresentation();
+				return active ? { kind: "retain" } : { kind: "clear" };
+			}
 			const next = loaded.value as Decision;
 			const deadline = resolveAuthorizationDeadline(next, MAX_LEASE_MS);
 			const serverTime = Date.parse(next.serverTime);
 			if (!next.activityId || !next.touchpointDecisionId || !next.deploymentId || !next.content?.id || next.placementKey !== PLACEMENT || next.content?.placementKey !== PLACEMENT || deadline === null || !Number.isFinite(serverTime) || !supportsWebTouchpointCapabilities(next.content, next.requiredCapabilities, supportedCapabilities)) {
+				clearOpenPresentation();
 				if (next.placementKey !== PLACEMENT || next.content?.placementKey !== PLACEMENT) emitWebTouchpointDiagnostic({ code: "touchpoint_decision_mismatch" });
 				else if (!supportsWebTouchpointCapabilities(next.content, next.requiredCapabilities, supportedCapabilities)) emitWebTouchpointDiagnostic({ code: "touchpoint_capability_unsupported", detail: next.requiredCapabilities?.join(",") });
 				return { kind: "clear" };
 			}
-			if (active?.activityId !== next.activityId && wasDisplayed(sessionSubject, next.activityId)) return { kind: "retain" };
+			const renewedPresentation = openPresentation.current;
+			if (
+				active?.activityId === next.activityId &&
+				renewedPresentation?.sessionSubject === sessionSubject &&
+				renewedPresentation.activityId === next.activityId
+			)
+				openPresentation.current = {
+					...renewedPresentation,
+					// Anchor at request start so response latency cannot extend this presentation.
+					deadline: requestedAt + deadline - serverTime,
+				};
+			const presentation = openPresentation.current;
+			if (
+				presentation &&
+				(presentation.sessionSubject !== sessionSubject || presentation.deadline <= Date.now())
+			)
+				clearOpenPresentation();
+			// Only this mounted activity may cross a locale transition. A stored impression
+			// never overrides a fresh authorization, expiry, revocation, or account fence.
+			const continuesOpenPresentation =
+				openPresentation.current === presentation &&
+				presentation?.sessionSubject === sessionSubject &&
+				presentation.activityId === next.activityId &&
+				presentation.deadline > Date.now();
+			if (!continuesOpenPresentation && active?.activityId !== next.activityId && wasDisplayed(sessionSubject, next.activityId)) return { kind: "retain" };
 			return { kind: "decision", value: { ...next, sessionSubject }, key: next.touchpointDecisionId + ":" + next.deploymentId + ":" + next.activityId + ":" + next.content.id, validForMs: deadline - serverTime };
 		},
-		[locale, sessionSubject],
+		[clearOpenPresentation, locale, sessionSubject],
 	);
 	const onError = useCallback((error: unknown) => {
+		clearOpenPresentation();
 		const diagnostic = emitProductionTouchpointLoadDiagnostic(error);
 		if (diagnostic) emitWebTouchpointDiagnostic(diagnostic);
-	}, []);
-	const lifecycle = useTouchpointLifecycle<AuthorizedDecision>({ enabled: productionEnabled, identity: productionEnabled ? sessionSubject : null, load, onError });
+	}, [clearOpenPresentation]);
+	const lifecycle = useTouchpointLifecycle<AuthorizedDecision>({ enabled: productionEnabled, identity: productionEnabled ? JSON.stringify([sessionSubject, locale]) : null, load, onError });
 	const { current: decision, generation, clear, isCurrent } = lifecycle;
+	const closeProductionModal = useCallback(() => {
+		clearOpenPresentation();
+		setClosed(true);
+	}, [clearOpenPresentation]);
+	useEffect(() => {
+		if (!authenticated || !sessionSubject || openPresentation.current?.sessionSubject !== sessionSubject)
+			clearOpenPresentation();
+	}, [authenticated, clearOpenPresentation, sessionSubject]);
 	useEffect(() => {
 		ensureWebTouchpointElement();
 	}, []);
@@ -327,7 +378,7 @@ export function ProductionCampaignModal({
 					verified.resourceUrls,
 					new Set(decision.staticActions.map((action) => action.id)),
 					{
-						requestClose: () => setClosed(true),
+						requestClose: closeProductionModal,
 						dispatchAction: async (id) => {
 							await dispatchProductionCampaignAction(
 								decision,
@@ -345,6 +396,11 @@ export function ProductionCampaignModal({
 					return;
 				}
 				mounted = true;
+				openPresentation.current = {
+					sessionSubject: decision.sessionSubject,
+					activityId: decision.activityId,
+					deadline: lifecycle.deadline,
+				};
 				recordWhenVisible();
 			} catch (error) {
 				if (!current()) {
@@ -352,6 +408,7 @@ export function ProductionCampaignModal({
 					return;
 				}
 				if (current()) {
+					clearOpenPresentation();
 					emitWebTouchpointDiagnostic({
 						code:
 							error instanceof Error ? error.message : "touchpoint_load_failed",
@@ -367,7 +424,7 @@ export function ProductionCampaignModal({
 			dispose();
 			container.replaceChildren();
 		};
-	}, [authenticated, decision, generation, isCurrent, sessionSubject]);
+	}, [authenticated, closeProductionModal, decision, generation, isCurrent, sessionSubject]);
 	useEffect(() => {
 		if (!decision) return;
 		restoreFocus.current =
@@ -376,7 +433,7 @@ export function ProductionCampaignModal({
 				: null;
 		const releaseScrollLock = lockWebTouchpointModalScroll();
 		const key = (event: KeyboardEvent) => {
-			if (event.key === "Escape") setClosed(true);
+			if (event.key === "Escape") closeProductionModal();
 			else trapWebTouchpointModalFocus(event, modalRef.current);
 		};
 		document.addEventListener("keydown", key);
@@ -391,12 +448,13 @@ export function ProductionCampaignModal({
 			releaseScrollLock();
 			restoreFocus.current?.focus();
 		};
-	}, [decision]);
+	}, [closeProductionModal, decision]);
 	useEffect(() => {
 		if (!closed || !decision || !sessionSubject) return;
+		clearOpenPresentation();
 		clear();
 		setClosed(false);
-	}, [closed, decision, sessionSubject]);
+	}, [clear, clearOpenPresentation, closed, decision, sessionSubject]);
 	useEffect(() => {
 		if (!testDecision || testClosed || !authenticated) return;
 		const previous =

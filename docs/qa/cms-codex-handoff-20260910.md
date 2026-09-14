@@ -48,6 +48,18 @@
 
 ## 开发者附录
 
+### 客户端语言联动补充（2026-09-14）
+
+- 生产弹窗、账号徽标、悬浮入口与详情使用客户端 i18n 语言，并以「账号 + 语言」隔离加载、授权和挂载状态；渲染仍使用 CMS 返回的 `content.locale`，不改服务端翻译与回退规则。
+- 验收入口：设置 → 通用 → 界面语言。切换后返回首页，徽标与悬浮入口/详情应显示新语言；相同 activity、decision 和 content version 身份不能阻止语言替换。
+- 正在显示的同一活动弹窗取得新语言授权后继续展示；已关闭的活动不能因切换语言重新弹出。旧语言迟到响应和失效授权不得恢复旧展示。
+- 回归入口：`apps/web/tests/components/ProductionCampaignBadge.test.tsx`、`ProductionCampaignHover.test.tsx`、`ProductionCampaignModal.test.tsx`，以及 `touchpoint-lifecycle.test.ts`。
+- 本地浏览器通过实际设置控件执行英文 → 简体中文 → 英文，并观察请求参数与 Shadow DOM 内容；中文弹窗关闭后切回英文未重开。验证边界：真实 web/daemon + 本地 CMS HTTP fixture + 模拟官方桌面宿主接口，非真实 Electron 或线上 CMS 验收。fixture 未提供账号工作区服务，截图中的账号连接提示不是本次验收对象。
+
+| 英文首页 | 语言设置入口 | 中文首页 |
+|---|---|---|
+| ![英文 CMS 内容](cms-language-en.jpg) | ![设置中的语言选择](cms-language-settings.jpg) | ![中文 CMS 内容](cms-language-zh.jpg) |
+
 - Vela 协议源 `packages/shared/src/touchpoints.ts` 的最终 SHA-256：`be26f9c4e5cfe6e0a0eedee3d31dc70df8f1c8ee61704e765d4f5c89879fc2f0`；OD `TOUCHPOINT_COMPONENT_V2_UPSTREAM_PROVENANCE.sourceSha256.touchpoints` 必须与其一致。
 - 已记录本地：Vela root `pnpm lint` PASS；Edit 定向 `42 passed`；OD contracts `6`、combined `30`、typecheck/guard PASS。此前 OD #3001 production build 只可称“单独验证”，不可称 combined build。
 - #3002 源缺陷位置：`apps/web/src/components/ProductionCampaignModal.tsx:96-128`。#3009 仅为 sizing patch，unconditional host Close 保留。

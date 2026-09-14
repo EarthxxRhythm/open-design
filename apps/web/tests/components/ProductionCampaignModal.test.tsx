@@ -30,6 +30,7 @@ import { internalActionNavigationUrl } from "../../src/components/touchpoint-nav
 import { ProductionCampaignBadge } from "../../src/components/ProductionCampaignBadge";
 import * as touchpointComponent from "../../src/components/touchpoint-component";
 import { OpenDesignTouchpointElement } from "../../src/components/touchpoint-component";
+import { I18nProvider, useI18n } from "../../src/i18n";
 
 const digest = (value: string) =>
 	`sha256:${createHash("sha256").update(value).digest("hex")}`;
@@ -104,6 +105,24 @@ function decision(overrides: Partial<Record<string, unknown>> = {}) {
 		...overrides,
 	};
 }
+function LocaleSwitcher() {
+	const { setLocale } = useI18n();
+	return (
+		<>
+			<button type="button" onClick={() => setLocale("en")}>
+				Switch to en
+			</button>
+			<button type="button" onClick={() => setLocale("fr")}>
+				Switch to fr
+			</button>
+		</>
+	);
+}
+
+function localizedDecision(locale: "en" | "fr", overrides: Partial<Record<string, unknown>> = {}) {
+	const localizedManifest = { ...manifest, placements: manifest.placements.map((placement) => ({ ...placement, locales: [locale] })) };
+	return decision({ content: { ...content, id: `version-${locale}`, locale, manifest: localizedManifest, manifestHash: digest(JSON.stringify(localizedManifest)) }, touchpointDecisionId: `decision-${locale}`, ...overrides });
+}
 
 beforeEach(() => {
 	vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue({
@@ -158,6 +177,166 @@ describe("ProductionCampaignModal", () => {
 		);
 		await act(async () => {});
 		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+	it("reloads the still-open activity with the I18nProvider locale without reopening a dismissed impression", async () => {
+		(globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = {
+			client: { osLocale: "de-DE", type: "desktop" },
+		};
+		vi.spyOn(OpenDesignTouchpointElement.prototype, "mount").mockImplementation(
+			async function (this: OpenDesignTouchpointElement, _entry, _digest, context) {
+				this.shadowRoot?.replaceChildren(
+					document.createTextNode(`Campaign ${context.locale}`),
+				);
+			},
+		);
+		const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+			const locale = new URL(String(input), "http://localhost").searchParams.get("locale");
+			return new Response(JSON.stringify(localizedDecision(locale === "fr" ? "fr" : "en")), { status: 200 });
+		});
+		vi.stubGlobal("fetch", fetchMock);
+		render(
+			<I18nProvider initial="en">
+				<LocaleSwitcher />
+				<ProductionCampaignModal authenticated sessionSubject="locale-user" />
+			</I18nProvider>,
+		);
+		await waitFor(() =>
+			expect(document.querySelector("opend-touchpoint")?.shadowRoot?.textContent).toContain("Campaign en"),
+		);
+		await waitFor(() =>
+			expect(localStorage.getItem("touchpoint-displayed:v1:locale-user:campaign-1")).toBe("1"),
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Switch to fr" }));
+		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+		await waitFor(() =>
+			expect(document.querySelector("opend-touchpoint")?.shadowRoot?.textContent).toContain("Campaign fr"),
+		);
+		fireEvent.keyDown(document, { key: "Escape" });
+		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+		fireEvent.click(screen.getByRole("button", { name: "Switch to en" }));
+		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+		expect(screen.queryByRole("dialog")).toBeNull();
+	});
+
+	it("keeps a displayed activity mounted when its renewed lease crosses the first authorization deadline before switching locale", async () => {
+		vi.useFakeTimers({
+			toFake: ["Date", "performance", "setTimeout", "clearTimeout", "setInterval", "clearInterval"],
+		});
+		try {
+			vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+			(globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = {
+				client: { osLocale: "en-US", type: "desktop" },
+			};
+			let mounted!: () => void;
+			const mountedPromise = new Promise<void>((resolve) => { mounted = resolve; });
+			vi.spyOn(OpenDesignTouchpointElement.prototype, "mount").mockImplementation(
+				async function (this: OpenDesignTouchpointElement, _entry, _digest, context) {
+					this.shadowRoot?.replaceChildren(document.createTextNode(`Campaign ${context.locale}`));
+					mounted();
+				},
+			);
+			const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+				const locale = new URL(String(input), "http://localhost").searchParams.get("locale");
+				const now = Date.now();
+				return new Response(
+					JSON.stringify(
+						localizedDecision(locale === "fr" ? "fr" : "en", {
+							serverTime: new Date(now).toISOString(),
+							authorizationExpiresAt: new Date(now + 60_000).toISOString(),
+							endsAt: new Date(now + 300_000).toISOString(),
+						}),
+					),
+					{ status: 200 },
+				);
+			});
+			vi.stubGlobal("fetch", fetchMock);
+			render(
+				<I18nProvider initial="en">
+					<LocaleSwitcher />
+					<ProductionCampaignModal authenticated sessionSubject="renew-user" />
+				</I18nProvider>,
+			);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(0);
+			});
+			await act(async () => { await mountedPromise; });
+			expect(document.querySelector("opend-touchpoint")?.shadowRoot?.textContent).toContain("Campaign en");
+			const originalElement = document.querySelector("opend-touchpoint");
+			localStorage.setItem("touchpoint-displayed:v1:renew-user:campaign-1", "1");
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(30_000);
+			});
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(31_000);
+			});
+			expect(document.querySelector("opend-touchpoint")).toBe(originalElement);
+			expect(originalElement?.shadowRoot?.textContent).toContain("Campaign en");
+			fireEvent.click(screen.getByRole("button", { name: "Switch to fr" }));
+			await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+			await vi.waitFor(() =>
+				expect(document.querySelector("opend-touchpoint")?.shadowRoot?.textContent).toContain("Campaign fr"),
+			);
+		} finally {
+			cleanup();
+			vi.useRealTimers();
+		}
+	});
+
+	it("does not let a 404 locale transition exempt an already displayed activity", async () => {
+		(globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = {
+			client: { osLocale: "en-US", type: "desktop" },
+		};
+		const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+			const locale = new URL(String(input), "http://localhost").searchParams.get("locale");
+			return locale === "fr"
+				? new Response(null, { status: 404 })
+				: new Response(JSON.stringify(localizedDecision("en")), { status: 200 });
+		});
+		vi.stubGlobal("fetch", fetchMock);
+		render(
+			<I18nProvider initial="en">
+				<LocaleSwitcher />
+				<ProductionCampaignModal authenticated sessionSubject="locale-user" />
+			</I18nProvider>,
+		);
+		await waitFor(() =>
+			expect(localStorage.getItem("touchpoint-displayed:v1:locale-user:campaign-1")).toBe("1"),
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Switch to fr" }));
+		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+		fireEvent.click(screen.getByRole("button", { name: "Switch to en" }));
+		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+		expect(screen.queryByRole("dialog")).toBeNull();
+	});
+
+	it("does not let a deferred old-language authorization revive after a locale switch", async () => {
+		(globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = {
+			client: { osLocale: "en-US", type: "desktop" },
+		};
+		let resolveEnglish!: (value: unknown) => void;
+		const english = new Promise<unknown>((resolve) => {
+			resolveEnglish = resolve;
+		});
+		const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+			const locale = new URL(String(input), "http://localhost").searchParams.get("locale");
+			return locale === "fr"
+				? new Response(null, { status: 404 })
+				: { ok: true, json: () => english };
+		});
+		vi.stubGlobal("fetch", fetchMock);
+		render(
+			<I18nProvider initial="en">
+				<LocaleSwitcher />
+				<ProductionCampaignModal authenticated sessionSubject="locale-user" />
+			</I18nProvider>,
+		);
+		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+		fireEvent.click(screen.getByRole("button", { name: "Switch to fr" }));
+		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+		resolveEnglish(localizedDecision("en"));
+		await act(async () => {});
+		expect(screen.queryByRole("dialog")).toBeNull();
 	});
 	it("suppresses a displayed campaign for the same subject while leaving a normal update in the current bounded lease", async () => {
 		const registerContent = vi.fn(async () => ({ ok: true }));
