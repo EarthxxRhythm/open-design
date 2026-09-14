@@ -1,4 +1,5 @@
-import { readCampaignHostLocale, recordVisibleTestTouchpoint, useTestRuntime } from "./TestCampaignModal";
+import { recordVisibleTestTouchpoint, useTestRuntime } from "./TestCampaignModal";
+import { useI18n } from "../i18n";
 import { useCallback } from "react";
 import { getOpenDesignHost } from "@open-design/host";
 import { emitWebTouchpointDiagnostic, supportsWebTouchpointCapabilities, type WebTouchpointContent } from "./touchpoint-component";
@@ -29,11 +30,11 @@ function validDecision(value: unknown, placementKey: string): { valid: ValidDeci
 
 export function ProductionCampaignHover({ authenticated, sessionSubject }: { authenticated: boolean; sessionSubject: string | null }) {
 	const testRuntime = useTestRuntime();
+	const { locale } = useI18n();
 	const testEntry = testRuntime?.decisions.get(ENTRY_PLACEMENT);
 	const testLayer = testRuntime?.decisions.get(LAYER_PLACEMENT);
-	const enabled = !testRuntime && authenticated && Boolean(sessionSubject) && getOpenDesignHost()?.client.type === "desktop" && Boolean(readCampaignHostLocale());
+	const enabled = !testRuntime && authenticated && Boolean(sessionSubject) && getOpenDesignHost()?.client.type === "desktop" && Boolean(locale);
 	const load = useCallback(async (signal: AbortSignal, active: ActiveHover | null): Promise<TouchpointLifecycleLoad<ActiveHover>> => {
-		const locale = readCampaignHostLocale();
 		if (!locale || !sessionSubject) return { kind: "clear" };
 		const [entryLoaded, layerLoaded] = await Promise.all([
 			loadProductionTouchpointDecision(ENTRY_PLACEMENT, locale, signal, active?.entry.decision.touchpointDecisionId),
@@ -46,14 +47,14 @@ export function ProductionCampaignHover({ authenticated, sessionSubject }: { aut
 		if (entryLoaded.kind !== "decision" || layerLoaded.kind !== "decision") return { kind: "retain" };
 		const entry = validDecision(entryLoaded.value, ENTRY_PLACEMENT);
 		const layer = validDecision(layerLoaded.value, LAYER_PLACEMENT);
-		if (!entry || !layer || entry.valid.decision.activityId !== layer.valid.decision.activityId || entry.valid.decision.deploymentId !== layer.valid.decision.deploymentId || readCampaignHostLocale() !== locale) return { kind: "clear" };
+		if (!entry || !layer || entry.valid.decision.activityId !== layer.valid.decision.activityId || entry.valid.decision.deploymentId !== layer.valid.decision.deploymentId) return { kind: "clear" };
 		return { kind: "decision", value: { entry: entry.valid, layer: layer.valid, sessionSubject }, key: `${entry.valid.decision.activityId}:${entry.valid.decision.deploymentId}:${entry.valid.decision.content.id}:${entry.valid.decision.touchpointDecisionId}:${layer.valid.decision.touchpointDecisionId}`, validForMs: Math.min(entry.validForMs, layer.validForMs) };
-	}, [sessionSubject]);
+	}, [locale, sessionSubject]);
 	const onError = useCallback((error: unknown) => {
 		const diagnostic = emitProductionTouchpointLoadDiagnostic(error);
 		if (diagnostic) emitWebTouchpointDiagnostic(diagnostic);
 	}, []);
-	const lifecycle = useTouchpointLifecycle({ enabled, identity: sessionSubject, load, onError });
+	const lifecycle = useTouchpointLifecycle({ enabled, identity: enabled ? JSON.stringify([sessionSubject, locale]) : null, load, onError });
 	const active = lifecycle.current;
 	const onTestVisible = useCallback((decision: TestDecision, placementKey: TestCampaignPlacement) => {
 		if (testRuntime) recordVisibleTestTouchpoint(testRuntime, decision, placementKey);

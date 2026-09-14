@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const { getOpenDesignHostMock } = vi.hoisted(() => ({ getOpenDesignHostMock: vi.fn() }));
 vi.mock("@open-design/host", () => ({ getOpenDesignHost: getOpenDesignHostMock }));
 import { ProductionCampaignBadge } from "../../src/components/ProductionCampaignBadge";
+import { I18nProvider, useI18n } from "../../src/i18n";
 import * as touchpointComponent from "../../src/components/touchpoint-component";
 import { OpenDesignTouchpointElement } from "../../src/components/touchpoint-component";
 const digest = (value: string) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
@@ -14,6 +15,10 @@ const entry = "export function mount(root) { root.textContent = 'Badge'; return 
 const manifest = { formatVersion: 2 as const, runtimeKind: "web-component" as const, runtimeApiVersion: 1 as const, platformWrapperVersion: "vela-touchpoint-wrapper-v1" as const, sdkVersion: "vela-touchpoint-sdk-v1" as const, contentLine: "badge", placements: [{ key: "opend.home.account-badge" as const, entry: "component.js", resources: [], locales: ["en-US"], requiredCapabilities: ["static-action"], staticActions: [{ id: "learn", target: { kind: "https" as const, url: "https://example.com" } }] }], resources: ["component.js"], images: [] };
 const content = { id: "version-badge", placementKey: "opend.home.account-badge", locale: "en-US", manifestHash: digest(JSON.stringify(manifest)), entryPath: "component.js", entryDigest: digest(entry), entryModule: entry, resources: [{ path: "component.js", digest: digest(entry), bytes: btoa(entry) }], runtime: { kind: "web-component" as const, apiVersion: 1 as const, wrapperVersion: "vela-touchpoint-wrapper-v1" as const, sdkVersion: "vela-touchpoint-sdk-v1" as const }, buildIdentity: { fingerprint: "badge-fixed" }, manifest };
 const decision = (overrides: Record<string, unknown> = {}) => { const now = new Date(); return { activityId: "badge-activity", authorizationExpiresAt: new Date(now.getTime() + 60_000).toISOString(), content, deploymentId: "deployment-badge", endsAt: new Date(now.getTime() + 5 * 60_000).toISOString(), placementKey: "opend.home.account-badge", requiredCapabilities: ["static-action"], serverTime: now.toISOString(), staticActions: [{ id: "learn", target: { kind: "https", url: "https://example.com" } }], touchpointDecisionId: "decision-badge", ...overrides }; };
+function LocaleSwitch() {
+  const { setLocale } = useI18n();
+  return <button onClick={() => setLocale("zh-CN")}>Switch locale</button>;
+}
 beforeEach(() => { vi.spyOn(OpenDesignTouchpointElement.prototype, "mount").mockImplementation(async function (this: OpenDesignTouchpointElement) { this.shadowRoot?.replaceChildren(document.createTextNode("Badge")); }); });
 afterEach(() => { cleanup(); getOpenDesignHostMock.mockReset(); openExternalUrlMock.mockClear(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 describe("ProductionCampaignBadge", () => {
@@ -23,7 +28,6 @@ describe("ProductionCampaignBadge", () => {
     render(<ProductionCampaignBadge authenticated sessionSubject="account-a" />);
     const badge = await screen.findByTestId("production-campaign-badge");
     await waitFor(() => expect(badge.querySelector("opend-touchpoint")?.shadowRoot?.textContent).toContain("Badge"));
-    expect(fetchMock).toHaveBeenCalledWith("/api/touchpoints/production-runtime?placementKey=opend.home.account-badge&locale=en-GB", expect.objectContaining({ cache: "no-store", signal: expect.any(AbortSignal) }));
     expect(badge.querySelector("iframe, webview")).toBeNull();
     expect(screen.queryByRole("button", { name: /close/i })).toBeNull();
   });
@@ -161,5 +165,33 @@ describe("ProductionCampaignBadge", () => {
     const release = vi.fn(); resolveVerified?.({ entryUrl: "blob:badge", resourceUrls: new Map(), dispose: release });
     await waitFor(() => expect(release).toHaveBeenCalledTimes(1));
     expect(mount).not.toHaveBeenCalled();
+  });
+  it("loads zh-CN content for the same decision after a client locale switch and fences a late en response", async () => {
+    getOpenDesignHostMock.mockReturnValue({ client: { type: "desktop", osLocale: "fr-FR" } });
+    let resolveLateEn: ((response: Response) => void) | undefined;
+    const lateEn = new Promise<Response>((resolve) => { resolveLateEn = resolve; });
+    const localized = (locale: string) => {
+      const localizedManifest = { ...manifest, placements: [{ ...manifest.placements[0], locales: [locale] }] };
+      return decision({ content: { ...content, locale, manifest: localizedManifest, manifestHash: digest(JSON.stringify(localizedManifest)) } });
+    };
+    const fetchMock = vi.fn((url: string) => {
+      if (url.includes("locale=en") && fetchMock.mock.calls.length === 2) return lateEn;
+      return Promise.resolve(new Response(JSON.stringify(localized(url.includes("locale=zh-CN") ? "zh-CN" : "en-US")), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(OpenDesignTouchpointElement.prototype, "mount").mockImplementation(async function (this: OpenDesignTouchpointElement, _entry, _digest, context) {
+      this.shadowRoot?.replaceChildren(document.createTextNode(context.locale === "zh-CN" ? "中文内容" : "English content"));
+    });
+    render(<I18nProvider initial="en"><LocaleSwitch /><ProductionCampaignBadge authenticated sessionSubject="account-a" /></I18nProvider>);
+    await screen.findByTestId("production-campaign-badge");
+    await waitFor(() => expect(screen.getByTestId("production-campaign-badge").querySelector("opend-touchpoint")?.shadowRoot?.textContent).toContain("English content"));
+    window.dispatchEvent(new Event("focus"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await act(async () => { screen.getByRole("button", { name: "Switch locale" }).click(); });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(screen.getByTestId("production-campaign-badge").querySelector("opend-touchpoint")?.shadowRoot?.textContent).toContain("中文内容"));
+    resolveLateEn?.(new Response(JSON.stringify(localized("en-US")), { status: 200 }));
+    await Promise.resolve();
+    expect(screen.getByTestId("production-campaign-badge").querySelector("opend-touchpoint")?.shadowRoot?.textContent).toContain("中文内容");
   });
 });

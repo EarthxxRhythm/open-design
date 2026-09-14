@@ -1,4 +1,4 @@
-import { readCampaignHostLocale } from "./TestCampaignModal";
+import { useI18n } from "../i18n";
 import { useCallback, useEffect, useRef } from "react";
 import { getOpenDesignHost } from "@open-design/host";
 import {
@@ -50,12 +50,7 @@ export function canRenderProductionCampaignBadge(
 	sessionSubject: string | null,
 ) {
 	const host = getOpenDesignHost();
-	return (
-		authenticated &&
-		Boolean(sessionSubject) &&
-		host?.client.type === "desktop" &&
-		Boolean(host.client.osLocale?.trim())
-	);
+	return authenticated && Boolean(sessionSubject) && host?.client.type === "desktop";
 }
 
 /** Production account-badge host. Unlike modals, this placement never exposes close. */
@@ -67,11 +62,11 @@ export function ProductionCampaignBadge({
 	sessionSubject: string | null;
 }) {
 	const testRuntime = useTestRuntime();
+	const { locale } = useI18n();
 	const testDecision = testRuntime?.decisions.get(PLACEMENT);
 	const containerRef = useRef<HTMLDivElement | null>(null);
-	const enabled = !testRuntime && canRenderProductionCampaignBadge(authenticated, sessionSubject) && Boolean(sessionSubject);
+	const enabled = !testRuntime && canRenderProductionCampaignBadge(authenticated, sessionSubject) && Boolean(sessionSubject) && Boolean(locale);
 	const load = useCallback(async (signal: AbortSignal, active: AuthorizedDecision | null): Promise<TouchpointLifecycleLoad<AuthorizedDecision>> => {
-		const locale = readCampaignHostLocale();
 		if (!locale || !sessionSubject) return { kind: "clear" };
 		const loaded = await loadProductionTouchpointDecision(PLACEMENT, locale, signal, active?.touchpointDecisionId);
 		if (loaded.kind === "revoked") {
@@ -90,12 +85,12 @@ export function ProductionCampaignBadge({
 			return { kind: "clear" };
 		}
 		return { kind: "decision", value: { ...next, sessionSubject }, key: `${next.activityId}:${next.deploymentId}:${next.touchpointDecisionId}:${next.content.id}`, validForMs: deadline - Date.parse(next.serverTime) };
-	}, [sessionSubject]);
+	}, [locale, sessionSubject]);
 	const onError = useCallback((error: unknown) => {
 		const diagnostic = emitProductionTouchpointLoadDiagnostic(error);
 		if (diagnostic) emitWebTouchpointDiagnostic(diagnostic);
 	}, []);
-	const lifecycle = useTouchpointLifecycle({ enabled, identity: sessionSubject, load, onError });
+	const lifecycle = useTouchpointLifecycle({ enabled, identity: enabled ? JSON.stringify([sessionSubject, locale]) : null, load, onError });
 	const decision = lifecycle.current;
 	const clear = lifecycle.clear;
 
