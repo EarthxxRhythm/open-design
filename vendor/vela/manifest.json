@@ -1,5 +1,5 @@
 {
-  "distributionVersion": "0.0.1-test.harness-align.gdb5a86e.execfix",
+  "distributionVersion": "0.0.1-test.harness-align.gdb5a86e.diag1",
   "velaBinaryVersion": "0.0.1-test.harness-align.gdb5a86e",
   "velaSourceCommit": "db5a86ec3b72f354a4f619421b04eef870afc08a",
   "openDesignBaselineCommit": "be6701205bc8590873e805ba580424e1c6f85147",
@@ -28,14 +28,10 @@
   "npmPublished": false,
   "artifacts": [
     {
-      "file": "powerformer-vela-cli-0.0.1-test.harness-align.gdb5a86e.execfix.tgz",
-      "bytes": 11004,
-      "sha256": "02e001a49c6ea34bf8365f2e1e64f108bed371dac43309a94db5a86297fbb88d"
+      "file": "powerformer-vela-cli-0.0.1-test.harness-align.gdb5a86e.diag1.tgz"
     },
     {
-      "file": "powerformer-vela-cli-darwin-arm64-0.0.1-test.harness-align.gdb5a86e.execfix.tgz",
-      "bytes": 47940148,
-      "sha256": "7a0688c99f892afcffab34283b44d469be338f5571796dd2fee026efa4e79b1a"
+      "file": "powerformer-vela-cli-darwin-arm64-0.0.1-test.harness-align.gdb5a86e.diag1.tgz"
     }
   ]
 }
