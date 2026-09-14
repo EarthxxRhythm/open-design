@@ -23,6 +23,11 @@ import {
 	loadProductionTouchpointDecision,
 } from "./production-touchpoint-loader";
 import {
+	resolveAuthorizationDeadline,
+	useTouchpointLifecycle,
+	type TouchpointLifecycleLoad,
+} from "./touchpoint-lifecycle";
+import {
 	TestTouchpointMount,
 	recordVisibleTestTouchpoint,
 	useTestRuntime,
@@ -175,10 +180,7 @@ export async function dispatchProductionCampaignAction(
 	}
 }
 /** Production v2 modal shares the Test adapter; it does not fall back to a frame when bytes or runtime identity fail. */
-type AuthorizedDecision = Decision & {
-	authorizationDeadline: number;
-	sessionSubject: string;
-};
+type AuthorizedDecision = Decision & { sessionSubject: string };
 export function ProductionCampaignModal({
 	authenticated,
 	sessionSubject,
@@ -186,171 +188,43 @@ export function ProductionCampaignModal({
 	authenticated: boolean;
 	sessionSubject: string | null;
 }) {
-	const [decision, setDecision] = useState<AuthorizedDecision | null>(null);
 	const testRuntime = useTestRuntime();
 	const testDecision = testRuntime?.decisions.get(PLACEMENT);
 	const [testClosed, setTestClosed] = useState(false);
-	const decisionRef = useRef<AuthorizedDecision | null>(null);
 	const [closed, setClosed] = useState(false);
 	const elementRef = useRef<HTMLDivElement | null>(null);
 	const modalRef = useRef<HTMLDivElement | null>(null);
-	const expiry = useRef(0);
-	const requestGeneration = useRef(0);
-	const authorizationGeneration = useRef(0);
-	const leaseGeneration = useRef(0);
 	const restoreFocus = useRef<HTMLElement | null>(null);
-	const clear = useCallback(() => {
-		expiry.current = 0;
-		++requestGeneration.current;
-		++authorizationGeneration.current;
-		++leaseGeneration.current;
-		decisionRef.current = null;
-		setDecision(null);
+	const locale = readCampaignHostLocale();
+	const productionEnabled = !testRuntime && authenticated && !!sessionSubject && getOpenDesignHost()?.client.type === "desktop" && !!locale;
+	const load = useCallback(
+		async (signal: AbortSignal, active: AuthorizedDecision | null): Promise<TouchpointLifecycleLoad<AuthorizedDecision>> => {
+			if (!locale || !sessionSubject) return { kind: "clear" };
+			const loaded = await loadProductionTouchpointDecision(PLACEMENT, locale, signal, active?.touchpointDecisionId);
+			if (loaded.kind === "revoked") return active && loaded.receipt.touchpointDecisionId === active.touchpointDecisionId && loaded.receipt.deploymentId === active.deploymentId && loaded.receipt.activityId === active.activityId && loaded.receipt.contentVersionId === active.content.id ? { kind: "clear" } : { kind: "retain" };
+			if (loaded.kind === "no-decision") return active ? { kind: "retain" } : { kind: "clear" };
+			const next = loaded.value as Decision;
+			const deadline = resolveAuthorizationDeadline(next, MAX_LEASE_MS);
+			const serverTime = Date.parse(next.serverTime);
+			if (!next.activityId || !next.touchpointDecisionId || !next.deploymentId || !next.content?.id || next.placementKey !== PLACEMENT || next.content?.placementKey !== PLACEMENT || deadline === null || !Number.isFinite(serverTime) || !supportsWebTouchpointCapabilities(next.content, next.requiredCapabilities, supportedCapabilities)) {
+				if (next.placementKey !== PLACEMENT || next.content?.placementKey !== PLACEMENT) emitWebTouchpointDiagnostic({ code: "touchpoint_decision_mismatch" });
+				else if (!supportsWebTouchpointCapabilities(next.content, next.requiredCapabilities, supportedCapabilities)) emitWebTouchpointDiagnostic({ code: "touchpoint_capability_unsupported", detail: next.requiredCapabilities?.join(",") });
+				return { kind: "clear" };
+			}
+			if (active?.activityId !== next.activityId && wasDisplayed(sessionSubject, next.activityId)) return { kind: "retain" };
+			return { kind: "decision", value: { ...next, sessionSubject }, key: next.touchpointDecisionId + ":" + next.deploymentId + ":" + next.activityId + ":" + next.content.id, validForMs: deadline - serverTime };
+		},
+		[locale, sessionSubject],
+	);
+	const onError = useCallback((error: unknown) => {
+		const diagnostic = emitProductionTouchpointLoadDiagnostic(error);
+		if (diagnostic) emitWebTouchpointDiagnostic(diagnostic);
 	}, []);
+	const lifecycle = useTouchpointLifecycle<AuthorizedDecision>({ enabled: productionEnabled, identity: productionEnabled ? sessionSubject : null, load, onError });
+	const { current: decision, generation, clear, isCurrent } = lifecycle;
 	useEffect(() => {
 		ensureWebTouchpointElement();
 	}, []);
-	useEffect(() => {
-		const locale = readCampaignHostLocale();
-		if (testRuntime) {
-			clear();
-			return;
-		}
-		if (
-			!authenticated ||
-			!sessionSubject ||
-			getOpenDesignHost()?.client.type !== "desktop" ||
-			!locale
-		) {
-			clear();
-			return;
-		}
-		let cancelled = false;
-		let timer: ReturnType<typeof setTimeout> | undefined;
-		const controller = new AbortController();
-		const subject = sessionSubject;
-		const requestGenerationRef = requestGeneration;
-		const current = (requestGeneration: number) =>
-			!cancelled &&
-			requestGeneration === requestGenerationRef.current &&
-			authenticated &&
-			sessionSubject === subject;
-		const decide = async () => {
-			const nextRequestGeneration = ++requestGeneration.current;
-			try {
-				const loaded = await loadProductionTouchpointDecision(
-					PLACEMENT,
-					locale,
-					controller.signal,
-					decisionRef.current?.touchpointDecisionId,
-				);
-				if (!current(nextRequestGeneration)) return;
-				if (loaded.kind === "revoked") {
-					const active = decisionRef.current;
-					if (
-						active &&
-						loaded.receipt.touchpointDecisionId ===
-							active.touchpointDecisionId &&
-						loaded.receipt.deploymentId === active.deploymentId &&
-						loaded.receipt.activityId === active.activityId &&
-						loaded.receipt.contentVersionId === active.content.id
-					)
-						clear();
-					return;
-				}
-				if (loaded.kind === "no-decision") {
-					if (!decisionRef.current) clear();
-					return;
-				}
-				const next = loaded.value as Decision;
-				if (!current(nextRequestGeneration)) return;
-				const deadline = Math.min(
-					Date.parse(next.authorizationExpiresAt),
-					Date.parse(next.endsAt),
-					Date.parse(next.serverTime) + MAX_LEASE_MS,
-				);
-				if (
-					!next.activityId ||
-					next.placementKey !== PLACEMENT ||
-					next.content?.placementKey !== PLACEMENT ||
-					!Number.isFinite(deadline) ||
-					deadline <= Date.now()
-				) {
-					if (
-						next.placementKey !== PLACEMENT ||
-						next.content?.placementKey !== PLACEMENT
-					)
-						emitWebTouchpointDiagnostic({
-							code: "touchpoint_decision_mismatch",
-						});
-					clear();
-					return;
-				}
-				if (
-					!supportsWebTouchpointCapabilities(
-						next.content,
-						next.requiredCapabilities,
-						supportedCapabilities,
-					)
-				) {
-					emitWebTouchpointDiagnostic({
-						code: "touchpoint_capability_unsupported",
-						detail: next.requiredCapabilities?.join(","),
-					});
-					clear();
-					return;
-				}
-				if (expiry.current > Date.now()) return;
-				// Keep an already-open activity authorized; the marker only prevents a new automatic opening.
-				if (
-					decisionRef.current?.activityId !== next.activityId &&
-					wasDisplayed(subject, next.activityId)
-				)
-					return;
-				// Revoke the old mount and cancel its lease timer before scheduling React's replacement cleanup.
-				++authorizationGeneration.current;
-				const nextLeaseGeneration = ++leaseGeneration.current;
-				if (timer) clearTimeout(timer);
-				expiry.current = deadline;
-				const authorized = {
-					...next,
-					authorizationDeadline: deadline,
-					sessionSubject: subject,
-				} as AuthorizedDecision;
-				decisionRef.current = authorized;
-				setDecision(authorized);
-				timer = setTimeout(
-					() => {
-						if (leaseGeneration.current === nextLeaseGeneration) clear();
-					},
-					Math.max(0, deadline - Date.now()),
-				);
-			} catch (error) {
-				if (
-					!current(nextRequestGeneration) ||
-					(error instanceof DOMException && error.name === "AbortError")
-				)
-					return;
-				const diagnostic = emitProductionTouchpointLoadDiagnostic(error);
-				if (diagnostic) emitWebTouchpointDiagnostic(diagnostic);
-				clear();
-			}
-		};
-		void decide();
-		const wake = () => {
-			if (!document.hidden) void decide();
-		};
-		window.addEventListener("focus", wake);
-		window.addEventListener("online", wake);
-		return () => {
-			cancelled = true;
-			controller.abort();
-			if (timer) clearTimeout(timer);
-			window.removeEventListener("focus", wake);
-			window.removeEventListener("online", wake);
-			clear();
-		};
-	}, [authenticated, sessionSubject, testRuntime]);
 	useEffect(() => {
 		const container = elementRef.current;
 		if (
@@ -361,12 +235,8 @@ export function ProductionCampaignModal({
 		)
 			return;
 		let cancelled = false;
-		const mountGeneration = ++authorizationGeneration.current;
-		const current = () =>
-			!cancelled &&
-			mountGeneration === authorizationGeneration.current &&
-			authenticated &&
-			decision.sessionSubject === sessionSubject;
+		const mountGeneration = generation;
+		const current = () => !cancelled && isCurrent(mountGeneration);
 		let verified: Awaited<ReturnType<typeof verifyWebTouchpoint>> | undefined;
 		const element = document.createElement(
 			"opend-touchpoint",
@@ -380,7 +250,7 @@ export function ProductionCampaignModal({
 				visibleFrame = undefined;
 				if (
 					!current() ||
-					decision.authorizationDeadline <= Date.now() ||
+					lifecycle.deadline <= Date.now() ||
 					document.hidden ||
 					!element.isConnected ||
 					element.hidden ||
@@ -463,8 +333,8 @@ export function ProductionCampaignModal({
 								decision,
 								id,
 								mountGeneration,
-								() => authorizationGeneration.current,
-								decision.authorizationDeadline,
+								() => (isCurrent(mountGeneration) ? mountGeneration : -1),
+								lifecycle.deadline,
 							);
 						},
 						onDiagnostic: emitWebTouchpointDiagnostic,
@@ -494,11 +364,10 @@ export function ProductionCampaignModal({
 			cancelled = true;
 			document.removeEventListener("visibilitychange", recordWhenVisible);
 			if (visibleFrame !== undefined) cancelAnimationFrame(visibleFrame);
-			++authorizationGeneration.current;
 			dispose();
 			container.replaceChildren();
 		};
-	}, [authenticated, decision, sessionSubject]);
+	}, [authenticated, decision, generation, isCurrent, sessionSubject]);
 	useEffect(() => {
 		if (!decision) return;
 		restoreFocus.current =
@@ -578,6 +447,7 @@ export function ProductionCampaignModal({
 						testId="campaign-custom-element"
 						onVisible={onTestVisible}
 						requestClose={closeTestModal}
+						isAuthorized={testRuntime.isAuthorized}
 					/>
 				</div>
 			</div>

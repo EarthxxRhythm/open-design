@@ -3,10 +3,20 @@ import {
 	TOUCHPOINT_COMPONENT_V2_SDK_VERSION,
 	TOUCHPOINT_COMPONENT_V2_WRAPPER_VERSION,
 } from "@open-design/contracts";
+import type {
+	TestRuntimeContext,
+	TestRuntimeDecision,
+} from "@open-design/contracts/api/touchpointTestRuntime";
 import { getOpenDesignHost, OPEN_DESIGN_HOST_VERSION } from "@open-design/host";
+import {
+	type TouchpointLifecycleLoad,
+	resolveAuthorizationDeadline,
+	useTouchpointLifecycle,
+} from "./touchpoint-lifecycle";
 import {
 	useCallback,
 	useEffect,
+	useMemo,
 	useRef,
 	useState,
 	useSyncExternalStore,
@@ -43,7 +53,7 @@ export const TEST_CAMPAIGN_PLACEMENTS = [
 export type TestCampaignPlacement = (typeof TEST_CAMPAIGN_PLACEMENTS)[number];
 const supportedCapabilities = new Set<string>(TEST_CAMPAIGN_MODAL_CAPABILITIES);
 const placementCapabilities = new Set(["hover", "static-action"]);
-type Scenario = "before" | "active" | "after" | "wake";
+type Scenario = "realtime";
 
 /** The list response is the selected deployment snapshot, not a presentation fixture. */
 export type TestDeployment = {
@@ -62,33 +72,19 @@ export type TestDeployment = {
 	};
 	snapshotHash?: string;
 };
-export type TestContext = {
-	deploymentId: string;
-	testerMemberId?: string;
-	scenario: Scenario;
-	simulatedAt: string;
-	updatedAt: string;
-};
-export type TestDecision = {
-	deploymentId: string;
-	activityId?: string;
-	snapshotHash?: string;
-	artifactHash?: string;
-	manifestHash?: string;
-	placementKey: string;
-	requiredCapabilities: string[];
-	staticActions: TouchpointStaticAction[];
-	testContext: TestContext & {
-		scheduleState: "before" | "active" | "ended";
-	};
-	content: WebTouchpointContent;
-};
+export type TestContext = TestRuntimeContext;
+export type TestDecision = TestRuntimeDecision<
+	WebTouchpointContent,
+	TouchpointStaticAction[]
+>;
 export type TestRuntimeSession = Readonly<{
 	selectionKey: string;
 	deployment: TestDeployment;
 	context: TestContext;
 	decisions: ReadonlyMap<TestCampaignPlacement, TestDecision>;
+	isAuthorized: () => boolean;
 }>;
+type TestRuntimeValue = Omit<TestRuntimeSession, "isAuthorized">;
 
 let currentTestSession: TestRuntimeSession | null = null;
 const testRuntimeListeners = new Set<() => void>();
@@ -110,8 +106,9 @@ export function useTestRuntime(): TestRuntimeSession | null {
 export function setTestRuntimeSession(
 	session: TestRuntimeSession | null,
 ): void {
+	if (currentTestSession?.selectionKey !== session?.selectionKey)
+		acceptanceState.clear();
 	currentTestSession = session;
-	acceptanceState.clear();
 	for (const listener of testRuntimeListeners) listener();
 }
 export function clearTestRuntimeSession(): void {
@@ -133,7 +130,6 @@ export function isSelectedTestCampaignDecision(
 		next.content?.placementKey === placementKey &&
 		next.testContext?.deploymentId === context.deploymentId &&
 		next.testContext?.scenario === context.scenario &&
-		next.testContext?.simulatedAt === context.simulatedAt &&
 		next.testContext?.updatedAt === context.updatedAt
 	);
 }
@@ -256,7 +252,6 @@ function acceptanceEvidence(
 	url.searchParams.set("cmsTestSnapshot", input.snapshotHash);
 	url.searchParams.set("cmsTestPlacement", input.placementKey);
 	url.searchParams.set("cmsTestLocale", input.locale);
-	url.searchParams.set("cmsTestScenario", input.scenario);
 	return url.toString();
 }
 
@@ -321,9 +316,15 @@ export function recordVisibleTestTouchpoint(
 	decision: TestDecision,
 	placementKey: TestCampaignPlacement,
 ): void {
-	if (currentTestSession !== session || session.context.scenario !== "active")
+	if (
+		currentTestSession !== session ||
+		!session.isAuthorized() ||
+		session.decisions.get(placementKey) !== decision ||
+		session.context.scenario !== "realtime" ||
+		decision.testContext.scheduleState !== "active"
+	)
 		return;
-	const key = `${session.selectionKey}:${placementKey}`;
+	const key = `${session.deployment.id}:${session.deployment.snapshotHash ?? decision.snapshotHash ?? ""}:${placementKey}`;
 	if (acceptanceState.has(key)) return;
 	acceptanceState.set(key, "in-flight");
 	void recordTestAcceptance({
@@ -367,6 +368,7 @@ export type TestTouchpointMountProps = Readonly<{
 		placementKey: TestCampaignPlacement,
 	) => void;
 	requestClose?: () => void;
+	isAuthorized: () => boolean;
 	onCloseControlChange?: (available: boolean | null) => void;
 }>;
 
@@ -378,6 +380,7 @@ export function TestTouchpointMount({
 	className,
 	onVisible,
 	requestClose,
+	isAuthorized,
 	onCloseControlChange,
 }: TestTouchpointMountProps) {
 	const containerRef = useRef<HTMLDivElement | null>(null);
@@ -393,14 +396,19 @@ export function TestTouchpointMount({
 		) as OpenDesignTouchpointElement;
 		onCloseControlChange?.(null);
 		container.replaceChildren(element);
+		const authorized = () =>
+			isAuthorized() &&
+			currentTestSession?.isAuthorized() === true &&
+			currentTestSession.decisions.get(placementKey) === decision;
 		const mount = async () => {
+			if (!authorized()) return;
 			try {
 				verified = await verifyWebTouchpoint(decision.content);
 				const context = webTouchpointContext(
 					decision.content,
 					readWebTouchpointHostContext(readCampaignHostLocale(), hostTheme()),
 				);
-				if (cancelled || !context) {
+				if (cancelled || !context || !authorized()) {
 					verified.dispose();
 					onCloseControlChange?.(false);
 					if (!cancelled)
@@ -423,7 +431,11 @@ export function TestTouchpointMount({
 						onDiagnostic: emitWebTouchpointDiagnostic,
 					},
 				);
-				if (cancelled) return;
+				if (cancelled || !authorized()) {
+					void element.dispose(verified.resourceUrls).catch(() => undefined);
+					verified.dispose();
+					return;
+				}
 				onCloseControlChange?.(hasWebTouchpointCloseControl(element));
 				closeControlObserver = new MutationObserver(() => {
 					if (cancelled) return;
@@ -455,7 +467,7 @@ export function TestTouchpointMount({
 					closeControlObserver.observe(dialog, closeControlObserverOptions);
 				setReady(true);
 				await afterPaint();
-				if (!cancelled && actuallyVisible(element))
+				if (!cancelled && authorized() && actuallyVisible(element))
 					onVisible(decision, placementKey);
 			} catch (error) {
 				if (cancelled) return;
@@ -486,6 +498,17 @@ export function TestTouchpointMount({
 	);
 }
 
+function validIso(value: unknown): value is string {
+	return (
+		typeof value === "string" &&
+		/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(
+			value,
+		) &&
+		Number.isFinite(Date.parse(value))
+	);
+}
+
+
 /** Real Electron Test harness for all enabled OpenDesign placements. */
 export function TestCampaignModal({
 	authenticated,
@@ -495,246 +518,168 @@ export function TestCampaignModal({
 	sessionSubject?: string | null;
 }) {
 	const compatible = supportsHost(authenticated);
+	const owner = sessionSubject ?? null;
 	const [showControls] = useState(
 		() =>
 			typeof window !== "undefined" &&
 			new URLSearchParams(window.location.search).get("cmsTestControls") ===
 				"1",
 	);
-	const deploymentsOwner = useRef<string | null | undefined>(undefined);
-	const [deployments, setDeployments] = useState<TestDeployment[]>([]);
-	const [deployment, setDeployment] = useState<TestDeployment | null>(null);
-	const [context, setContext] = useState<TestContext | null>(null);
-	const [decisions, setDecisions] = useState<
-		Map<TestCampaignPlacement, TestDecision>
-	>(new Map());
-	const testSessionRef = useRef<TestRuntimeSession | null>(null);
-	const selectionGeneration = useRef(0);
-	const selectionKeyRef = useRef("");
-
-	const clear = useCallback(() => {
-		++selectionGeneration.current;
-		selectionKeyRef.current = "";
-		testSessionRef.current = null;
-		clearTestRuntimeSession();
-		setDecisions(new Map());
-		setDeployment(null);
-		setContext(null);
-	}, []);
+	const [catalog, setCatalog] = useState<{
+		owner: string | null;
+		deployments: TestDeployment[];
+	} | null>(null);
+	const [selection, setSelection] = useState<{
+		owner: string | null;
+		deployment: TestDeployment;
+	} | null>(null);
+	const publishedSession = useRef<TestRuntimeSession | null>(null);
+	const deployments =
+		compatible && catalog?.owner === owner ? catalog.deployments : [];
+	const deployment =
+		compatible && selection?.owner === owner ? selection.deployment : null;
 
 	useEffect(() => {
 		ensureWebTouchpointElement();
-	}, []);
-	useEffect(
-		() => () => {
-			testSessionRef.current = null;
-			clearTestRuntimeSession();
-		},
-		[],
-	);
-	useEffect(() => {
-		clear();
-		deploymentsOwner.current = undefined;
-		setDeployments([]);
-		if (!compatible) {
-			clear();
-			return;
-		}
+		setCatalog(null);
+		setSelection(null);
+		if (!compatible) return;
 		let cancelled = false;
+		const controller = new AbortController();
 		void fetch("/api/touchpoints/test-runtime/deployments", {
 			cache: "no-store",
+			signal: controller.signal,
 		})
-			.then((response) =>
-				response.ok
-					? (response.json() as Promise<{ deployments?: TestDeployment[] }>)
-					: { deployments: [] },
-			)
-			.then((value) => {
-				if (!cancelled) {
-					deploymentsOwner.current = sessionSubject ?? null;
-					setDeployments(
-						(value.deployments ?? []).filter(
-							(candidate) =>
-								typeof candidate.id === "string" &&
-								testPlacementIds(candidate).length > 0,
-						),
-					);
-				}
+			.then(async (response) => {
+				if (!response.ok) throw new Error("touchpoint_test_catalog_failed");
+				const value = (await response.json()) as { deployments?: TestDeployment[] };
+				if (cancelled || controller.signal.aborted) return;
+				const available = (value.deployments ?? []).filter(
+					(candidate) => typeof candidate.id === "string" && testPlacementIds(candidate).length > 0,
+				);
+				setCatalog({ owner, deployments: available });
+				if (!showControls && available[0]) setSelection({ owner, deployment: available[0] });
 			})
 			.catch(() => {
-				if (!cancelled) setDeployments([]);
+				if (!cancelled && !controller.signal.aborted)
+					setCatalog({ owner, deployments: [] });
 			});
-		return () => {
-			cancelled = true;
-		};
-	}, [clear, compatible, sessionSubject]);
+		return () => { cancelled = true; controller.abort(); };
+	}, [compatible, owner, showControls]);
 
-	const select = useCallback(
-		async (deploymentId: string, scenario: Scenario) => {
-			const selected = deployments.find(
-				(candidate) => candidate.id === deploymentId,
-			);
-			const generation = ++selectionGeneration.current;
-			setDeployment(null);
-			setDecisions(new Map());
-			setContext(null);
-			if (!selected) {
-				clear();
-				return;
-			}
-			setDeployment(selected);
-			const previousContext = testSessionRef.current?.context;
-			const pendingSession: TestRuntimeSession = Object.freeze({
-				selectionKey: [
-					selected.id,
-					selected.snapshotHash ?? "",
-					"pending",
-					String(generation),
-				].join(":"),
-				deployment: selected,
-				context: previousContext ?? {
-					deploymentId,
-					scenario,
-					simulatedAt: "",
-					updatedAt: "",
-				},
-				decisions: new Map(),
-			});
-			testSessionRef.current = pendingSession;
-			setTestRuntimeSession(pendingSession);
-			try {
+	const adapter = useMemo(() => {
+		if (!deployment) return null;
+		const selected = deployment;
+		const placements = testPlacementIds(selected);
+		const selectionKey = selected.id + ":" + (selected.snapshotHash ?? "");
+		let context: TestContext | null = null;
+		let windowBounds: Readonly<{ startsAt: number; endsAt: number }> | null = null;
+		const load = async (
+			signal: AbortSignal,
+			active: TestRuntimeValue | null,
+		): Promise<TouchpointLifecycleLoad<TestRuntimeValue>> => {
+			const current = () => !signal.aborted;
+			if (!placements.length) return { kind: "clear" };
+			if (!context) {
 				const response = await fetch("/api/touchpoints/test-runtime/context", {
 					method: "POST",
 					headers: { "content-type": "application/json" },
-					body: JSON.stringify({ deploymentId, scenario }),
+					body: JSON.stringify({ deploymentId: selected.id, scenario: "realtime" }),
+					signal,
 				});
-				if (generation !== selectionGeneration.current) return;
-				if (!response.ok) {
-					emitWebTouchpointDiagnostic({
-						code: `touchpoint_test_context_http_${response.status}`,
-					});
-					return;
-				}
-				const nextContext = (await response.json()) as TestContext;
-				if (generation !== selectionGeneration.current) return;
-				if (
-					nextContext.deploymentId !== deploymentId ||
-					nextContext.scenario !== scenario
-				) {
-					emitWebTouchpointDiagnostic({ code: "touchpoint_decision_mismatch" });
-					return;
-				}
-				setDeployment(selected);
-				setContext(nextContext);
-				const available = testPlacementIds(selected);
-				const pendingSession: TestRuntimeSession = Object.freeze({
-					selectionKey: `${selected.id}:${selected.snapshotHash ?? ""}:${nextContext.scenario}:${nextContext.simulatedAt}:${nextContext.updatedAt}`,
-					deployment: selected,
-					context: nextContext,
-					decisions: new Map(),
-				});
-				testSessionRef.current = pendingSession;
-				setTestRuntimeSession(pendingSession);
-				const loaded = await Promise.all(
-					available.map(async (placementKey) => {
-						const query = new URLSearchParams({
-							deploymentId,
-							placementKey,
-							locale: readCampaignHostLocale(),
-						});
-						const runtimeResponse = await fetch(
-							`/api/touchpoints/test-runtime?${query.toString()}`,
-							{ cache: "no-store" },
-						);
-						if (!runtimeResponse.ok) return null;
-						return {
-							placementKey,
-							decision: (await runtimeResponse.json()) as TestDecision,
-						};
-					}),
-				);
-				if (generation !== selectionGeneration.current) return;
-				const nextDecisions = new Map<TestCampaignPlacement, TestDecision>();
-				for (const item of loaded) {
-					if (!item) continue;
-					const identityMatches = decisionMatchesSelection(
-						item.decision,
-						nextContext,
-						selected,
-						item.placementKey,
-					);
-					if (
-						identityMatches &&
-						item.decision.testContext.scheduleState !== "active"
-					)
-						continue;
-					const capabilitiesMatch = supportsWebTouchpointCapabilities(
-						item.decision.content,
-						item.decision.requiredCapabilities,
-						item.placementKey === TEST_CAMPAIGN_MODAL_PLACEMENT
-							? supportedCapabilities
-							: placementCapabilities,
-					);
-					if (identityMatches && capabilitiesMatch) {
-						nextDecisions.set(item.placementKey, item.decision);
-					} else if (identityMatches && !capabilitiesMatch) {
-						emitWebTouchpointDiagnostic({
-							code: "touchpoint_capability_unsupported",
-							detail: Array.isArray(item.decision.requiredCapabilities)
-								? item.decision.requiredCapabilities.join(",")
-								: undefined,
-						});
-					} else {
-						emitWebTouchpointDiagnostic({
-							code: "touchpoint_decision_mismatch",
-						});
-					}
-				}
-				if (nextDecisions.size !== available.length) {
-					selectionKeyRef.current = "";
-					// Keep the empty Test session as a fence: failed Test content must
-					// never fall back to production while the selector stays selected.
-					setDecisions(new Map());
-					return;
-				}
-				selectionKeyRef.current = `${selected.id}:${selected.snapshotHash ?? ""}:${nextContext.scenario}:${nextContext.simulatedAt}:${nextContext.updatedAt}`;
-				const session: TestRuntimeSession = Object.freeze({
-					selectionKey: selectionKeyRef.current,
-					deployment: selected,
-					context: nextContext,
-					decisions: nextDecisions,
-				});
-				testSessionRef.current = session;
-				setTestRuntimeSession(session);
-				setDecisions(nextDecisions);
-			} catch (error) {
-				if (generation !== selectionGeneration.current) return;
-				emitWebTouchpointDiagnostic({
-					code:
-						error instanceof Error
-							? error.message
-							: "touchpoint_test_load_failed",
-				});
+				if (!current()) return { kind: "retain" };
+				if (!response.ok) throw new Error("realtime_test_runtime_required");
+				const next = (await response.json()) as TestContext;
+				if (!current()) return { kind: "retain" };
+				if (!next || next.deploymentId !== selected.id || next.scenario !== "realtime" || "simulatedAt" in next || !validIso(next.updatedAt))
+					return { kind: "clear" };
+				context = next;
 			}
-		},
-		[clear, deployments],
-	);
+			const selectedContext = context;
+			const loaded = await Promise.all(placements.map(async (placementKey) => {
+				const query = new URLSearchParams({ deploymentId: selected.id, placementKey, locale: readCampaignHostLocale() });
+				const response = await fetch("/api/touchpoints/test-runtime?" + query, { cache: "no-store", signal });
+				if (!current()) return null;
+				if (!response.ok) throw new Error("touchpoint_test_load_failed");
+				const decision = (await response.json()) as TestDecision;
+				if (!current()) return null;
+				if (!decision || !decisionMatchesSelection(decision, selectedContext, selected, placementKey))
+					throw new Error("touchpoint_decision_mismatch");
+				if (!validIso(decision.serverTime) || !validIso(decision.startsAt) || !validIso(decision.endsAt) || !validIso(decision.authorizationExpiresAt) || decision.testContext.scenario !== "realtime" || "simulatedAt" in decision.testContext)
+					throw new Error("realtime_test_runtime_required");
+				const serverTime = Date.parse(decision.serverTime);
+				const startsAt = Date.parse(decision.startsAt);
+				const endsAt = Date.parse(decision.endsAt);
+				if (startsAt >= endsAt) throw new Error("realtime_test_runtime_required");
+				const expected = serverTime < startsAt ? "before" : serverTime < endsAt ? "active" : "ended";
+				if (decision.testContext.scheduleState !== expected) throw new Error("realtime_test_runtime_required");
+				const capabilities = placementKey === TEST_CAMPAIGN_MODAL_PLACEMENT ? supportedCapabilities : placementCapabilities;
+				if (!supportsWebTouchpointCapabilities(decision.content, decision.requiredCapabilities, capabilities))
+					throw new Error("touchpoint_capability_unsupported");
+				if (expected === "ended")
+					return { placementKey, decision, startsAt, endsAt, serverTime, validForMs: 0 };
+				const deadline = resolveAuthorizationDeadline(decision, 60_000, true);
+				if (deadline === null) throw new Error("realtime_test_runtime_required");
+				return { placementKey, decision, startsAt, endsAt, serverTime, validForMs: deadline - serverTime };
+			}));
+			if (!current()) return { kind: "retain" };
+			const decisions = loaded.filter(
+				(item): item is NonNullable<typeof item> => item !== null,
+			);
+			if (decisions.length !== placements.length) return { kind: "retain" };
+			const first = decisions[0];
+			if (!first || decisions.some((item) => item.startsAt !== first.startsAt || item.endsAt !== first.endsAt))
+				throw new Error("touchpoint_decision_mismatch");
+			if (windowBounds && (windowBounds.startsAt !== first.startsAt || windowBounds.endsAt !== first.endsAt))
+				throw new Error("touchpoint_decision_mismatch");
+			windowBounds = { startsAt: first.startsAt, endsAt: first.endsAt };
+			if (decisions.some((item) => item.decision.testContext.scheduleState === "ended")) return { kind: "clear", ended: true };
+			if (decisions.some((item) => item.decision.testContext.scheduleState === "before"))
+				return { kind: "waiting", retryAfterMs: Math.max(...decisions.map((item) => item.startsAt - item.serverTime)) };
+			const validForMs = Math.min(...decisions.map((item) => item.validForMs));
+			if (validForMs <= 0) return { kind: "clear" };
+			const session = active?.selectionKey === selectionKey ? active : Object.freeze<TestRuntimeValue>({
+				selectionKey, deployment: selected, context: selectedContext,
+				decisions: new Map(decisions.map((item) => [item.placementKey, item.decision])),
+			});
+			return { kind: "decision", value: session, key: selectionKey, validForMs };
+		};
+		return { selectionKey, load };
+	}, [deployment]);
 
+	const load = useCallback((signal: AbortSignal, active: TestRuntimeValue | null) =>
+		adapter ? adapter.load(signal, active) : Promise.resolve({ kind: "clear" } as const), [adapter]);
+	const lifecycle = useTouchpointLifecycle<TestRuntimeValue>({
+		enabled: compatible && adapter !== null,
+		identity: adapter ? owner + ":" + adapter.selectionKey : null,
+		load,
+		onError: (error) => emitWebTouchpointDiagnostic({ code: error instanceof Error ? error.message : "touchpoint_test_load_failed" }),
+	});
+	const runtimeSession = useMemo(() => lifecycle.current && Object.freeze<TestRuntimeSession>({
+		...lifecycle.current,
+		isAuthorized: () => lifecycle.isCurrent(lifecycle.generation),
+	}), [lifecycle.current, lifecycle.generation, lifecycle.isCurrent]);
 	useEffect(() => {
-		// The API orders available Test deployments newest first. Normal clients
-		// preview that snapshot directly; clock/selection controls are opt-in.
-		if (
-			showControls ||
-			!compatible ||
-			deploymentsOwner.current !== (sessionSubject ?? null)
-		)
+		if (!deployment) {
+			publishedSession.current = null;
+			clearTestRuntimeSession();
 			return;
-		const latest = deployments[0];
-		if (latest) void select(latest.id, "active");
-	}, [compatible, deployments, select, sessionSubject, showControls]);
+		}
+		const session = runtimeSession ?? Object.freeze<TestRuntimeSession>({
+			selectionKey: adapter?.selectionKey ?? deployment.id + ":" + (deployment.snapshotHash ?? ""),
+			deployment,
+			context: { deploymentId: deployment.id, scenario: "realtime", updatedAt: "" },
+			decisions: new Map<TestCampaignPlacement, TestDecision>(),
+			isAuthorized: () => false,
+		});
+		publishedSession.current = session;
+		setTestRuntimeSession(session);
+	}, [adapter, deployment, runtimeSession]);
+	useEffect(() => () => {
+		if (currentTestSession === publishedSession.current) clearTestRuntimeSession();
+	}, []);
 
 	if (!showControls || !compatible || deployments.length === 0) return null;
-	const active = decisions.size > 0;
 	return (
 		<div className={styles.control} data-testid="touchpoint-test-selector">
 			<label>
@@ -743,9 +688,11 @@ export function TestCampaignModal({
 					aria-label="Test activity"
 					value={deployment?.id ?? ""}
 					onChange={(event) => {
-						if (event.target.value)
-							void select(event.target.value, context?.scenario ?? "active");
-						else clear();
+						const next = deployments.find(
+							(candidate) => candidate.id === event.target.value,
+						);
+						clearTestRuntimeSession();
+						setSelection(next ? { owner, deployment: next } : null);
 					}}
 				>
 					<option value="">Select a Test activity</option>
@@ -756,29 +703,11 @@ export function TestCampaignModal({
 					))}
 				</select>
 			</label>
-			<label>
-				Test time
-				<select
-					aria-label="Test time"
-					disabled={!deployment}
-					value={context?.scenario ?? "active"}
-					onChange={(event) => {
-						if (deployment)
-							void select(deployment.id, event.target.value as Scenario);
-					}}
-				>
-					<option value="before">Before start</option>
-					<option value="active">During schedule</option>
-					<option value="after">After end</option>
-					<option value="wake">Wake check</option>
-				</select>
-			</label>
-			{context ? (
-				<output data-testid="touchpoint-test-clock">
-					Test clock: {context.scenario} / {active ? "active" : ""} /{" "}
-					{context.simulatedAt}
+			{deployment && (
+				<output role="status" data-testid="touchpoint-test-clock">
+					Test time: realtime / {lifecycle.status ?? "loading"}
 				</output>
-			) : null}
+			)}
 		</div>
 	);
 }

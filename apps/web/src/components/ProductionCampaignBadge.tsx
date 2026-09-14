@@ -1,5 +1,5 @@
 import { readCampaignHostLocale } from "./TestCampaignModal";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { getOpenDesignHost } from "@open-design/host";
 import {
 	emitWebTouchpointDiagnostic,
@@ -17,6 +17,7 @@ import {
 } from "./touchpoint-static-actions";
 import { dispatchProductionCampaignAction } from "./ProductionCampaignModal";
 import { emitProductionTouchpointLoadDiagnostic, loadProductionTouchpointDecision } from "./production-touchpoint-loader";
+import { resolveAuthorizationDeadline, type TouchpointLifecycleLoad, useTouchpointLifecycle } from "./touchpoint-lifecycle";
 import {
 	TestTouchpointMount,
 	recordVisibleTestTouchpoint,
@@ -27,7 +28,6 @@ import styles from "./ProductionCampaignBadge.module.css";
 
 const PLACEMENT = "opend.home.account-badge";
 const MAX_LEASE_MS = 5 * 60_000;
-const RECHECK_MS = 30_000;
 const supportedCapabilities = new Set(["static-action"]);
 type Decision = {
 	activityId: string;
@@ -42,7 +42,6 @@ type Decision = {
 	touchpointDecisionId: string;
 };
 type AuthorizedDecision = Decision & {
-	authorizationDeadline: number;
 	sessionSubject: string;
 };
 
@@ -67,147 +66,42 @@ export function ProductionCampaignBadge({
 	authenticated: boolean;
 	sessionSubject: string | null;
 }) {
-	const [decision, setDecision] = useState<AuthorizedDecision | null>(null);
 	const testRuntime = useTestRuntime();
 	const testDecision = testRuntime?.decisions.get(PLACEMENT);
-	const decisionRef = useRef<AuthorizedDecision | null>(null);
 	const containerRef = useRef<HTMLDivElement | null>(null);
-	const expiry = useRef(0);
-	const requestGeneration = useRef(0);
-	const authorizationGeneration = useRef(0);
-	const leaseGeneration = useRef(0);
-	const clear = useCallback(() => {
-		expiry.current = 0;
-		++requestGeneration.current;
-		++authorizationGeneration.current;
-		++leaseGeneration.current;
-		decisionRef.current = null;
-		setDecision(null);
+	const enabled = !testRuntime && canRenderProductionCampaignBadge(authenticated, sessionSubject) && Boolean(sessionSubject);
+	const load = useCallback(async (signal: AbortSignal, active: AuthorizedDecision | null): Promise<TouchpointLifecycleLoad<AuthorizedDecision>> => {
+		const locale = readCampaignHostLocale();
+		if (!locale || !sessionSubject) return { kind: "clear" };
+		const loaded = await loadProductionTouchpointDecision(PLACEMENT, locale, signal, active?.touchpointDecisionId);
+		if (loaded.kind === "revoked") {
+			if (active && loaded.receipt.touchpointDecisionId === active.touchpointDecisionId && loaded.receipt.deploymentId === active.deploymentId && loaded.receipt.activityId === active.activityId && loaded.receipt.contentVersionId === active.content.id) return { kind: "clear" };
+			return { kind: "retain" };
+		}
+		if (loaded.kind === "no-decision") return active ? { kind: "retain" } : { kind: "clear" };
+		const next = loaded.value as Decision;
+		const deadline = resolveAuthorizationDeadline(next, MAX_LEASE_MS);
+		if (!next.activityId || !next.touchpointDecisionId || !next.deploymentId || !next.content?.id || next.placementKey !== PLACEMENT || next.content?.placementKey !== PLACEMENT || deadline === null || !Number.isFinite(deadline)) {
+			if (next.placementKey !== PLACEMENT || next.content?.placementKey !== PLACEMENT) emitWebTouchpointDiagnostic({ code: "touchpoint_decision_mismatch" });
+			return { kind: "clear" };
+		}
+		if (!supportsWebTouchpointCapabilities(next.content, next.requiredCapabilities, supportedCapabilities)) {
+			emitWebTouchpointDiagnostic({ code: "touchpoint_capability_unsupported", detail: next.requiredCapabilities?.join(",") });
+			return { kind: "clear" };
+		}
+		return { kind: "decision", value: { ...next, sessionSubject }, key: `${next.activityId}:${next.deploymentId}:${next.touchpointDecisionId}:${next.content.id}`, validForMs: deadline - Date.parse(next.serverTime) };
+	}, [sessionSubject]);
+	const onError = useCallback((error: unknown) => {
+		const diagnostic = emitProductionTouchpointLoadDiagnostic(error);
+		if (diagnostic) emitWebTouchpointDiagnostic(diagnostic);
 	}, []);
+	const lifecycle = useTouchpointLifecycle({ enabled, identity: sessionSubject, load, onError });
+	const decision = lifecycle.current;
+	const clear = lifecycle.clear;
 
 	useEffect(() => {
 		ensureWebTouchpointElement();
 	}, []);
-	useEffect(() => {
-		const host = getOpenDesignHost();
-		const locale = readCampaignHostLocale();
-		if (testRuntime) {
-			clear();
-			return;
-		}
-		if (
-			!canRenderProductionCampaignBadge(authenticated, sessionSubject) ||
-			!sessionSubject
-		) {
-			clear();
-			return;
-		}
-		let cancelled = false;
-		let timer: ReturnType<typeof setTimeout> | undefined;
-		const controller = new AbortController();
-		const subject = sessionSubject;
-		const requestGenerationRef = requestGeneration;
-		const current = (requestGeneration: number) =>
-			!cancelled &&
-			requestGeneration === requestGenerationRef.current &&
-			authenticated &&
-			sessionSubject === subject;
-		const decide = async () => {
-			const nextRequestGeneration = ++requestGeneration.current;
-			try {
-				const loaded = await loadProductionTouchpointDecision(
-					PLACEMENT, locale, controller.signal, decisionRef.current?.touchpointDecisionId,
-				);
-				if (!current(nextRequestGeneration)) return;
-				if (loaded.kind === "revoked") {
-					const active = decisionRef.current;
-					if (active && loaded.receipt.touchpointDecisionId === active.touchpointDecisionId && loaded.receipt.deploymentId === active.deploymentId && loaded.receipt.activityId === active.activityId && loaded.receipt.contentVersionId === active.content.id) clear();
-					return;
-				}
-				if (loaded.kind === "no-decision") { if (!decisionRef.current) clear(); return; }
-				const next = loaded.value as Decision;
-				if (!current(nextRequestGeneration)) return;
-				const deadline = Math.min(
-					Date.parse(next.authorizationExpiresAt),
-					Date.parse(next.endsAt),
-					Date.parse(next.serverTime) + MAX_LEASE_MS,
-				);
-				if (
-					!next.activityId ||
-					next.placementKey !== PLACEMENT ||
-					next.content?.placementKey !== PLACEMENT ||
-					!Number.isFinite(deadline) ||
-					deadline <= Date.now()
-				) {
-					if (
-						next.placementKey !== PLACEMENT ||
-						next.content?.placementKey !== PLACEMENT
-					)
-						emitWebTouchpointDiagnostic({
-							code: "touchpoint_decision_mismatch",
-						});
-					clear();
-					return;
-				}
-				if (
-					!supportsWebTouchpointCapabilities(
-						next.content,
-						next.requiredCapabilities,
-						supportedCapabilities,
-					)
-				) {
-					emitWebTouchpointDiagnostic({
-						code: "touchpoint_capability_unsupported",
-						detail: next.requiredCapabilities?.join(","),
-					});
-					clear();
-					return;
-				}
-				if (expiry.current > Date.now()) return;
-				// Revoke the old mount and cancel its lease timer before scheduling React's replacement cleanup.
-				++authorizationGeneration.current;
-				const nextLeaseGeneration = ++leaseGeneration.current;
-				if (timer) clearTimeout(timer);
-				expiry.current = deadline;
-				const authorized = {
-					...next,
-					authorizationDeadline: deadline,
-					sessionSubject: subject,
-				} as AuthorizedDecision;
-				decisionRef.current = authorized;
-				setDecision(authorized);
-				timer = setTimeout(
-					() => {
-						if (leaseGeneration.current === nextLeaseGeneration) clear();
-					},
-					Math.max(0, deadline - Date.now()),
-				);
-			} catch (error) {
-				if (!current(nextRequestGeneration) || (error instanceof DOMException && error.name === "AbortError")) return;
-				const diagnostic = emitProductionTouchpointLoadDiagnostic(error);
-				if (diagnostic) emitWebTouchpointDiagnostic(diagnostic);
-				clear();
-			}
-		};
-		void decide();
-		const wake = () => {
-			if (!document.hidden) void decide();
-		};
-		const recheck = setInterval(() => void decide(), RECHECK_MS);
-		window.addEventListener("focus", wake);
-		window.addEventListener("online", wake);
-		document.addEventListener("visibilitychange", wake);
-		return () => {
-			cancelled = true;
-			controller.abort();
-			if (timer) clearTimeout(timer);
-			clearInterval(recheck);
-			window.removeEventListener("focus", wake);
-			window.removeEventListener("online", wake);
-			document.removeEventListener("visibilitychange", wake);
-			clear();
-		};
-	}, [authenticated, sessionSubject, clear, testRuntime]);
 
 	useEffect(() => {
 		const container = containerRef.current;
@@ -219,12 +113,12 @@ export function ProductionCampaignBadge({
 		)
 			return;
 		let cancelled = false;
-		const mountGeneration = ++authorizationGeneration.current;
+		const mountGeneration = lifecycle.generation;
 		const current = () =>
 			!cancelled &&
-			mountGeneration === authorizationGeneration.current &&
 			authenticated &&
-			decision.sessionSubject === sessionSubject;
+			decision.sessionSubject === sessionSubject &&
+			lifecycle.isCurrent(mountGeneration);
 		let verified: Awaited<ReturnType<typeof verifyWebTouchpoint>> | undefined;
 		const element = document.createElement(
 			"opend-touchpoint",
@@ -299,8 +193,8 @@ export function ProductionCampaignBadge({
 								decision,
 								actionId,
 								mountGeneration,
-								() => authorizationGeneration.current,
-								decision.authorizationDeadline,
+								() => lifecycle.isCurrent(mountGeneration) ? mountGeneration : -1,
+								lifecycle.deadline,
 							);
 						},
 						onDiagnostic: emitWebTouchpointDiagnostic,
@@ -320,11 +214,10 @@ export function ProductionCampaignBadge({
 		})();
 		return () => {
 			cancelled = true;
-			++authorizationGeneration.current;
 			dispose();
 			container.replaceChildren();
 		};
-	}, [authenticated, decision, sessionSubject, clear]);
+	}, [authenticated, decision, sessionSubject, clear, lifecycle.generation, lifecycle.isCurrent]);
 
 	const onTestVisible = useCallback(
 		(next: TestDecision, placementKey: TestCampaignPlacement) => {
@@ -339,6 +232,7 @@ export function ProductionCampaignBadge({
 					decision={testDecision}
 					placementKey={PLACEMENT}
 					testId="production-campaign-badge-element"
+					isAuthorized={testRuntime.isAuthorized}
 					onVisible={onTestVisible}
 				/>
 			</div>

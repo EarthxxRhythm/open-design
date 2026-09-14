@@ -146,61 +146,6 @@ describe("ProductionCampaignBadge", () => {
     await waitFor(() => expect(badge.querySelector("opend-touchpoint")?.shadowRoot?.textContent).toContain("Badge"));
   });
 
-  it("cancels and fences an expired badge timer after accepting a replacement", async () => {
-  getOpenDesignHostMock.mockReturnValue({ client: { type: "desktop", osLocale: "en-US" } });
-  const start = Date.now();
-  const now = vi.spyOn(Date, "now").mockReturnValue(start);
-  const scheduledTimers: Array<{ callback: () => void; delay: number; handle: number }> = [];
-  const actualSetTimeout = globalThis.setTimeout;
-  vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback: TimerHandler, delay?: number, ...args: any[]) => {
-   const handle = actualSetTimeout(callback, delay, ...args);
-   if (typeof callback === "function") scheduledTimers.push({ callback: () => callback(...args), delay: Number(delay), handle });
-   return handle;
-  }) as typeof setTimeout);
-  const clearTimeoutMock = vi.spyOn(globalThis, "clearTimeout");
-  const callbacks: Array<(actionId: string) => Promise<void>> = [];
-  vi.spyOn(OpenDesignTouchpointElement.prototype, "mount").mockImplementation(async function (this: OpenDesignTouchpointElement, _entry, _digest, _context, _urls, _actions, options) { if (options?.dispatchAction) callbacks.push(options.dispatchAction); this.shadowRoot?.replaceChildren(document.createTextNode("Badge")); });
-  let resolveReplacement: ((value: ReturnType<typeof decision>) => void) | undefined;
-  const replacementBody = new Promise<ReturnType<typeof decision>>((resolve) => { resolveReplacement = resolve; });
-  const oldDecision = decision({ authorizationExpiresAt: new Date(start + 7_000).toISOString() });
-  const replacementDecision = decision({ authorizationExpiresAt: new Date(start + 15_000).toISOString(), touchpointDecisionId: "replacement-badge" });
-  const replacementResponse = new Response(JSON.stringify(replacementDecision), { status: 200 });
-  vi.spyOn(replacementResponse, "json").mockReturnValue(replacementBody);
-  const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
-   if (init?.method === "POST") return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
-   if (fetchMock.mock.calls.length === 2) return Promise.resolve(replacementResponse);
-   return Promise.resolve(new Response(JSON.stringify(oldDecision), { status: 200 }));
-  });
-  vi.stubGlobal("fetch", fetchMock);
-  Object.defineProperty(navigator, "userActivation", { configurable: true, value: { isActive: true } });
-  render(<ProductionCampaignBadge authenticated sessionSubject="account-a" />);
-  await waitFor(() => expect(callbacks).toHaveLength(1));
-  const oldCallback = callbacks[0]!;
-  const oldTimer = scheduledTimers.find((timer) => timer.delay === 7_000);
-  expect(oldTimer).toBeDefined();
-  now.mockReturnValue(start + 7_001); // The old lease is expired, but its timer callback is delayed.
-  window.dispatchEvent(new Event("focus"));
-  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-  resolveReplacement?.(replacementDecision);
-  await Promise.resolve(); // Replacement acceptance must cancel and fence the old timer before React cleanup.
-  expect(clearTimeoutMock).toHaveBeenCalled(); // The queued old timer below proves cancellation/fencing behavior without Node Timeout identity.
-  await oldCallback("learn");
-  expect(fetchMock).toHaveBeenCalledTimes(2);
-  expect(openExternalUrlMock).not.toHaveBeenCalled();
-  await waitFor(() => expect(callbacks).toHaveLength(2));
-  await act(async () => { oldTimer?.callback(); }); // A queued stale callback must not clear the replacement.
-  expect(screen.getByTestId("production-campaign-badge").querySelector("opend-touchpoint")?.shadowRoot?.textContent).toContain("Badge");
-  await callbacks[1]!("learn");
-  expect(fetchMock).toHaveBeenCalledWith("/api/touchpoints/production-runtime/events", expect.objectContaining({ method: "POST" }));
-  expect(openExternalUrlMock).toHaveBeenCalledWith("https://example.com");
-  const replacementTimer = scheduledTimers.find((timer) => timer.delay === 7_999);
-  expect(replacementTimer).toBeDefined();
-  now.mockReturnValue(start + 15_001);
-  await act(async () => { replacementTimer?.callback(); });
-  expect(screen.queryByTestId("production-campaign-badge")).toBeNull();
-  await callbacks[1]!("learn");
-  expect(fetchMock).toHaveBeenCalledTimes(3);
- });
 
  it("releases a late verified badge resource once without mounting after an account switch", async () => {
     getOpenDesignHostMock.mockReturnValue({ client: { type: "desktop", osLocale: "en-US" } });

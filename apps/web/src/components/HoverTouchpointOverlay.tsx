@@ -121,6 +121,7 @@ function viewportRect(): Rect {
 export type HoverTouchpointOverlayProps = Readonly<{
 	entry: WebTouchpointContent;
 	layer: WebTouchpointContent;
+	isAuthorized: () => boolean;
 	mode?: "test" | "production";
 	onDiagnostic?: (code: string) => void;
 	onEntryVisible?: () => void;
@@ -139,6 +140,7 @@ export type HoverTouchpointOverlayProps = Readonly<{
 export function HoverTouchpointOverlay({
 	entry,
 	layer,
+	isAuthorized,
 	mode = "production",
 	onDiagnostic,
 	onEntryVisible,
@@ -233,7 +235,7 @@ export function HoverTouchpointOverlay({
 			entryVerified?.dispose();
 			layerVerified?.dispose();
 		};
-		const abandon = () => cancelled;
+		const abandon = () => cancelled || !isAuthorized();
 		const mount = async () => {
 			try {
 				entryVerified = await verifyWebTouchpoint(entry);
@@ -280,7 +282,7 @@ export function HoverTouchpointOverlay({
 				if (abandon()) return;
 				setReady(true);
 				requestAnimationFrame(() => {
-					if (!cancelled && !document.hidden && entryElement?.getClientRects().length)
+					if (!cancelled && isAuthorized() && !document.hidden && entryElement?.getClientRects().length)
 						onEntryVisible?.();
 				});
 			} catch (error) {
@@ -299,7 +301,7 @@ export function HoverTouchpointOverlay({
 			setReady(false);
 			dispose();
 		};
-	}, [close, dispatchEntryAction, dispatchLayerAction, elementReady, entry, entryActionIds, layer, layerActionIds, mode, onDiagnostic, onEntryVisible, onLayerVisible]);
+	}, [close, dispatchEntryAction, dispatchLayerAction, elementReady, entry, entryActionIds, isAuthorized, layer, layerActionIds, mode, onDiagnostic, onEntryVisible, onLayerVisible]);
 
 	useLayoutEffect(() => {
 		if (open && ready) refreshPosition();

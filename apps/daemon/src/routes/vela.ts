@@ -1,4 +1,8 @@
 import type { Express, Request, Response } from 'express';
+import type {
+  TestRuntimeAcceptanceRequest,
+  TestRuntimeContextRequest,
+} from '@open-design/contracts/api/touchpointTestRuntime';
 import { randomUUID } from 'node:crypto';
 import dns from 'node:dns';
 import http from 'node:http';
@@ -73,6 +77,35 @@ const PROXY_HOP_BY_HOP_HEADERS = new Set([
   'upgrade',
 ]);
 const VELA_WORKSPACE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+
+function isRealtimeTestRuntimePayload(
+  payload: unknown,
+): payload is (TestRuntimeContextRequest | TestRuntimeAcceptanceRequest) & Record<string, unknown> {
+  return (
+    typeof payload === 'object' &&
+    payload !== null &&
+    !Array.isArray(payload) &&
+    'scenario' in payload &&
+    payload.scenario === 'realtime'
+  );
+}
+
+function hasLegacySimulatedRuntimeInput(req: Request): boolean {
+  const runtimePath = req.path.replace(/^\/api\/touchpoints\/test-runtime/u, '') || '/';
+  if (req.method === 'POST' && runtimePath === '/context') {
+    const payload = req.body;
+    return !(
+      isRealtimeTestRuntimePayload(payload) &&
+      typeof payload.deploymentId === 'string' &&
+      Object.keys(payload).length === 2
+    );
+  }
+  if (req.method === 'POST' && /\/acceptances$/u.test(runtimePath)) {
+    return !isRealtimeTestRuntimePayload(req.body);
+  }
+  const scenario = req.query.scenario;
+  return 'simulatedAt' in req.query || (scenario !== undefined && scenario !== 'realtime');
+}
 
 /**
  * Upper bound, in ms, on how long a cold-cache `/status` read waits for the
@@ -754,6 +787,10 @@ export function registerVelaRoutes(app: Express, deps: RegisterVelaRoutesDeps): 
   app.all(
     ['/api/touchpoints/test-runtime', '/api/touchpoints/test-runtime/*splat'],
     async (req, res) => {
+      if (hasLegacySimulatedRuntimeInput(req)) {
+        res.status(400).json({ error: 'realtime_test_runtime_required' });
+        return;
+      }
       try {
         const appConfig = await readAppConfig(RUNTIME_DATA_DIR);
         const context = readVelaControlApiContext(

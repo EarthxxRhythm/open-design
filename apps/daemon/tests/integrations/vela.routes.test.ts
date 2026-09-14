@@ -3043,7 +3043,7 @@ describe('Test touchpoint runtime proxy', () => {
         });
         res.setHeader('content-type', 'application/json');
         res.statusCode = 201;
-        res.end(JSON.stringify({ deploymentId: 'deployment-1', scenario: 'before' }));
+        res.end(JSON.stringify({ deploymentId: 'deployment-1', scenario: 'realtime', updatedAt: '2026-09-14T00:00:00.000Z' }));
       });
     });
     await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve));
@@ -3052,7 +3052,7 @@ describe('Test touchpoint runtime proxy', () => {
     try {
       const accepted = await postJson(
         `${baseUrl}/api/touchpoints/test-runtime/context`,
-        { deploymentId: 'deployment-1', scenario: 'before' },
+        { deploymentId: 'deployment-1', scenario: 'realtime' },
         { authorization: 'Bearer browser-supplied-key' },
       );
       expect(accepted.status).toBe(201);
@@ -3063,7 +3063,7 @@ describe('Test touchpoint runtime proxy', () => {
           authorization: 'Bearer ck-seeded-key',
           body: JSON.stringify({
             deploymentId: 'deployment-1',
-            scenario: 'before',
+            scenario: 'realtime',
           }),
         },
       ]);
@@ -3073,7 +3073,7 @@ describe('Test touchpoint runtime proxy', () => {
           placementKey: 'opend.home.campaign-modal',
           hostVersion: '2',
           locale: 'zh-CN',
-          scenario: 'active',
+          scenario: 'realtime',
           evidence: 'http://127.0.0.1:55381/#cms-test',
         },
         { authorization: 'Bearer browser-supplied-key' },
@@ -3086,7 +3086,7 @@ describe('Test touchpoint runtime proxy', () => {
           authorization: 'Bearer ck-seeded-key',
           body: JSON.stringify({
             deploymentId: 'deployment-1',
-            scenario: 'before',
+            scenario: 'realtime',
           }),
         },
         {
@@ -3097,11 +3097,18 @@ describe('Test touchpoint runtime proxy', () => {
             placementKey: 'opend.home.campaign-modal',
             hostVersion: '2',
             locale: 'zh-CN',
-            scenario: 'active',
+            scenario: 'realtime',
             evidence: 'http://127.0.0.1:55381/#cms-test',
           }),
         },
       ]);
+      const simulated = await postJson(
+        `${baseUrl}/api/touchpoints/test-runtime/context`,
+        { deploymentId: 'deployment-1', scenario: 'before' },
+      );
+      expect(simulated.status).toBe(400);
+      expect(simulated.body).toEqual({ error: 'realtime_test_runtime_required' });
+      expect(requests).toHaveLength(2);
       const rejected = await postJson(
         `${baseUrl}/api/touchpoints/test-runtime/unknown`,
         { deploymentId: 'deployment-1', scenario: 'before' },

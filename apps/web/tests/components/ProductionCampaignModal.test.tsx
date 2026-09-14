@@ -687,7 +687,47 @@ describe("ProductionCampaignModal mount lifetime", () => {
 		);
 	});
 
-	it("keeps the mounted modal action authorized across focus and online refreshes", async () => {
+	it("keeps a mounted action authorized after same-key polling renews its lease", async () => {
+		vi.useFakeTimers({ toFake: ["Date", "performance", "setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+		try {
+			vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+			(globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = { client: { osLocale: "en-US", type: "desktop" } };
+			let dispatchAction: ((actionId: string) => Promise<void>) | undefined;
+			let mounted!: () => void;
+			const mountedPromise = new Promise<void>((resolve) => { mounted = resolve; });
+			vi.spyOn(OpenDesignTouchpointElement.prototype, "mount").mockImplementation(async function (this: OpenDesignTouchpointElement, _entry, _digest, _context, _urls, _actions, options) {
+				dispatchAction = options?.dispatchAction;
+				this.shadowRoot?.replaceChildren(document.createTextNode("Verified campaign"));
+				mounted();
+			});
+			let gets = 0;
+			const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+				if (init?.method === "POST") return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+				gets += 1;
+				const time = Date.now();
+				return Promise.resolve(new Response(JSON.stringify(decision({ serverTime: new Date(time).toISOString(), authorizationExpiresAt: new Date(time + 40_000).toISOString(), endsAt: new Date(time + 300_000).toISOString() })), { status: 200 }));
+			});
+			vi.stubGlobal("fetch", fetchMock);
+			Object.defineProperty(navigator, "userActivation", { configurable: true, value: { isActive: true } });
+			render(<ProductionCampaignModal authenticated sessionSubject="user-a" />);
+			await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+			// Commit the authorized decision before awaiting the mount effect it schedules.
+			await act(async () => { await mountedPromise; });
+			expect(dispatchAction).toBeTypeOf("function");
+			await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+			expect(gets).toBe(2);
+			expect(OpenDesignTouchpointElement.prototype.mount).toHaveBeenCalledTimes(1);
+			await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+			await dispatchAction?.("learn");
+			expect(fetchMock).toHaveBeenCalledWith("/api/touchpoints/production-runtime/events", expect.objectContaining({ method: "POST" }));
+			expect(openExternalUrlMock).toHaveBeenCalledWith("https://example.com");
+		} finally {
+			cleanup();
+			vi.useRealTimers();
+		}
+	});
+
+	it("fences the old modal action until recovery mounts a fresh decision", async () => {
 		(globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = {
 			client: { osLocale: "en-US", type: "desktop" },
 		};
@@ -724,7 +764,9 @@ describe("ProductionCampaignModal mount lifetime", () => {
 		await waitFor(() => expect(dispatchAction).toBeTypeOf("function"));
 		window.dispatchEvent(new Event("focus"));
 		window.dispatchEvent(new Event("online"));
-		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+		await waitFor(() =>
+			expect(OpenDesignTouchpointElement.prototype.mount).toHaveBeenCalledTimes(2),
+		);
 		await dispatchAction?.("learn");
 		expect(fetchMock).toHaveBeenCalledWith(
 			"/api/touchpoints/production-runtime/events",
@@ -826,127 +868,6 @@ describe("ProductionCampaignModal mount lifetime", () => {
 		);
 	});
 
-	it("cancels and fences an expired modal timer after accepting a replacement", async () => {
-		(globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = {
-			client: { osLocale: "en-US", type: "desktop" },
-		};
-		const start = Date.now();
-		const now = vi.spyOn(Date, "now").mockReturnValue(start);
-		const scheduledTimers: Array<{
-			callback: () => void;
-			delay: number;
-			handle: number;
-		}> = [];
-		const actualSetTimeout = globalThis.setTimeout;
-		vi.spyOn(globalThis, "setTimeout").mockImplementation(((
-			callback: TimerHandler,
-			delay?: number,
-			...args: any[]
-		) => {
-			const handle = actualSetTimeout(callback, delay, ...args);
-			if (typeof callback === "function")
-				scheduledTimers.push({
-					callback: () => callback(...args),
-					delay: Number(delay),
-					handle,
-				});
-			return handle;
-		}) as typeof setTimeout);
-		const clearTimeoutMock = vi.spyOn(globalThis, "clearTimeout");
-		const callbacks: Array<(actionId: string) => Promise<void>> = [];
-		vi.spyOn(OpenDesignTouchpointElement.prototype, "mount").mockImplementation(
-			async function (
-				this: OpenDesignTouchpointElement,
-				_entry,
-				_digest,
-				_context,
-				_urls,
-				_actions,
-				options,
-			) {
-				if (options?.dispatchAction) callbacks.push(options.dispatchAction);
-				this.shadowRoot?.replaceChildren(
-					document.createTextNode("Verified campaign"),
-				);
-			},
-		);
-		let resolveReplacement:
-			| ((value: ReturnType<typeof decision>) => void)
-			| undefined;
-		const replacementBody = new Promise<ReturnType<typeof decision>>(
-			(resolve) => {
-				resolveReplacement = resolve;
-			},
-		);
-		const oldDecision = decision({
-			authorizationExpiresAt: new Date(start + 7_000).toISOString(),
-		});
-		const replacementDecision = decision({
-			authorizationExpiresAt: new Date(start + 15_000).toISOString(),
-			touchpointDecisionId: "replacement-modal",
-		});
-		const replacementResponse = new Response(
-			JSON.stringify(replacementDecision),
-			{ status: 200 },
-		);
-		vi.spyOn(replacementResponse, "json").mockReturnValue(replacementBody);
-		const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
-			if (init?.method === "POST")
-				return Promise.resolve(
-					new Response(JSON.stringify({ ok: true }), { status: 200 }),
-				);
-			if (fetchMock.mock.calls.length === 2)
-				return Promise.resolve(replacementResponse);
-			return Promise.resolve(
-				new Response(JSON.stringify(oldDecision), { status: 200 }),
-			);
-		});
-		vi.stubGlobal("fetch", fetchMock);
-		Object.defineProperty(navigator, "userActivation", {
-			configurable: true,
-			value: { isActive: true },
-		});
-		render(<ProductionCampaignModal authenticated sessionSubject="user-a" />);
-		await waitFor(() => expect(callbacks).toHaveLength(1));
-		const oldCallback = callbacks[0]!;
-		const oldTimer = scheduledTimers.find((timer) => timer.delay === 7_000);
-		expect(oldTimer).toBeDefined();
-		now.mockReturnValue(start + 7_001); // The old lease is expired, but its timer callback is delayed.
-		window.dispatchEvent(new Event("focus"));
-		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-		resolveReplacement?.(replacementDecision);
-		await Promise.resolve(); // Replacement acceptance must cancel and fence the old timer before React cleanup.
-		expect(clearTimeoutMock).toHaveBeenCalled(); // The queued old timer below proves cancellation/fencing behavior without Node Timeout identity.
-		await oldCallback("learn");
-		expect(fetchMock).toHaveBeenCalledTimes(2);
-		expect(openExternalUrlMock).not.toHaveBeenCalled();
-		await waitFor(() => expect(callbacks).toHaveLength(2));
-		await act(async () => {
-			oldTimer?.callback();
-		}); // A queued stale callback must not clear the replacement.
-		expect(
-			screen
-				.getByTestId("campaign-custom-element")
-				.querySelector("opend-touchpoint")?.shadowRoot?.textContent,
-		).toContain("Verified campaign");
-		await callbacks[1]!("learn");
-		expect(fetchMock).toHaveBeenCalledWith(
-			"/api/touchpoints/production-runtime/events",
-			expect.objectContaining({ method: "POST" }),
-		);
-		expect(openExternalUrlMock).toHaveBeenCalledWith("https://example.com");
-		const replacementTimer = scheduledTimers.find(
-			(timer) => timer.delay === 7_999,
-		);
-		expect(replacementTimer).toBeDefined();
-		now.mockReturnValue(start + 15_001);
-		await act(async () => {
-			replacementTimer?.callback();
-		});
-		expect(screen.queryByTestId("campaign-custom-element")).toBeNull();
-		await callbacks[1]!("learn");
-		expect(fetchMock).toHaveBeenCalledTimes(3);
-	});
 
 	it("releases a late verified modal resource once without mounting after unmount", async () => {
 		(globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = {
@@ -1079,17 +1000,15 @@ describe("ProductionCampaignModal device impressions", () => {
 		expect(screen.queryByRole("dialog")).toBeNull();
 		expect(localStorage.getItem(marker())).toBeNull();
 	});
-	it("waits for a hidden document to become visible before recording", async () => {
+	it("waits for a hidden document to become visible before loading and recording", async () => {
 		const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
 		render(<ProductionCampaignModal authenticated sessionSubject="user-a" />);
-		await screen.findByRole("dialog");
 		await act(async () => {});
-		await act(async () => {
-			window.dispatchEvent(new Event("focus"));
-		});
+		expect(screen.queryByRole("dialog")).toBeNull();
 		expect(localStorage.getItem(marker())).toBeNull();
 		hidden.mockReturnValue(false);
 		fireEvent(document, new Event("visibilitychange"));
+		await screen.findByRole("dialog");
 		await waitFor(() => expect(localStorage.getItem(marker())).toBe("1"));
 	});
 	it("keeps the existing badge and its manual static action usable after automatic suppression", async () => {

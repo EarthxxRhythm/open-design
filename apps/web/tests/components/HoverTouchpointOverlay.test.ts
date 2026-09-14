@@ -108,6 +108,7 @@ describe("HoverTouchpointOverlay interaction boundary", () => {
 		const {container}=render(createElement(HoverTouchpointOverlay, {
 			entry:content("opend.home.hover-entry"),
 			layer:content("opend.home.hover-layer"),
+			isAuthorized: () => true,
 		}));
 		const [entry,layer]=Array.from(container.querySelectorAll<HTMLElement>("opend-touchpoint"));
 		await waitFor(()=>expect(entry).not.toHaveAttribute("hidden"));
@@ -132,6 +133,7 @@ describe("HoverTouchpointOverlay interaction boundary", () => {
 			createElement(HoverTouchpointOverlay, {
 				entry: content("opend.home.hover-entry"),
 				layer: content("opend.home.hover-layer"),
+				isAuthorized: () => true,
 				entryActionIds: new Set(["entry-action"]),
 				layerActionIds: new Set(["layer-action"]),
 				dispatchEntryAction,
@@ -172,6 +174,7 @@ describe("HoverTouchpointOverlay interaction boundary", () => {
 			createElement(HoverTouchpointOverlay, {
 				entry: content("opend.home.hover-entry"),
 				layer: content("opend.home.hover-layer"),
+				isAuthorized: () => true,
 			}),
 		);
 		const [entry, layer] = Array.from(container.querySelectorAll("opend-touchpoint")) as [HTMLElement, HTMLElement];
@@ -217,6 +220,7 @@ describe("HoverTouchpointOverlay interaction boundary", () => {
 		const { container } = render(createElement(HoverTouchpointOverlay, {
 			entry: content("opend.home.hover-entry"),
 			layer: content("opend.home.hover-layer"),
+			isAuthorized: () => true,
 		}));
 		const [entry, layer] = Array.from(container.querySelectorAll("opend-touchpoint")) as [HTMLElement, HTMLElement];
 		await waitFor(() => expect(entry).not.toHaveAttribute("hidden"));
@@ -240,6 +244,7 @@ describe("HoverTouchpointOverlay interaction boundary", () => {
 			createElement(HoverTouchpointOverlay, {
 				entry: content("opend.home.hover-entry"),
 				layer: content("opend.home.hover-layer"),
+				isAuthorized: () => true,
 			}),
 		);
 		unmount();
@@ -265,6 +270,7 @@ describe("HoverTouchpointOverlay interaction boundary", () => {
 			createElement(HoverTouchpointOverlay, {
 				entry: content("opend.home.hover-entry"),
 				layer: content("opend.home.hover-layer"),
+				isAuthorized: () => true,
 			}),
 		);
 		await waitFor(() => expect(verify).toHaveBeenCalledTimes(2));
@@ -292,6 +298,7 @@ describe("HoverTouchpointOverlay interaction boundary", () => {
 			createElement(HoverTouchpointOverlay, {
 				entry: content("opend.home.hover-entry"),
 				layer: content("opend.home.hover-layer"),
+				isAuthorized: () => true,
 			}),
 		);
 		await waitFor(() => expect(mounts).toHaveBeenCalledTimes(1));
@@ -316,6 +323,7 @@ describe("HoverTouchpointOverlay interaction boundary", () => {
 			createElement(HoverTouchpointOverlay, {
 				entry: content("opend.home.hover-entry"),
 				layer: content("opend.home.hover-layer"),
+				isAuthorized: () => true,
 			}),
 		);
 		await waitFor(() => expect(disposes).toHaveBeenCalledTimes(2));
