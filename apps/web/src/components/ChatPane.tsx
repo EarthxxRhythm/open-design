@@ -126,6 +126,7 @@ import { commentTargetDisplayName, commentsToAttachments, simplePositionLabel } 
 import { AssistantMessage, type QuestionFormSubmitHandler } from './AssistantMessage';
 import { chatSeam } from './chat/ChatRoot';
 import { PlanPill } from './chat/PlanPill';
+import { QueuedSendStack } from './chat/QueuedSendStack';
 import { planPillState } from '../runtime/chat/plan-pill';
 import {
   assistantMessageNeverHadARun,
@@ -6394,7 +6395,6 @@ function queuedTipPlacement(
 }) {
   const t = useT();
   const [dragState, setDragState] = useState<QueuedSendDragState | null>(null);
-  if (items.length === 0) return null;
   const canReorder = Boolean(onReorder && items.length > 1);
 
   const handleDragStart = (
@@ -6458,26 +6458,23 @@ function queuedTipPlacement(
   };
 
   return (
-    <div
-      ref={containerRef}
-      className="chat-queued-send-strip"
-      data-testid="chat-queued-send-strip"
+    <QueuedSendStack
+      containerRef={containerRef}
+      label={`${t('chat.queuedHeader')} · ${items.length}`}
+      dragging={Boolean(dragState)}
       onDragLeave={(event) => {
         const related = event.relatedTarget;
         if (related instanceof Node && event.currentTarget.contains(related)) return;
         setDragState(null);
       }}
-    >
-      {/* 稿子没有卡头:队列就贴在输入框底下,是什么一目了然,不用再单起一行说「排队中 · N 条」 */}
-      <div className="chat-queued-send-list">
-        {items.map((item, index) => {
+      items={items.map((item, index) => {
           const isDragging = dragState?.draggingId === item.id;
           const dropClass = dragState?.overId === item.id
             && dragState.draggingId !== item.id
             && dragState.edge
             ? ` chat-queued-send-row-drop-${dragState.edge}`
             : '';
-          return (
+          return { id: item.id, content: (
             <div
               /* 首行**不换任何样式**:稿子 `.queue .q:first-child`
                  (`361b78253e:docs/design/chat-panel/src/components.css:2898`)
@@ -6599,10 +6596,9 @@ function queuedTipPlacement(
 
               </div>
             </div>
-          );
+          ) };
         })}
-      </div>
-    </div>
+    />
   );
 }
 

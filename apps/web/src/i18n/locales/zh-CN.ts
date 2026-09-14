@@ -2876,6 +2876,7 @@ export const zhCN: Dict = {
   "chat.queuedCancel": "取消",
   "chat.queuedReorder": "拖动调整顺序",
   "chat.queuedEdit": "编辑",
+  "chat.queuedHeader": "已排队",
   "chat.queuedSteer": "引导对话",
   "chat.queuedSteerInterrupts": "引导对话:会中断当前运行",
   "chat.queuedSteerUnsupported": "当前 agent 不支持中途引导",

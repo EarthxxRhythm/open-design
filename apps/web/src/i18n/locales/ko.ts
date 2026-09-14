@@ -2676,6 +2676,7 @@ export const ko: Dict = {
   'chat.queuedCancel': '취소',
   'chat.queuedReorder': '드래그하여 순서 변경',
   'chat.queuedEdit': '편집',
+  'chat.queuedHeader': '대기 중',
   'chat.queuedSteer': '이 턴 방향 잡기',
   'chat.queuedSteerInterrupts': '이 턴 방향 잡기 — 진행 중인 실행을 중단합니다',
   'chat.queuedSteerUnsupported': '이 에이전트는 턴 도중 메시지를 받을 수 없습니다',

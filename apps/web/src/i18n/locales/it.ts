@@ -2676,6 +2676,7 @@ export const it: Dict = {
   'chat.queuedCancel': 'Annulla',
   'chat.queuedReorder': 'Trascina per riordinare',
   'chat.queuedEdit': 'Modifica',
+  'chat.queuedHeader': 'In coda',
   'chat.queuedSteer': 'Guida questo turno',
   'chat.queuedSteerInterrupts': 'Guida questo turno — interrompe l’esecuzione in corso',
   'chat.queuedSteerUnsupported': 'Questo agente non può ricevere messaggi a metà turno',

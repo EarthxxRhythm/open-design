@@ -2676,6 +2676,7 @@ export const en: Dict = {
   'chat.queuedCancel': 'Cancel',
   'chat.queuedReorder': 'Drag to reorder',
   'chat.queuedEdit': 'Edit',
+  'chat.queuedHeader': 'Queued',
   'chat.queuedSteer': 'Steer this turn',
   'chat.queuedSteerInterrupts': 'Steer this turn — interrupts the run in progress',
   'chat.queuedSteerUnsupported': 'This agent can’t take a message mid-turn',

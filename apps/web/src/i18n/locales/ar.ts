@@ -2676,6 +2676,7 @@ export const ar: Dict = {
   'chat.queuedCancel': 'إلغاء',
   'chat.queuedReorder': 'اسحب لإعادة الترتيب',
   'chat.queuedEdit': 'تحرير',
+  'chat.queuedHeader': 'في قائمة الانتظار',
   'chat.queuedSteer': 'توجيه هذه الجولة',
   'chat.queuedSteerInterrupts': 'توجيه هذه الجولة — يقطع التشغيل الجاري',
   'chat.queuedSteerUnsupported': 'لا يمكن لهذا الوكيل تلقي رسالة أثناء الجولة',

@@ -2676,6 +2676,7 @@ export const id: Dict = {
   'chat.queuedCancel': 'Cancel',
   'chat.queuedReorder': 'Drag to reorder',
   'chat.queuedEdit': 'Edit',
+  'chat.queuedHeader': 'Dalam antrean',
   'chat.queuedSteer': 'Arahkan giliran ini',
   'chat.queuedSteerInterrupts': 'Arahkan giliran ini — menghentikan proses yang sedang berjalan',
   'chat.queuedSteerUnsupported': 'Agen ini tidak bisa menerima pesan di tengah giliran',

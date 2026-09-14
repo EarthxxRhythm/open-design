@@ -2676,6 +2676,7 @@ export const ru: Dict = {
   'chat.queuedCancel': 'Отмена',
   'chat.queuedReorder': 'Перетащите для изменения порядка',
   'chat.queuedEdit': 'Изменить',
+  'chat.queuedHeader': 'В очереди',
   'chat.queuedSteer': 'Направить этот ход',
   'chat.queuedSteerInterrupts': 'Направить этот ход — прервёт текущий запуск',
   'chat.queuedSteerUnsupported': 'Этот агент не принимает сообщения посреди хода',

@@ -2676,6 +2676,7 @@ export const esES: Dict = {
   'chat.queuedCancel': 'Cancelar',
   'chat.queuedReorder': 'Arrastra para reordenar',
   'chat.queuedEdit': 'Editar',
+  'chat.queuedHeader': 'En cola',
   'chat.queuedSteer': 'Guiar este turno',
   'chat.queuedSteerInterrupts': 'Guiar este turno: interrumpe la ejecución en curso',
   'chat.queuedSteerUnsupported': 'Este agente no puede recibir mensajes a mitad de turno',

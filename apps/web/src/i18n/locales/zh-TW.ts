@@ -2885,6 +2885,7 @@ export const zhTW: Dict = {
   "chat.queuedCancel": "取消",
   "chat.queuedReorder": "拖曳調整順序",
   "chat.queuedEdit": "編輯",
+  "chat.queuedHeader": "已排入佇列",
   "chat.queuedSteer": "引導對話",
   "chat.queuedSteerInterrupts": "引導對話:會中斷目前的執行",
   "chat.queuedSteerUnsupported": "目前的 agent 不支援中途引導",

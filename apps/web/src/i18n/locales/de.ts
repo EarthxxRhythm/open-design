@@ -2676,6 +2676,7 @@ export const de: Dict = {
   'chat.queuedCancel': 'Abbrechen',
   'chat.queuedReorder': 'Zum Neuordnen ziehen',
   'chat.queuedEdit': 'Bearbeiten',
+  'chat.queuedHeader': 'In Warteschlange',
   'chat.queuedSteer': 'Diesen Zug lenken',
   'chat.queuedSteerInterrupts': 'Diesen Zug lenken – unterbricht den laufenden Durchlauf',
   'chat.queuedSteerUnsupported': 'Dieser Agent kann mitten im Zug keine Nachricht annehmen',

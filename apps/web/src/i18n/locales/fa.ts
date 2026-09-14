@@ -2676,6 +2676,7 @@ export const fa: Dict = {
   'chat.queuedCancel': 'لغو',
   'chat.queuedReorder': 'برای مرتب‌سازی بکشید',
   'chat.queuedEdit': 'ویرایش',
+  'chat.queuedHeader': 'در صف',
   'chat.queuedSteer': 'هدایت این نوبت',
   'chat.queuedSteerInterrupts': 'هدایت این نوبت — اجرای در جریان را قطع می‌کند',
   'chat.queuedSteerUnsupported': 'این عامل نمی‌تواند در میانهٔ نوبت پیام بگیرد',

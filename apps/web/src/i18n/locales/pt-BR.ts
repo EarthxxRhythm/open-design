@@ -2676,6 +2676,7 @@ export const ptBR: Dict = {
   'chat.queuedCancel': 'Cancelar',
   'chat.queuedReorder': 'Arraste para reordenar',
   'chat.queuedEdit': 'Editar',
+  'chat.queuedHeader': 'Na fila',
   'chat.queuedSteer': 'Guiar este turno',
   'chat.queuedSteerInterrupts': 'Guiar este turno — interrompe a execução em andamento',
   'chat.queuedSteerUnsupported': 'Este agente não recebe mensagens no meio do turno',

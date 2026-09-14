@@ -3552,6 +3552,7 @@ export interface Dict {
   'chat.queuedCancel': string;
   'chat.queuedReorder': string;
   'chat.queuedEdit': string;
+  'chat.queuedHeader': string;
   /** B11: visible label on the queue row's third button. */
   'chat.queuedSteer': string;
   /**

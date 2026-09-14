@@ -2676,6 +2676,7 @@ export const pl: Dict = {
   'chat.queuedCancel': 'Anuluj',
   'chat.queuedReorder': 'Przeciągnij, aby zmienić kolejność',
   'chat.queuedEdit': 'Edytuj',
+  'chat.queuedHeader': 'W kolejce',
   'chat.queuedSteer': 'Pokieruj tą turą',
   'chat.queuedSteerInterrupts': 'Pokieruj tą turą — przerywa trwające uruchomienie',
   'chat.queuedSteerUnsupported': 'Ten agent nie przyjmuje wiadomości w trakcie tury',

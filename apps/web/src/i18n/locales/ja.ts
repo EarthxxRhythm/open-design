@@ -2676,6 +2676,7 @@ export const ja: Dict = {
   'chat.queuedCancel': 'キャンセル',
   'chat.queuedReorder': 'ドラッグで並べ替え',
   'chat.queuedEdit': '編集',
+  'chat.queuedHeader': 'キュー済み',
   'chat.queuedSteer': 'この応答を誘導',
   'chat.queuedSteerInterrupts': 'この応答を誘導 — 実行中の処理を中断します',
   'chat.queuedSteerUnsupported': 'このエージェントは応答中にメッセージを受け取れません',

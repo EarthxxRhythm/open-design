@@ -2676,6 +2676,7 @@ export const hu: Dict = {
   'chat.queuedCancel': 'Mégse',
   'chat.queuedReorder': 'Húzza az átrendezéshez',
   'chat.queuedEdit': 'Szerkesztés',
+  'chat.queuedHeader': 'Sorban áll',
   'chat.queuedSteer': 'Kör irányítása',
   'chat.queuedSteerInterrupts': 'Kör irányítása – megszakítja a folyamatban lévő futást',
   'chat.queuedSteerUnsupported': 'Ez az ügynök nem fogad üzenetet a kör közben',

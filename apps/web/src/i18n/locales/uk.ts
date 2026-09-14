@@ -2676,6 +2676,7 @@ export const uk: Dict = {
   'chat.queuedCancel': 'Скасувати',
   'chat.queuedReorder': 'Перетягніть, щоб змінити порядок',
   'chat.queuedEdit': 'Редагувати',
+  'chat.queuedHeader': 'У черзі',
   'chat.queuedSteer': 'Скерувати цей хід',
   'chat.queuedSteerInterrupts': 'Скерувати цей хід — перерве поточний запуск',
   'chat.queuedSteerUnsupported': 'Цей агент не приймає повідомлення посеред ходу',

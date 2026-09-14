@@ -2676,6 +2676,7 @@ export const tr: Dict = {
   'chat.queuedCancel': 'İptal',
   'chat.queuedReorder': 'Yeniden sıralamak için sürükleyin',
   'chat.queuedEdit': 'Düzenle',
+  'chat.queuedHeader': 'Sırada',
   'chat.queuedSteer': 'Bu turu yönlendir',
   'chat.queuedSteerInterrupts': 'Bu turu yönlendir — süren çalışmayı keser',
   'chat.queuedSteerUnsupported': 'Bu ajan tur ortasında mesaj alamıyor',

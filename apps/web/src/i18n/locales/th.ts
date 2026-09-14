@@ -2676,6 +2676,7 @@ export const th: Dict = {
   'chat.queuedCancel': 'ยกเลิก',
   'chat.queuedReorder': 'ลากเพื่อจัดลำดับใหม่',
   'chat.queuedEdit': 'แก้ไข',
+  'chat.queuedHeader': 'อยู่ในคิว',
   'chat.queuedSteer': 'ชี้นำรอบนี้',
   'chat.queuedSteerInterrupts': 'ชี้นำรอบนี้ — จะหยุดการทำงานที่กำลังดำเนินอยู่',
   'chat.queuedSteerUnsupported': 'เอเจนต์นี้รับข้อความระหว่างรอบไม่ได้',
