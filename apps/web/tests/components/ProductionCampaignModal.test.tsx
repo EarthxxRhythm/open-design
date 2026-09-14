@@ -25,11 +25,8 @@ vi.mock("@open-design/host", () => ({
 vi.mock("../../src/providers/registry", () => ({
 	openExternalUrl: openExternalUrlMock,
 }));
-
-import {
-	ProductionCampaignModal,
-	internalActionNavigationUrl,
-} from "../../src/components/ProductionCampaignModal";
+import { ProductionCampaignModal } from "../../src/components/ProductionCampaignModal";
+import { internalActionNavigationUrl } from "../../src/components/touchpoint-navigation";
 import { ProductionCampaignBadge } from "../../src/components/ProductionCampaignBadge";
 import * as touchpointComponent from "../../src/components/touchpoint-component";
 import { OpenDesignTouchpointElement } from "../../src/components/touchpoint-component";

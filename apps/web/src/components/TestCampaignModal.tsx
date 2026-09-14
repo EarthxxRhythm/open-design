@@ -1,4 +1,5 @@
 import { mountTouchpoint, startTouchpointRefresh } from "./touchpoint-lifecycle";
+import { navigateCampaignTarget, resolveCampaignTarget, requireCampaignAction } from "./touchpoint-navigation";
 import {
 	TOUCHPOINT_COMPONENT_V2_RUNTIME_API_VERSION,
 	TOUCHPOINT_COMPONENT_V2_SDK_VERSION,
@@ -134,26 +135,21 @@ export function isSelectedTestCampaignDecision(
 	);
 }
 
-/** Test has no server event contract, so static targets remain default-deny. */
-export async function dispatchTestCampaignAction(
-	decision: TestDecision,
-	actionId: string,
-): Promise<boolean> {
-	if (
-		!decision.staticActions.some((action) => action.id === actionId) ||
-		!navigator.userActivation?.isActive
-	) {
-		emitWebTouchpointDiagnostic({
-			code: "touchpoint_action_denied",
-			detail: actionId,
-		});
-		return false;
-	}
-	emitWebTouchpointDiagnostic({
-		code: "touchpoint_action_denied",
-		detail: actionId,
-	});
-	return false;
+/** Only the current verified Test snapshot can authorize a real user's registered action. */
+export async function dispatchTestCampaignAction(decision: TestDecision, actionId: string): Promise<boolean> {
+  const session = currentTestSession;
+  const placement = TEST_CAMPAIGN_PLACEMENTS.find(key => key === decision.placementKey);
+  const target = resolveCampaignTarget(decision.staticActions, actionId);
+  if (session && placement && session.decisions.get(placement) === decision &&
+      decision.testContext.scheduleState === "active" &&
+      decisionMatchesSelection(decision, session.context, session.deployment, placement) &&
+      navigator.userActivation?.isActive && target) {
+    try {
+      if (await navigateCampaignTarget(target)) return true;
+    } catch { /* Report host navigation failure through the same action contract. */ }
+  }
+  emitWebTouchpointDiagnostic({ code: "touchpoint_action_denied", detail: actionId });
+  return false;
 }
 
 function supportsHost(authenticated: boolean): boolean {
@@ -375,7 +371,7 @@ export function TestTouchpointMount({
 			locale: readCampaignHostLocale(),
 			isCurrent: () => true,
 			dispatchAction: async (id) => {
-				await dispatchTestCampaignAction(decision, id);
+				requireCampaignAction(await dispatchTestCampaignAction(decision, id));
 			},
 			requestClose,
 			onCloseControlChange,

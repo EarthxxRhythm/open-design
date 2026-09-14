@@ -2,7 +2,7 @@ import { mountTouchpoint, startTouchpointRefresh } from "./touchpoint-lifecycle"
 import { readCampaignHostLocale } from "./TestCampaignModal";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getOpenDesignHost } from "@open-design/host";
-import { openExternalUrl } from "../providers/registry";
+import { navigateCampaignTarget, resolveCampaignTarget, requireCampaignAction } from "./touchpoint-navigation";
 import {
 	type TouchpointStaticAction,
 } from "./touchpoint-static-actions";
@@ -62,25 +62,6 @@ function recordDisplayed(subject: string, activity: string): void {
 	}
 }
 
-/**
- * Parses an internal action at execution time. Browser URL normalization treats
- * backslashes as hierarchy separators, so manifest validation alone cannot be
- * the origin boundary.
- */
-export function internalActionNavigationUrl(
-	path: unknown,
-	href = window.location.href,
-): URL | null {
-	if (typeof path !== "string") return null;
-	try {
-		const origin = new URL(href).origin;
-		const target = new URL(path, href);
-		return target.origin === origin ? target : null;
-	} catch {
-		return null;
-	}
-}
-
 /** Performs a server-validated click before the host consumes a static target. */
 export async function dispatchProductionCampaignAction(
 	decision: Decision,
@@ -89,16 +70,9 @@ export async function dispatchProductionCampaignAction(
 	currentGeneration: () => number,
 	expiresAt: number,
 ): Promise<boolean> {
-	const action = decision.staticActions.find(
-		(candidate) => candidate.id === actionId,
-	);
-	const internalTarget =
-		action?.target.kind === "internal"
-			? internalActionNavigationUrl(action.target.path)
-			: undefined;
+	const action = resolveCampaignTarget(decision.staticActions, actionId);
 	if (
 		!action ||
-		(action.target.kind === "internal" && !internalTarget) ||
 		generation !== currentGeneration() ||
 		expiresAt <= Date.now() ||
 		!navigator.userActivation?.isActive
@@ -157,11 +131,7 @@ export async function dispatchProductionCampaignAction(
 		return false;
 	}
 	try {
-		if (action.target.kind === "https")
-			await openExternalUrl(action.target.url);
-		else if (internalTarget) window.location.assign(internalTarget.href);
-		else return false;
-		return true;
+		return await navigateCampaignTarget(action);
 	} catch {
 		emitWebTouchpointDiagnostic({
 			code: "touchpoint_action_denied",
@@ -362,12 +332,14 @@ export function ProductionCampaignModal({
 				decision.authorizationDeadline > Date.now(),
 			requestClose: () => setClosed(true),
 			dispatchAction: async (id) => {
-				await dispatchProductionCampaignAction(
-					decision,
-					id,
-					generation,
-					() => authorizationGeneration.current,
-					decision.authorizationDeadline,
+				requireCampaignAction(
+					await dispatchProductionCampaignAction(
+						decision,
+						id,
+						generation,
+						() => authorizationGeneration.current,
+						decision.authorizationDeadline,
+					),
 				);
 			},
 			onVisible: () =>

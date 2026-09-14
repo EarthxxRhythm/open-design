@@ -1,6 +1,6 @@
 import { startTouchpointRefresh } from "./touchpoint-lifecycle";
 import { readCampaignHostLocale } from "./TestCampaignModal";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getOpenDesignHost } from "@open-design/host";
 import {
 	emitWebTouchpointDiagnostic,
@@ -11,8 +11,10 @@ import { HoverTouchpointOverlay } from "./HoverTouchpointOverlay";
 import { dispatchProductionCampaignAction } from "./ProductionCampaignModal";
 import { touchpointStaticActionsMatch, type TouchpointStaticAction } from "./touchpoint-static-actions";
 import { emitProductionTouchpointLoadDiagnostic, loadProductionTouchpointDecision } from "./production-touchpoint-loader";
-import { recordVisibleTestTouchpoint, useTestRuntime } from "./TestCampaignModal";
+import { dispatchTestCampaignAction, recordVisibleTestTouchpoint, useTestRuntime } from "./TestCampaignModal";
 import type { TestCampaignPlacement, TestDecision } from "./TestCampaignModal";
+
+import { requireCampaignAction } from "./touchpoint-navigation";
 
 const ENTRY_PLACEMENT = "opend.home.hover-entry";
 const LAYER_PLACEMENT = "opend.home.hover-layer";
@@ -105,25 +107,83 @@ export function ProductionCampaignHover({ authenticated, sessionSubject }: { aut
 		if (testLayer) onTestVisible(testLayer, LAYER_PLACEMENT);
 	}, [onTestVisible, testLayer]);
 	const onDiagnostic = useCallback((code: string) => emitWebTouchpointDiagnostic({ code }), []);
-	const dispatchEntryAction = useCallback((actionId: string) => {
-		if (!active) return Promise.resolve();
-		return dispatchProductionCampaignAction(active.entry.decision, actionId, active.authorizationGeneration, () => authorizationGenerationRef.current, active.expiresAt).then(() => undefined);
-	}, [active]);
-	const dispatchLayerAction = useCallback((actionId: string) => {
-		if (!active) return Promise.resolve();
-		return dispatchProductionCampaignAction(active.layer.decision, actionId, active.authorizationGeneration, () => authorizationGenerationRef.current, active.expiresAt).then(() => undefined);
-	}, [active]);
+  const testEntryActionIds = useMemo(
+		() => new Set(testEntry?.staticActions.map((action) => action.id)),
+		[testEntry],
+	);
+	const testLayerActionIds = useMemo(
+		() => new Set(testLayer?.staticActions.map((action) => action.id)),
+		[testLayer],
+	);
+	const dispatchEntryAction = useCallback(
+		async (actionId: string) => {
+			if (testRuntime) {
+				requireCampaignAction(
+					Boolean(authenticated && testEntry) &&
+						(await dispatchTestCampaignAction(testEntry!, actionId)),
+				);
+				return;
+			}
+			requireCampaignAction(
+				Boolean(authenticated && active) &&
+					(await dispatchProductionCampaignAction(
+						active!.entry.decision,
+						actionId,
+						active!.authorizationGeneration,
+						() => authorizationGenerationRef.current,
+						active!.expiresAt,
+					)),
+			);
+		},
+		[authenticated, testRuntime, testEntry, active],
+	);
+	const dispatchLayerAction = useCallback(
+		async (actionId: string) => {
+			if (testRuntime) {
+				requireCampaignAction(
+					Boolean(authenticated && testLayer) &&
+						(await dispatchTestCampaignAction(testLayer!, actionId)),
+				);
+				return;
+			}
+			requireCampaignAction(
+				Boolean(authenticated && active) &&
+					(await dispatchProductionCampaignAction(
+						active!.layer.decision,
+						actionId,
+						active!.authorizationGeneration,
+						() => authorizationGenerationRef.current,
+						active!.expiresAt,
+					)),
+			);
+		},
+		[authenticated, testRuntime, testLayer, active],
+	);
 	if (authenticated && testRuntime && testEntry && testLayer) {
 		return (
 			<HoverTouchpointOverlay
 				entry={testEntry.content}
 				layer={testLayer.content}
 				mode="test"
+				entryActionIds={testEntryActionIds}
+				layerActionIds={testLayerActionIds}
+				dispatchEntryAction={dispatchEntryAction}
+				dispatchLayerAction={dispatchLayerAction}
 				onEntryVisible={onEntryVisible}
 				onLayerVisible={onLayerVisible}
 				onDiagnostic={onDiagnostic}
 			/>
 		);
 	}
-	return authenticated && active?.sessionSubject === sessionSubject ? <HoverTouchpointOverlay entry={active.entry.decision.content} layer={active.layer.decision.content} entryActionIds={active.entry.actionIds} layerActionIds={active.layer.actionIds} onDiagnostic={onDiagnostic} dispatchEntryAction={dispatchEntryAction} dispatchLayerAction={dispatchLayerAction} /> : null;
+	return authenticated && active?.sessionSubject === sessionSubject ? (
+		<HoverTouchpointOverlay
+			entry={active.entry.decision.content}
+			layer={active.layer.decision.content}
+			entryActionIds={active.entry.actionIds}
+			layerActionIds={active.layer.actionIds}
+			onDiagnostic={onDiagnostic}
+			dispatchEntryAction={dispatchEntryAction}
+			dispatchLayerAction={dispatchLayerAction}
+		/>
+	) : null;
 }

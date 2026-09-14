@@ -1,4 +1,5 @@
 import { mountTouchpoint, startTouchpointRefresh } from "./touchpoint-lifecycle";
+import { requireCampaignAction } from "./touchpoint-navigation";
 import { readCampaignHostLocale } from "./TestCampaignModal";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getOpenDesignHost } from "@open-design/host";
@@ -213,12 +214,14 @@ export function ProductionCampaignBadge({
 				generation === authorizationGeneration.current &&
 				decision.authorizationDeadline > Date.now(),
 			dispatchAction: async (id) => {
-				await dispatchProductionCampaignAction(
-					decision,
-					id,
-					generation,
-					() => authorizationGeneration.current,
-					decision.authorizationDeadline,
+				requireCampaignAction(
+					await dispatchProductionCampaignAction(
+						decision,
+						id,
+						generation,
+						() => authorizationGeneration.current,
+						decision.authorizationDeadline,
+					),
 				);
 			},
 			onError: () => clear(),

@@ -24,6 +24,7 @@ import type { TestDecision, TestDeployment, TestRuntimeSession } from "../../src
 import {
 	TestCampaignModal,
 	TestTouchpointMount,
+	setTestRuntimeSession,
 	useTestRuntime,
 	recordVisibleTestTouchpoint,
 } from "../../src/components/TestCampaignModal";
@@ -32,6 +33,9 @@ import { OpenDesignTouchpointElement } from "../../src/components/touchpoint-com
 
 const digest = (value: string) =>
 	`sha256:${createHash("sha256").update(value).digest("hex")}`;
+const openExternalUrlMock = vi.hoisted(() => vi.fn(async () => true));
+vi.mock("../../src/providers/registry", () => ({ openExternalUrl: openExternalUrlMock }));
+
 const entryModule =
 	"export function mount(root) { root.textContent = 'Verified campaign'; return root; }";
 const manifest = {
@@ -218,6 +222,8 @@ beforeEach(() => {
 	};
 });
 afterEach(() => {
+  setTestRuntimeSession(null);
+  openExternalUrlMock.mockClear();
 	window.history.replaceState(null, "", "/");
 	delete (globalThis as CampaignHostGlobal).__openDesignCampaignTestHost;
 	cleanup();
@@ -985,9 +991,8 @@ describe("Test campaign decision and lifecycle guards", () => {
 		expect(screen.getByRole("dialog")).toBeInTheDocument();
 	});
 	it("diagnoses immutable byte integrity failure and revokes every created Blob URL", async () => {
-		const { verifyWebTouchpoint } = await import(
-			"../../src/components/touchpoint-component"
-		);
+		const { verifyWebTouchpoint } =
+			await import("../../src/components/touchpoint-component");
 		const revoked: string[] = [];
 		const create = vi
 			.spyOn(URL, "createObjectURL")
@@ -1006,9 +1011,8 @@ describe("Test campaign decision and lifecycle guards", () => {
 		revoke.mockRestore();
 	});
 	it("traps both directions across the mounted open ShadowRoot boundary", async () => {
-		const { trapWebTouchpointModalFocus } = await import(
-			"../../src/components/touchpoint-component"
-		);
+		const { trapWebTouchpointModalFocus } =
+			await import("../../src/components/touchpoint-component");
 		const modal = document.createElement("div");
 		const close = document.createElement("button");
 		const component = document.createElement("opend-touchpoint");
@@ -1047,20 +1051,189 @@ describe("Test campaign decision and lifecycle guards", () => {
 		expect(shadow.activeElement).toBe(action);
 		modal.remove();
 	});
-	it("never consumes a Test static target without an approved server event contract", async () => {
-		const { dispatchTestCampaignAction } = await import(
-			"../../src/components/TestCampaignModal"
-		);
-		const fetchMock = vi.fn();
-		vi.stubGlobal("fetch", fetchMock);
+	function activeActionDecision(
+		target: unknown,
+		scenario: "active" | "wake" = "active",
+	) {
+		const staticActions = [{ id: "learn", target }] as any;
+		const actionManifest = {
+			...manifest,
+			placements: [
+				{
+					...manifest.placements[0]!,
+					requiredCapabilities: ["close", "static-action"],
+					staticActions,
+				},
+			],
+		};
+		const actionContent = {
+			...content,
+			manifest: actionManifest,
+			manifestHash: digest(JSON.stringify(actionManifest)),
+		};
+		const base = runtime(actionContent);
+		const value = {
+			...base,
+			context: { ...base.context, scenario },
+			testContext: { ...base.testContext, scenario },
+			manifestHash: actionContent.manifestHash,
+			requiredCapabilities: ["close", "static-action"],
+			staticActions,
+		};
+		setTestRuntimeSession({
+			selectionKey: "active-action",
+			deployment: {
+				id: value.deploymentId,
+				activityId: value.activityId,
+				snapshotHash: value.snapshotHash,
+				snapshot: {
+					contentVersionId: actionContent.id,
+					manifestHash: actionContent.manifestHash,
+					artifactHash: value.artifactHash,
+					placementKeys: [value.placementKey],
+				},
+			},
+			context: value.context,
+			decisions: new Map([[value.placementKey, value]]),
+		} as any);
+		return value;
+	}
+
+	it.each(["active", "wake"] as const)(
+		"navigates a live selected Test HTTPS action in %s without production telemetry",
+		async (scenario) => {
+			const { dispatchTestCampaignAction } =
+				await import("../../src/components/TestCampaignModal");
+			const fetchMock = vi.fn();
+			vi.stubGlobal("fetch", fetchMock);
+			Object.defineProperty(navigator, "userActivation", {
+				configurable: true,
+				value: { isActive: true },
+			});
+			const accepted = await dispatchTestCampaignAction(
+				activeActionDecision(
+					{
+						kind: "https",
+						url: "https://open-design.ai/cloud/dashboard?from=test#overview",
+					},
+					scenario,
+				) as any,
+				"learn",
+			);
+		expect(accepted).toBe(true);
+		expect(fetchMock).not.toHaveBeenCalled();
+		},
+	);
+
+	it.each([
+		[
+			"unregistered",
+			"other",
+			{ kind: "https", url: "https://open-design.ai/cloud/dashboard" },
+		],
+		[
+			"credential-bearing",
+			"learn",
+			{
+				kind: "https",
+				url: "https://user:secret@open-design.ai/cloud/dashboard",
+			},
+		],
+		["scripted", "learn", { kind: "https", url: "javascript:alert(1)" }],
+	])(
+		"rejects %s Test actions with host feedback and no production fetch",
+		async (_kind, actionId, target) => {
+			const { dispatchTestCampaignAction } =
+				await import("../../src/components/TestCampaignModal");
+			const diagnostics: string[] = [];
+			document.addEventListener(
+				"touchpointdiagnostic",
+				(event) => diagnostics.push((event as CustomEvent).detail.code),
+				{ once: true },
+			);
+			const fetchMock = vi.fn();
+			vi.stubGlobal("fetch", fetchMock);
+			Object.defineProperty(navigator, "userActivation", {
+				configurable: true,
+				value: { isActive: true },
+			});
+			expect(
+				await dispatchTestCampaignAction(
+					activeActionDecision(target) as any,
+					actionId,
+				),
+			).toBe(false);
+			expect(diagnostics).toEqual(["touchpoint_action_denied"]);
+			expect(openExternalUrlMock).not.toHaveBeenCalled();
+			expect(fetchMock).not.toHaveBeenCalled();
+		},
+	);
+
+	it.each(["before", "ended"] as const)(
+		"rejects %s Test schedule state",
+		async (scheduleState) => {
+			const { dispatchTestCampaignAction } =
+				await import("../../src/components/TestCampaignModal");
+			const value = activeActionDecision({
+				kind: "https",
+				url: "https://example.com",
+			});
+			Object.assign(value.testContext, { scheduleState });
+			Object.defineProperty(navigator, "userActivation", {
+				configurable: true,
+				value: { isActive: true },
+			});
+			expect(await dispatchTestCampaignAction(value as any, "learn")).toBe(
+				false,
+			);
+			expect(openExternalUrlMock).not.toHaveBeenCalled();
+		},
+	);
+
+	it("reports failed host navigation instead of claiming success", async () => {
+		const { dispatchTestCampaignAction } =
+			await import("../../src/components/TestCampaignModal");
+		const value = activeActionDecision({
+			kind: "https",
+			url: "https://example.com",
+		});
 		Object.defineProperty(navigator, "userActivation", {
 			configurable: true,
 			value: { isActive: true },
 		});
-		await expect(
-			dispatchTestCampaignAction(runtime() as any, "learn"),
-		).resolves.toBe(false);
-		expect(fetchMock).not.toHaveBeenCalled();
+		openExternalUrlMock.mockResolvedValueOnce(false);
+		expect(await dispatchTestCampaignAction(value as any, "learn")).toBe(false);
+	});
+
+	it("requires user activation for a selected Test action", async () => {
+		const { dispatchTestCampaignAction } =
+			await import("../../src/components/TestCampaignModal");
+		const value = activeActionDecision({
+			kind: "https",
+			url: "https://example.com",
+		});
+		Object.defineProperty(navigator, "userActivation", {
+			configurable: true,
+			value: { isActive: false },
+		});
+		expect(await dispatchTestCampaignAction(value as any, "learn")).toBe(false);
+		expect(openExternalUrlMock).not.toHaveBeenCalled();
+	});
+
+	it("rejects revoked Test snapshot actions with host feedback", async () => {
+		const { dispatchTestCampaignAction } =
+			await import("../../src/components/TestCampaignModal");
+		const value = activeActionDecision({
+			kind: "internal",
+			path: "/projects?view=active#recent",
+		});
+		setTestRuntimeSession(null);
+		Object.defineProperty(navigator, "userActivation", {
+			configurable: true,
+			value: { isActive: true },
+		});
+		expect(await dispatchTestCampaignAction(value as any, "learn")).toBe(false);
+		expect(openExternalUrlMock).not.toHaveBeenCalled();
 	});
 });
 
