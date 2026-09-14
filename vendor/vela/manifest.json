@@ -1,7 +1,7 @@
 {
-  "distributionVersion": "0.0.1-test.claude-bg-task.g2b20105.diag3",
-  "velaBinaryVersion": "0.0.1-test.claude-bg-task.g2b20105",
-  "velaSourceCommit": "2b20105d2bf3de478df1b748cd6ae07f8c8edb06",
+  "distributionVersion": "0.0.1-test.claude-upstream-error.gd23bd26",
+  "velaBinaryVersion": "0.0.1-test.claude-upstream-error.gd23bd26",
+  "velaSourceCommit": "d23bd26d0f3d00e29584079c236b60a5ef469e57",
   "openDesignBaselineCommit": "be6701205bc8590873e805ba580424e1c6f85147",
   "platforms": [
     "darwin-arm64"
@@ -28,10 +28,10 @@
   "npmPublished": false,
   "artifacts": [
     {
-      "file": "powerformer-vela-cli-0.0.1-test.claude-bg-task.g2b20105.diag3.tgz"
+      "file": "powerformer-vela-cli-0.0.1-test.claude-upstream-error.gd23bd26.tgz"
     },
     {
-      "file": "powerformer-vela-cli-darwin-arm64-0.0.1-test.claude-bg-task.g2b20105.diag3.tgz"
+      "file": "powerformer-vela-cli-darwin-arm64-0.0.1-test.claude-upstream-error.gd23bd26.tgz"
     }
   ]
 }
