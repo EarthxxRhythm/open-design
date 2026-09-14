@@ -20,11 +20,12 @@ vi.mock("@open-design/host", () => ({
 }));
 
 import { ProductionCampaignModal } from "../../src/components/ProductionCampaignModal";
-import type { TestDecision } from "../../src/components/TestCampaignModal";
+import type { TestDecision, TestDeployment, TestRuntimeSession } from "../../src/components/TestCampaignModal";
 import {
 	TestCampaignModal,
 	TestTouchpointMount,
 	useTestRuntime,
+	recordVisibleTestTouchpoint,
 } from "../../src/components/TestCampaignModal";
 import * as touchpointComponent from "../../src/components/touchpoint-component";
 import { OpenDesignTouchpointElement } from "../../src/components/touchpoint-component";
@@ -223,6 +224,344 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 	vi.restoreAllMocks();
 });
+describe("Test campaign live refresh", () => {
+	let observed: TestRuntimeSession | null = null;
+	function Observe() {
+		observed = useTestRuntime();
+		return <TestRuntimeProbe />;
+	}
+	const currentSession = () => observed;
+	const deployment = (id = "deployment-1"): TestDeployment => ({
+		id,
+		activityId: `activity-${id}`,
+		snapshotHash: `sha256:${id}`,
+		snapshot: {
+			contentVersionId: content.id,
+			manifestHash: content.manifestHash,
+			artifactHash: "sha256:test-artifact",
+			placementKeys: ["opend.home.campaign-modal"],
+		},
+	});
+	function fixture() {
+		const state = {
+			deployments: [deployment()],
+			listStatus: 200,
+			contextStatus: 200,
+		};
+		const fetchMock = vi.fn(
+			async (url: string, init?: RequestInit): Promise<Response> => {
+				if (url.endsWith("/deployments"))
+					return Response.json(
+						{ deployments: state.deployments },
+						{ status: state.listStatus },
+					);
+				if (url.endsWith("/acceptances")) return Response.json({});
+				if (!url.startsWith("/api/touchpoints/test-runtime"))
+					return Response.json({}, { status: 404 });
+				const id = url.endsWith("/context")
+					? JSON.parse(String(init?.body)).deploymentId
+					: new URL(url, "http://localhost").searchParams.get("deploymentId");
+				const selected = state.deployments.find(
+					(candidate) => candidate.id === id,
+				);
+				if (!selected) return Response.json({}, { status: 404 });
+				const context = { ...runtime().context, deploymentId: selected.id };
+				if (url.endsWith("/context"))
+					return Response.json(context, { status: state.contextStatus });
+				return Response.json({
+					...runtime(),
+					activityId: selected.activityId,
+					deploymentId: selected.id,
+					snapshotHash: selected.snapshotHash,
+					testContext: { ...context, scheduleState: "active" },
+				});
+			},
+		);
+		vi.stubGlobal("fetch", fetchMock);
+		return { state, fetchMock };
+	}
+	async function open() {
+		return await act(async () =>
+			render(
+				<>
+					<TestCampaignModal authenticated sessionSubject="account-a" />
+					<Observe />
+				</>,
+			),
+		);
+	}
+	async function tick() {
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(30_000);
+		});
+	}
+	beforeEach(() => {
+		vi.useFakeTimers();
+		window.history.replaceState(null, "", "/");
+		observed = null;
+	});
+	afterEach(() => {
+		cleanup();
+		vi.useRealTimers();
+	});
+	it("discovers a Test published after the client opened within 30 seconds", async () => {
+		vi.useFakeTimers();
+		window.history.replaceState(null, "", "/");
+		let published = false;
+		const baseline = fetches();
+		const fetchMock = vi.fn(async (url: string) =>
+			url.endsWith("/deployments") && !published
+				? Response.json({ deployments: [] })
+				: baseline(url),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+		try {
+			await act(async () => {
+				render(
+					<>
+						<TestCampaignModal authenticated sessionSubject="account-a" />
+						<TestRuntimeProbe />
+					</>,
+				);
+			});
+			expect(
+				screen.getByTestId("test-runtime-decision-count").textContent,
+			).toBe("0");
+			published = true;
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(29_999);
+			});
+			expect(
+				screen.getByTestId("test-runtime-decision-count").textContent,
+			).toBe("0");
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(1);
+			});
+			expect(
+				screen.getByTestId("test-runtime-decision-count").textContent,
+			).toBe("1");
+		} finally {
+			cleanup();
+			vi.useRealTimers();
+		}
+	});
+	it.each(["focus", "online", "visibilitychange"])(
+		"refreshes immediately on %s",
+		async (event) => {
+			const { state } = fixture();
+			state.deployments = [];
+			await open();
+			state.deployments = [deployment()];
+			await act(async () => {
+				(event === "visibilitychange" ? document : window).dispatchEvent(
+					new Event(event),
+				);
+			});
+			expect(currentSession()?.decisions.size).toBe(1);
+		},
+	);
+
+	it("preserves the session, simulated clock and acceptance dedup on unchanged polls", async () => {
+		const { fetchMock } = fixture();
+		await open();
+		const session = currentSession();
+		const decision = session?.decisions.get("opend.home.campaign-modal");
+		if (!session || !decision) throw new Error("Test session did not load");
+		await act(async () =>
+			recordVisibleTestTouchpoint(
+				session,
+				decision,
+				"opend.home.campaign-modal",
+			),
+		);
+		await tick();
+		expect(currentSession()).toBe(session);
+		await act(async () =>
+			recordVisibleTestTouchpoint(
+				session,
+				decision,
+				"opend.home.campaign-modal",
+			),
+		);
+		expect(
+			fetchMock.mock.calls.filter(([url]) => url.endsWith("/context")),
+		).toHaveLength(1);
+		expect(
+			fetchMock.mock.calls.filter(([url]) => url.endsWith("/acceptances")),
+		).toHaveLength(1);
+	});
+
+	it("keeps mounted content stable and does not reopen a dismissed modal on polling", async () => {
+		fixture();
+		vi.spyOn(touchpointComponent, "verifyWebTouchpoint").mockResolvedValue({
+			entryUrl: "blob:live-test",
+			resourceUrls: new Map(),
+			dispose: vi.fn(),
+		});
+		const mount = vi
+			.spyOn(OpenDesignTouchpointElement.prototype, "mount")
+			.mockResolvedValue();
+		await act(async () => render(<TestCampaignHarness authenticated />));
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(50);
+		});
+		expect(screen.queryByRole("dialog")).not.toBeNull();
+		expect(mount).toHaveBeenCalledTimes(1);
+		await tick();
+		expect(mount).toHaveBeenCalledTimes(1);
+		fireEvent.keyDown(document, { key: "Escape" });
+		expect(screen.queryByRole("dialog")).toBeNull();
+		await tick();
+		expect(screen.queryByRole("dialog")).toBeNull();
+		expect(mount).toHaveBeenCalledTimes(1);
+	});
+
+	it("resumes Production requests only after Test withdrawal is confirmed", async () => {
+		const { state, fetchMock } = fixture();
+		state.contextStatus = 503;
+		await act(async () => render(<TestCampaignHarness authenticated />));
+		const productionCalls = () =>
+			fetchMock.mock.calls.filter(([url]) =>
+				url.startsWith("/api/touchpoints/production-runtime"),
+			).length;
+		const before = productionCalls();
+		await tick();
+		expect(productionCalls()).toBe(before);
+		state.deployments = [];
+		await tick();
+		expect(productionCalls()).toBeGreaterThan(before);
+	});
+
+	it("replaces the snapshot and clears Test on confirmed withdrawal", async () => {
+		const { state } = fixture();
+		await open();
+		state.deployments = [deployment("deployment-2")];
+		await tick();
+		expect(currentSession()?.deployment.id).toBe("deployment-2");
+		expect(
+			currentSession()?.decisions.get("opend.home.campaign-modal")
+				?.deploymentId,
+		).toBe("deployment-2");
+		state.deployments = [];
+		await tick();
+		expect(currentSession()).toBeNull();
+	});
+
+	it("keeps Test isolation on list failure and retries on the next tick", async () => {
+		const { state } = fixture();
+		await open();
+		const session = currentSession();
+		state.listStatus = 503;
+		state.deployments = [];
+		await tick();
+		expect(currentSession()).toBe(session);
+		state.listStatus = 200;
+		await tick();
+		expect(currentSession()).toBeNull();
+	});
+
+	it("retries a failed context without requiring remount or allowing Production", async () => {
+		const { state } = fixture();
+		state.contextStatus = 503;
+		await open();
+		expect(currentSession()?.deployment.id).toBe("deployment-1");
+		expect(currentSession()?.decisions.size).toBe(0);
+		state.contextStatus = 200;
+		await tick();
+		expect(currentSession()?.decisions.size).toBe(1);
+	});
+
+	it("ignores a stale deployment response even when fetch ignores cancellation", async () => {
+		const { fetchMock } = fixture();
+		let resolveOld!: (response: Response) => void;
+		fetchMock.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					resolveOld = resolve;
+				}),
+		);
+		await open();
+		await act(async () => window.dispatchEvent(new Event("focus")));
+		const current = currentSession();
+		expect(current?.decisions.size).toBe(1);
+		await act(async () => resolveOld(Response.json({ deployments: [] })));
+		expect(currentSession()).toBe(current);
+		expect(fetchMock.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+	});
+
+	it("ignores an old context after a replacement selection completes", async () => {
+		const { state, fetchMock } = fixture();
+		const normal = fetchMock.getMockImplementation()!;
+		let resolveOld!: (response: Response) => void;
+		let deferred = false;
+		fetchMock.mockImplementation((url, init) => {
+			if (url.endsWith("/context") && !deferred) {
+				deferred = true;
+				return new Promise((resolve) => {
+					resolveOld = resolve;
+				});
+			}
+			return normal(url, init);
+		});
+		await open();
+		state.deployments = [deployment("deployment-2")];
+		await tick();
+		const current = currentSession();
+		expect(current?.deployment.id).toBe("deployment-2");
+		expect(current?.decisions.size).toBe(1);
+		await act(async () => resolveOld(Response.json(runtime().context)));
+		expect(currentSession()).toBe(current);
+	});
+
+	it("stops background polling while hidden and refreshes on becoming visible", async () => {
+		const { fetchMock } = fixture();
+		await open();
+		const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+		const count = fetchMock.mock.calls.length;
+		await tick();
+		expect(fetchMock).toHaveBeenCalledTimes(count);
+		hidden.mockReturnValue(false);
+		await act(async () =>
+			document.dispatchEvent(new Event("visibilitychange")),
+		);
+		expect(fetchMock).toHaveBeenCalledTimes(count + 1);
+	});
+
+	it("cancels pending work on logout and removes timers/listeners on unmount", async () => {
+		const { fetchMock } = fixture();
+		let resolveOld!: (response: Response) => void;
+		fetchMock.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					resolveOld = resolve;
+				}),
+		);
+		const view = await open();
+		await act(async () =>
+			view.rerender(
+				<>
+					<TestCampaignModal authenticated={false} sessionSubject={null} />
+					<Observe />
+				</>,
+			),
+		);
+		expect(fetchMock.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+		await act(async () =>
+			resolveOld(Response.json({ deployments: [deployment()] })),
+		);
+		expect(currentSession()).toBeNull();
+		view.unmount();
+		const count = fetchMock.mock.calls.length;
+		await act(async () => {
+			window.dispatchEvent(new Event("focus"));
+			window.dispatchEvent(new Event("online"));
+			document.dispatchEvent(new Event("visibilitychange"));
+			await vi.advanceTimersByTimeAsync(60_000);
+		});
+		expect(fetchMock).toHaveBeenCalledTimes(count);
+	});
+});
+
 describe("TestCampaignModal", () => {
 	it("is default-deny without the real desktop host", () => {
 		const fetchMock = vi.fn();

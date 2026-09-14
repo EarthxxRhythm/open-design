@@ -1,21 +1,17 @@
+import { mountTouchpoint, startTouchpointRefresh } from "./touchpoint-lifecycle";
 import { readCampaignHostLocale } from "./TestCampaignModal";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getOpenDesignHost } from "@open-design/host";
 import { openExternalUrl } from "../providers/registry";
 import {
-	touchpointStaticActionsMatch,
 	type TouchpointStaticAction,
 } from "./touchpoint-static-actions";
 import {
 	emitWebTouchpointDiagnostic,
 	ensureWebTouchpointElement,
-	readWebTouchpointHostContext,
 	lockWebTouchpointModalScroll,
 	supportsWebTouchpointCapabilities,
 	trapWebTouchpointModalFocus,
-	verifyWebTouchpoint,
-	webTouchpointContext,
-	type OpenDesignTouchpointElement,
 	type WebTouchpointContent,
 } from "./touchpoint-component";
 import {
@@ -336,18 +332,12 @@ export function ProductionCampaignModal({
 				clear();
 			}
 		};
-		void decide();
-		const wake = () => {
-			if (!document.hidden) void decide();
-		};
-		window.addEventListener("focus", wake);
-		window.addEventListener("online", wake);
+		const stopRefresh = startTouchpointRefresh(decide);
 		return () => {
 			cancelled = true;
 			controller.abort();
 			if (timer) clearTimeout(timer);
-			window.removeEventListener("focus", wake);
-			window.removeEventListener("online", wake);
+			stopRefresh();
 			clear();
 		};
 	}, [authenticated, sessionSubject, testRuntime]);
@@ -360,145 +350,37 @@ export function ProductionCampaignModal({
 			decision.sessionSubject !== sessionSubject
 		)
 			return;
-		let cancelled = false;
-		const mountGeneration = ++authorizationGeneration.current;
-		const current = () =>
-			!cancelled &&
-			mountGeneration === authorizationGeneration.current &&
-			authenticated &&
-			decision.sessionSubject === sessionSubject;
-		let verified: Awaited<ReturnType<typeof verifyWebTouchpoint>> | undefined;
-		const element = document.createElement(
-			"opend-touchpoint",
-		) as OpenDesignTouchpointElement;
-		let visibleFrame: number | undefined;
-		let mounted = false;
-		let recorded = false;
-		const recordWhenVisible = () => {
-			if (!mounted || recorded || visibleFrame !== undefined) return;
-			visibleFrame = requestAnimationFrame(() => {
-				visibleFrame = undefined;
-				if (
-					!current() ||
-					decision.authorizationDeadline <= Date.now() ||
-					document.hidden ||
-					!element.isConnected ||
-					element.hidden ||
-					element.getClientRects().length === 0
-				)
-					return;
-				recordDisplayed(decision.sessionSubject, decision.activityId);
-				recorded = true;
-			});
-		};
-		document.addEventListener("visibilitychange", recordWhenVisible);
-		let elementDisposed = false;
-		let verifiedDisposed = false;
-		const disposeElement = () => {
-			if (elementDisposed) return;
-			elementDisposed = true;
-			void element.dispose(verified?.resourceUrls).catch(() => undefined);
-		};
-		const disposeVerified = () => {
-			if (!verified || verifiedDisposed) return;
-			verifiedDisposed = true;
-			verified.dispose();
-		};
-		const dispose = () => {
-			disposeElement();
-			disposeVerified();
-		};
-		container.replaceChildren(element);
-		void (async () => {
-			try {
-				verified = await verifyWebTouchpoint(decision.content);
-				if (elementDisposed) disposeVerified();
-				if (!current()) {
-					dispose();
-					return;
-				}
-				const manifestPlacement = decision.content.manifest.placements.find(
-					(placement) => placement.key === PLACEMENT,
+		const generation = ++authorizationGeneration.current;
+		const dispose = mountTouchpoint(container, {
+			content: decision.content,
+			placementKey: PLACEMENT,
+			staticActions: decision.staticActions,
+			mode: "production",
+			locale: decision.content.locale,
+			isCurrent: () =>
+				generation === authorizationGeneration.current &&
+				decision.authorizationDeadline > Date.now(),
+			requestClose: () => setClosed(true),
+			dispatchAction: async (id) => {
+				await dispatchProductionCampaignAction(
+					decision,
+					id,
+					generation,
+					() => authorizationGeneration.current,
+					decision.authorizationDeadline,
 				);
-				if (
-					!manifestPlacement ||
-					manifestPlacement.key !== PLACEMENT ||
-					!touchpointStaticActionsMatch(
-						decision.staticActions,
-						manifestPlacement.staticActions,
-					)
-				) {
-					emitWebTouchpointDiagnostic({ code: "touchpoint_decision_mismatch" });
-					dispose();
-					clear();
-					return;
-				}
-				const context = webTouchpointContext(
-					decision.content,
-					readWebTouchpointHostContext(
-						decision.content.locale,
-						document.documentElement.classList.contains("dark")
-							? "dark"
-							: "light",
-					),
-				);
-				if (!current() || !context) {
-					dispose();
-					if (current() && !context)
-						emitWebTouchpointDiagnostic({
-							code: "touchpoint_locale_unsupported",
-						});
-					return;
-				}
-				await element.mount(
-					verified.entryUrl,
-					decision.content.entryDigest,
-					{ ...context, mode: "production" },
-					verified.resourceUrls,
-					new Set(decision.staticActions.map((action) => action.id)),
-					{
-						requestClose: () => setClosed(true),
-						dispatchAction: async (id) => {
-							await dispatchProductionCampaignAction(
-								decision,
-								id,
-								mountGeneration,
-								() => authorizationGeneration.current,
-								decision.authorizationDeadline,
-							);
-						},
-						onDiagnostic: emitWebTouchpointDiagnostic,
-					},
-				);
-				if (!current()) {
-					dispose();
-					return;
-				}
-				mounted = true;
-				recordWhenVisible();
-			} catch (error) {
-				if (!current()) {
-					dispose();
-					return;
-				}
-				if (current()) {
-					emitWebTouchpointDiagnostic({
-						code:
-							error instanceof Error ? error.message : "touchpoint_load_failed",
-					});
-				}
-				dispose();
-			}
-		})();
+			},
+			onVisible: () =>
+				recordDisplayed(decision.sessionSubject, decision.activityId),
+			onError: (code) => {
+				if (code === "touchpoint_decision_mismatch") clear();
+			},
+		});
 		return () => {
-			cancelled = true;
-			document.removeEventListener("visibilitychange", recordWhenVisible);
-			if (visibleFrame !== undefined) cancelAnimationFrame(visibleFrame);
 			++authorizationGeneration.current;
 			dispose();
-			container.replaceChildren();
 		};
-	}, [authenticated, decision, sessionSubject]);
+	}, [authenticated, decision, sessionSubject, clear]);
 	useEffect(() => {
 		if (!decision) return;
 		restoreFocus.current =
