@@ -1,0 +1,25 @@
+{
+  "schema": {"version": 1},
+  "suites": {
+    "convergence-control": [".github/config/architecture-experiment.json", ".github/scripts/release/architecture_experiment.py", ".github/scripts/convergence.py", ".github/scripts/lib/r2.py", ".github/workflows/release-beta.yml", "tools/pack/src/mac/workspace.ts"],
+    "install": ["package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"],
+    "shared": ["suite://install", "packages/"],
+    "daemon": ["suite://shared", "apps/daemon/src/", "apps/daemon/package.json", "apps/daemon/tsconfig.json"],
+    "web": ["suite://shared", "apps/web/app/", "apps/web/src/", "apps/web/public/", "apps/web/sidecar/", "apps/web/package.json", "apps/web/next.config.ts", "apps/web/postcss.config.mjs", "apps/web/next-env.d.ts", "apps/web/tsconfig.json", "apps/web/tsconfig.sidecar.json"],
+    "desktop": ["suite://shared", "apps/desktop/"],
+    "packaged": ["suite://daemon", "suite://web", "suite://desktop", "apps/packaged/"]
+  },
+  "workflows": {
+    "architecture-experiment": {
+      "policy": "ideal-main-macos-v1",
+      "workloads": {
+        "shared": {"inputs": ["suite://shared"], "runnerClass": "mac", "products": "manifest", "reusable": true},
+        "daemon": {"inputs": ["suite://daemon"], "runnerClass": "mac", "products": "manifest", "reusable": true},
+        "web": {"inputs": ["suite://web"], "runnerClass": "mac", "products": "manifest", "reusable": true},
+        "desktop": {"inputs": ["suite://desktop"], "runnerClass": "mac", "products": "manifest", "reusable": true},
+        "packaged": {"inputs": ["suite://packaged"], "runnerClass": "mac", "products": "manifest", "reusable": true},
+        "web-tests": {"inputs": ["suite://web", "apps/web/tests/", "apps/web/vitest.config.ts"], "runnerClass": "mac", "products": "none", "reusable": true}
+      }
+    }
+  }
+}
