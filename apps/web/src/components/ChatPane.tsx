@@ -260,7 +260,7 @@ const DEFAULT_STARTER_KEYS: Array<{
 
 const IMPORTED_ARTIFACTS_INITIAL_VISIBLE_COUNT = 5;
 const IMPORTED_ARTIFACTS_REVEAL_COUNT = 5;
-const CHAT_RAIL_MIN_USER_MESSAGES = 2;
+const CHAT_RAIL_MIN_USER_MESSAGES = 1;
 // Above this the rail becomes a compact rolling wheel with faded extremes;
 // at or below it the full column shows with no mask occlusion.
 const CHAT_RAIL_WHEEL_MIN_USER_MESSAGES = 40;
@@ -280,7 +280,7 @@ const CHAT_RAIL_WHEEL_LISTENER_OPTIONS = { passive: false } as const;
 // Dock-style proximity effect: every dash rests at the same base length;
 // the hovered dash grows to the full module width and only its 4 neighbors
 // on each side are pulled along, easing off with distance.
-const CHAT_RAIL_DASH_BASE_PX = 8;
+const CHAT_RAIL_DASH_BASE_PX = 6;
 const CHAT_RAIL_DASH_HOVER_PX = 16;
 const CHAT_RAIL_DASH_NEIGHBOR_SPAN = 4;
 
@@ -5283,9 +5283,6 @@ function ChatMessageRail({
   );
   const [preview, setPreview] = useState<{ id: string; y: number } | null>(null);
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
-  // Picking a message retracts the module until the pointer leaves it, so the
-  // jump lands without the rail lingering over the destination.
-  const [retracted, setRetracted] = useState(false);
   const navRef = useRef<HTMLElement | null>(null);
   const trackRef = useRef<HTMLDivElement | null>(null);
 
@@ -5299,7 +5296,6 @@ function ChatMessageRail({
    */
   useEffect(() => {
     setPreview(null);
-    setRetracted(false);
     setActiveMessageId(null);
   }, [activeConversationKey]);
 
@@ -5329,7 +5325,6 @@ function ChatMessageRail({
   // The track scrolls, so the preview anchor is measured from the marker's
   // on-screen position at hover time instead of derived from its index.
   const showPreview = (id: string, marker: HTMLElement) => {
-    if (retracted) return;
     const nav = navRef.current;
     const y = nav
       ? marker.getBoundingClientRect().top - nav.getBoundingClientRect().top + 4
@@ -5446,40 +5441,6 @@ function ChatMessageRail({
     return () => nav.removeEventListener('wheel', onWheel);
   }, [logRef, railVisible]);
 
-  /**
-   * 退避态的解除不能只靠 nav 自己的 `mouseleave`。
-   *
-   * 隐形的东西不该继续吃输入,所以 `.is-retracted` 现在连 `pointer-events`
-   * 一起关掉(`chat.css`)。可 `mouseleave` 的前提是这个元素还在命中测试里 ——
-   * 一个刚被设成 `pointer-events: none` 的元素会不会补发一次 `mouseleave`,
-   * 规范没有要求,各浏览器实现也不一致。赌输了 `retracted` 就永远解不掉,
-   * 导轨从此再也不亮,比原来的缺陷更糟。
-   *
-   * 所以解除条件自己拿:退避期间在 document 上听指针移动,指针一旦离开导轨的
-   * 矩形就解除 —— 和 `mouseleave` 同一个语义,但不依赖导轨能不能被命中。
-   * `onMouseLeave` 一并保留:指针在样式落下之前就滑出去时它更早一步,而且它
-   * 顺手清 `preview`。
-   */
-  useEffect(() => {
-    if (!retracted) return;
-    const release = (ev: MouseEvent) => {
-      const nav = navRef.current;
-      if (!nav) {
-        setRetracted(false);
-        return;
-      }
-      const rect = nav.getBoundingClientRect();
-      const inside =
-        ev.clientX >= rect.left
-        && ev.clientX <= rect.right
-        && ev.clientY >= rect.top
-        && ev.clientY <= rect.bottom;
-      if (!inside) setRetracted(false);
-    };
-    document.addEventListener('pointermove', release, { passive: true });
-    return () => document.removeEventListener('pointermove', release);
-  }, [retracted]);
-
   if (!railVisible) {
     return null;
   }
@@ -5487,7 +5448,7 @@ function ChatMessageRail({
   const previewItem =
     userMessages.find((item) => item.message.id === preview?.id) ?? null;
   const hoverIndex =
-    !retracted && preview
+    preview
       ? userMessages.findIndex((item) => item.message.id === preview.id)
       : -1;
 
@@ -5497,11 +5458,10 @@ function ChatMessageRail({
        非 passive 监听,见 `CHAT_RAIL_WHEEL_LISTENER_OPTIONS`。 */
     <nav
       ref={navRef}
-      className={`chat-message-rail${retracted ? ' is-retracted' : ''}`}
+      className="chat-message-rail"
       aria-label={t('chat.messageRail.aria')}
       onMouseLeave={() => {
         setPreview(null);
-        setRetracted(false);
       }}
       data-wheel={userMessages.length > CHAT_RAIL_WHEEL_MIN_USER_MESSAGES ? 'true' : 'false'}
       data-testid="chat-message-rail"
@@ -5534,7 +5494,6 @@ function ChatMessageRail({
               onBlur={() => setPreview(null)}
               onClick={() => {
                 setPreview(null);
-                setRetracted(true);
                 onNavigate(item.message, item.messageIndex);
               }}
             >

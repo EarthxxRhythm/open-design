@@ -2562,3 +2562,8 @@ a.avatar-item:visited {
 .split-resize-handle:focus-visible {
   outline: none;
 }
+/* Keep the resize hit area out of persistent message navigation markers:
+   whenever the rail is mounted, the handle's chat-side edge stays flush. */
+.split:has(.chat-message-rail) > .split-resize-handle::before {
+  inset-inline-start: 0;
+}

@@ -383,26 +383,6 @@
 .chat-message-rail:focus-within {
   opacity: 1;
 }
-/* Picking a message retracts the module (component-managed): this loses to
-   neither the hover nor the focus rule above because it comes later at equal
-   specificity, and it clears on pointer leave. */
-.chat-message-rail.is-retracted,
-.chat-message-rail.is-retracted:hover,
-.chat-message-rail.is-retracted:focus-within {
-  opacity: 0;
-  /* 隐形的东西不该继续吃输入。退避态原本只改 `opacity`,于是点完跳转之后这条
-     20px 宽、整个 viewport 高的覆盖层看不见却照样命中 —— 悬停、点击都落在它
-     身上,底下的流水一概碰不到。
-     解除条件不靠 `mouseleave`(元素刚被设成 `none` 会不会补发一次,规范没要求),
-     由组件在 document 上按指针位置自己判,见 `ChatMessageRail` 的退避 effect。 */
-  pointer-events: none;
-}
-/* `.chat-message-rail__track` 自己写了 `pointer-events: auto`。这个属性虽然可继承,
-   但后代把自己重新打开是合法的 —— 只在 nav 上关掉不够,轨道那一格还会照吃。
-   短横(`__marker`)没有自己的声明,跟着轨道一起关。 */
-.chat-message-rail.is-retracted .chat-message-rail__track {
-  pointer-events: none;
-}
 .chat-message-rail__track {
   position: relative;
   width: 100%;
