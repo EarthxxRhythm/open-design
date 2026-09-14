@@ -1,3 +1,4 @@
+import { mountTouchpoint, startTouchpointRefresh } from "./touchpoint-lifecycle";
 import {
 	TOUCHPOINT_COMPONENT_V2_RUNTIME_API_VERSION,
 	TOUCHPOINT_COMPONENT_V2_SDK_VERSION,
@@ -15,13 +16,8 @@ import styles from "./TestCampaignModal.module.css";
 import {
 	emitWebTouchpointDiagnostic,
 	ensureWebTouchpointElement,
-	hasWebTouchpointCloseControl,
-	type OpenDesignTouchpointElement,
-	readWebTouchpointHostContext,
 	supportsWebTouchpointCapabilities,
-	verifyWebTouchpoint,
 	type WebTouchpointContent,
-	webTouchpointContext,
 } from "./touchpoint-component";
 import {
 	type TouchpointStaticAction,
@@ -175,10 +171,6 @@ export function readCampaignHostLocale(): string {
 		getOpenDesignHost()?.client.osLocale?.trim() ||
 		"en-US"
 	);
-}
-
-function hostTheme(): "light" | "dark" {
-	return document.documentElement.classList.contains("dark") ? "dark" : "light";
 }
 
 function testPlacementIds(deployment: TestDeployment): TestCampaignPlacement[] {
@@ -346,17 +338,6 @@ export function recordVisibleTestTouchpoint(
 		});
 }
 
-function actuallyVisible(element: HTMLElement): boolean {
-	if (document.hidden || !element.isConnected || element.hidden) return false;
-	return element.getClientRects().length > 0;
-}
-
-function afterPaint(): Promise<void> {
-	return new Promise((resolve) => {
-		requestAnimationFrame(() => resolve());
-	});
-}
-
 export type TestTouchpointMountProps = Readonly<{
 	decision: TestDecision;
 	placementKey: TestCampaignPlacement;
@@ -385,96 +366,22 @@ export function TestTouchpointMount({
 	useEffect(() => {
 		const container = containerRef.current;
 		if (!container) return;
-		let cancelled = false;
-		let verified: Awaited<ReturnType<typeof verifyWebTouchpoint>> | undefined;
-		let closeControlObserver: MutationObserver | undefined;
-		const element = document.createElement(
-			"opend-touchpoint",
-		) as OpenDesignTouchpointElement;
-		onCloseControlChange?.(null);
-		container.replaceChildren(element);
-		const mount = async () => {
-			try {
-				verified = await verifyWebTouchpoint(decision.content);
-				const context = webTouchpointContext(
-					decision.content,
-					readWebTouchpointHostContext(readCampaignHostLocale(), hostTheme()),
-				);
-				if (cancelled || !context) {
-					verified.dispose();
-					onCloseControlChange?.(false);
-					if (!cancelled)
-						emitWebTouchpointDiagnostic({
-							code: "touchpoint_locale_unsupported",
-						});
-					return;
-				}
-				await element.mount(
-					verified.entryUrl,
-					decision.content.entryDigest,
-					{ ...context, mode: "test" },
-					verified.resourceUrls,
-					new Set(decision.staticActions.map((action) => action.id)),
-					{
-						requestClose,
-						dispatchAction: async (id) => {
-							await dispatchTestCampaignAction(decision, id);
-						},
-						onDiagnostic: emitWebTouchpointDiagnostic,
-					},
-				);
-				if (cancelled) return;
-				onCloseControlChange?.(hasWebTouchpointCloseControl(element));
-				closeControlObserver = new MutationObserver(() => {
-					if (cancelled) return;
-					onCloseControlChange?.(hasWebTouchpointCloseControl(element));
-				});
-				const closeControlObserverOptions: MutationObserverInit = {
-					attributes: true,
-					attributeFilter: [
-						"aria-label",
-						"aria-disabled",
-						"aria-hidden",
-						"class",
-						"disabled",
-						"hidden",
-						"style",
-						"title",
-					],
-					childList: true,
-					characterData: true,
-					subtree: true,
-				};
-				if (element.shadowRoot)
-					closeControlObserver.observe(
-						element.shadowRoot,
-						closeControlObserverOptions,
-					);
-				const dialog = element.closest('[role="dialog"]');
-				if (dialog)
-					closeControlObserver.observe(dialog, closeControlObserverOptions);
-				setReady(true);
-				await afterPaint();
-				if (!cancelled && actuallyVisible(element))
-					onVisible(decision, placementKey);
-			} catch (error) {
-				if (cancelled) return;
-				onCloseControlChange?.(false);
-				emitWebTouchpointDiagnostic({
-					code:
-						error instanceof Error ? error.message : "touchpoint_load_failed",
-				});
-			}
-		};
-		void mount();
-		return () => {
-			cancelled = true;
-			closeControlObserver?.disconnect();
-			onCloseControlChange?.(null);
-			void element.dispose(verified?.resourceUrls).catch(() => undefined);
-			verified?.dispose();
-			container.replaceChildren();
-		};
+		setReady(false);
+		return mountTouchpoint(container, {
+			content: decision.content,
+			placementKey,
+			staticActions: decision.staticActions,
+			mode: "test",
+			locale: readCampaignHostLocale(),
+			isCurrent: () => true,
+			dispatchAction: async (id) => {
+				await dispatchTestCampaignAction(decision, id);
+			},
+			requestClose,
+			onCloseControlChange,
+			onReady: () => setReady(true),
+			onVisible: () => onVisible(decision, placementKey),
+		});
 	}, [decision, onCloseControlChange, onVisible, placementKey, requestClose]);
 	return (
 		<div
@@ -501,7 +408,8 @@ export function TestCampaignModal({
 			new URLSearchParams(window.location.search).get("cmsTestControls") ===
 				"1",
 	);
-	const deploymentsOwner = useRef<string | null | undefined>(undefined);
+	const deploymentsRef = useRef<TestDeployment[]>([]);
+	const selectionController = useRef<AbortController | null>(null);
 	const [deployments, setDeployments] = useState<TestDeployment[]>([]);
 	const [deployment, setDeployment] = useState<TestDeployment | null>(null);
 	const [context, setContext] = useState<TestContext | null>(null);
@@ -513,6 +421,7 @@ export function TestCampaignModal({
 	const selectionKeyRef = useRef("");
 
 	const clear = useCallback(() => {
+		selectionController.current?.abort();
 		++selectionGeneration.current;
 		selectionKeyRef.current = "";
 		testSessionRef.current = null;
@@ -525,56 +434,17 @@ export function TestCampaignModal({
 	useEffect(() => {
 		ensureWebTouchpointElement();
 	}, []);
-	useEffect(
-		() => () => {
-			testSessionRef.current = null;
-			clearTestRuntimeSession();
-		},
-		[],
-	);
-	useEffect(() => {
-		clear();
-		deploymentsOwner.current = undefined;
-		setDeployments([]);
-		if (!compatible) {
-			clear();
-			return;
-		}
-		let cancelled = false;
-		void fetch("/api/touchpoints/test-runtime/deployments", {
-			cache: "no-store",
-		})
-			.then((response) =>
-				response.ok
-					? (response.json() as Promise<{ deployments?: TestDeployment[] }>)
-					: { deployments: [] },
-			)
-			.then((value) => {
-				if (!cancelled) {
-					deploymentsOwner.current = sessionSubject ?? null;
-					setDeployments(
-						(value.deployments ?? []).filter(
-							(candidate) =>
-								typeof candidate.id === "string" &&
-								testPlacementIds(candidate).length > 0,
-						),
-					);
-				}
-			})
-			.catch(() => {
-				if (!cancelled) setDeployments([]);
-			});
-		return () => {
-			cancelled = true;
-		};
-	}, [clear, compatible, sessionSubject]);
 
 	const select = useCallback(
 		async (deploymentId: string, scenario: Scenario) => {
-			const selected = deployments.find(
+			const selected = deploymentsRef.current.find(
 				(candidate) => candidate.id === deploymentId,
 			);
 			const generation = ++selectionGeneration.current;
+			selectionController.current?.abort();
+			const controller = new AbortController();
+			selectionController.current = controller;
+			selectionKeyRef.current = "";
 			setDeployment(null);
 			setDecisions(new Map());
 			setContext(null);
@@ -605,6 +475,7 @@ export function TestCampaignModal({
 			try {
 				const response = await fetch("/api/touchpoints/test-runtime/context", {
 					method: "POST",
+					signal: controller.signal,
 					headers: { "content-type": "application/json" },
 					body: JSON.stringify({ deploymentId, scenario }),
 				});
@@ -644,7 +515,7 @@ export function TestCampaignModal({
 						});
 						const runtimeResponse = await fetch(
 							`/api/touchpoints/test-runtime?${query.toString()}`,
-							{ cache: "no-store" },
+							{ cache: "no-store", signal: controller.signal },
 						);
 						if (!runtimeResponse.ok) return null;
 						return {
@@ -655,6 +526,7 @@ export function TestCampaignModal({
 				);
 				if (generation !== selectionGeneration.current) return;
 				const nextDecisions = new Map<TestCampaignPlacement, TestDecision>();
+				let inactiveDecisions = 0;
 				for (const item of loaded) {
 					if (!item) continue;
 					const identityMatches = decisionMatchesSelection(
@@ -666,8 +538,10 @@ export function TestCampaignModal({
 					if (
 						identityMatches &&
 						item.decision.testContext.scheduleState !== "active"
-					)
+					) {
+						inactiveDecisions += 1;
 						continue;
+					}
 					const capabilitiesMatch = supportsWebTouchpointCapabilities(
 						item.decision.content,
 						item.decision.requiredCapabilities,
@@ -690,7 +564,7 @@ export function TestCampaignModal({
 						});
 					}
 				}
-				if (nextDecisions.size !== available.length) {
+				if (nextDecisions.size + inactiveDecisions !== available.length) {
 					selectionKeyRef.current = "";
 					// Keep the empty Test session as a fence: failed Test content must
 					// never fall back to production while the selector stays selected.
@@ -717,21 +591,98 @@ export function TestCampaignModal({
 				});
 			}
 		},
-		[clear, deployments],
+		[clear],
 	);
 
 	useEffect(() => {
-		// The API orders available Test deployments newest first. Normal clients
-		// preview that snapshot directly; clock/selection controls are opt-in.
-		if (
-			showControls ||
-			!compatible ||
-			deploymentsOwner.current !== (sessionSubject ?? null)
-		)
-			return;
-		const latest = deployments[0];
-		if (latest) void select(latest.id, "active");
-	}, [compatible, deployments, select, sessionSubject, showControls]);
+		clear();
+		deploymentsRef.current = [];
+		setDeployments([]);
+		if (!compatible) return;
+		let disposed = false;
+		let requestGeneration = 0;
+		let controller: AbortController | undefined;
+
+		// One refresh owner for every Test placement. Successful, unchanged
+		// snapshots retain their session, simulated clock, mounts and receipts.
+		const refresh = async () => {
+			const generation = ++requestGeneration;
+			controller?.abort();
+			controller = new AbortController();
+			const current = () => !disposed && generation === requestGeneration;
+			try {
+				const response = await fetch(
+					"/api/touchpoints/test-runtime/deployments",
+					{
+						cache: "no-store",
+						signal: controller.signal,
+					},
+				);
+				if (!current()) return;
+				if (!response.ok)
+					throw new Error(
+						`touchpoint_test_deployments_http_${response.status}`,
+					);
+				const value = (await response.json()) as {
+					deployments?: TestDeployment[];
+				};
+				if (!current()) return;
+				if (!Array.isArray(value.deployments))
+					throw new Error("touchpoint_test_deployments_invalid");
+				const next = value.deployments.filter(
+					(candidate) =>
+						candidate &&
+						typeof candidate.id === "string" &&
+						testPlacementIds(candidate).length > 0,
+				);
+				deploymentsRef.current = next;
+				setDeployments(next);
+				const previous = testSessionRef.current;
+				// Debug selection stays manual; normal clients follow the newest Test.
+				const selected = showControls
+					? next.find((candidate) => candidate.id === previous?.deployment.id)
+					: next[0];
+				if (!selected) {
+					if (previous) clear();
+					return;
+				}
+				if (
+					selectionKeyRef.current &&
+					previous &&
+					selected.id === previous.deployment.id &&
+					selected.snapshotHash === previous.deployment.snapshotHash &&
+					JSON.stringify(selected.snapshot) ===
+						JSON.stringify(previous.deployment.snapshot)
+				)
+					return;
+				await select(
+					selected.id,
+					showControls ? (previous?.context.scenario ?? "active") : "active",
+				);
+			} catch (error) {
+				if (
+					!current() ||
+					(error instanceof DOMException && error.name === "AbortError")
+				)
+					return;
+				// A failed fetch is not evidence of withdrawal. Keep Test isolation
+				// until a successful list response confirms removal; retry on the next tick.
+				emitWebTouchpointDiagnostic({
+					code:
+						error instanceof Error
+							? error.message
+							: "touchpoint_test_deployments_failed",
+				});
+			}
+		};
+		const stopRefresh = startTouchpointRefresh(refresh);
+		return () => {
+			disposed = true;
+			controller?.abort();
+			stopRefresh();
+			clear();
+		};
+	}, [clear, compatible, select, sessionSubject, showControls]);
 
 	if (!showControls || !compatible || deployments.length === 0) return null;
 	const active = decisions.size > 0;

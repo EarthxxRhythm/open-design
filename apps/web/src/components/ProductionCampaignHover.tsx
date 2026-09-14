@@ -1,3 +1,4 @@
+import { startTouchpointRefresh } from "./touchpoint-lifecycle";
 import { readCampaignHostLocale } from "./TestCampaignModal";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getOpenDesignHost } from "@open-design/host";
@@ -16,7 +17,6 @@ import type { TestCampaignPlacement, TestDecision } from "./TestCampaignModal";
 const ENTRY_PLACEMENT = "opend.home.hover-entry";
 const LAYER_PLACEMENT = "opend.home.hover-layer";
 const MAX_LEASE_MS = 5 * 60_000;
-const RECHECK_MS = 30_000;
 const supportedCapabilities = new Set(["hover", "static-action"]);
 type RuntimeDecision = Readonly<{ activityId: string; authorizationExpiresAt: string; touchpointDecisionId: string; deploymentId: string; endsAt: string; placementKey: string; serverTime: string; requiredCapabilities: string[]; content: WebTouchpointContent; staticActions: TouchpointStaticAction[] }>;
 type ValidDecision = Readonly<{ decision: RuntimeDecision; deadline: number; actionIds: ReadonlySet<string> }>;
@@ -92,10 +92,8 @@ export function ProductionCampaignHover({ authenticated, sessionSubject }: { aut
 				clear();
 			}
 		};
-		const wake = () => { if (!document.hidden) void decide(); };
-		void decide(); const recheck = setInterval(() => void decide(), RECHECK_MS);
-		window.addEventListener("focus", wake); window.addEventListener("online", wake); document.addEventListener("visibilitychange", wake);
-		return () => { cancelled = true; controller.abort(); if (timer) clearTimeout(timer); clearInterval(recheck); window.removeEventListener("focus", wake); window.removeEventListener("online", wake); document.removeEventListener("visibilitychange", wake); clear(); };
+		const stopRefresh = startTouchpointRefresh(decide);
+		return () => { cancelled = true; controller.abort(); if (timer) clearTimeout(timer); stopRefresh(); clear(); };
 	}, [authenticated, clear, sessionSubject, testRuntime]);
 	const onTestVisible = useCallback((decision: TestDecision, placementKey: TestCampaignPlacement) => {
 		if (testRuntime) recordVisibleTestTouchpoint(testRuntime, decision, placementKey);

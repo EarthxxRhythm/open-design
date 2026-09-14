@@ -376,6 +376,142 @@ it("rejects a decision unless both decision and content target the campaign moda
 	expect(screen.queryByTestId("campaign-custom-element")).toBeNull();
 });
 
+describe("Production campaign live refresh", () => {
+	let available: boolean;
+	let hidden: boolean;
+	const fetchMock = vi.fn(async () =>
+		available
+			? new Response(JSON.stringify(decision()), { status: 200 })
+			: new Response(null, { status: 404 }),
+	);
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+		available = false;
+		hidden = false;
+		fetchMock.mockClear();
+		vi.stubGlobal("fetch", fetchMock);
+		vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
+		(globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = {
+			client: { osLocale: "en-US", type: "desktop" },
+		};
+		vi.spyOn(touchpointComponent, "verifyWebTouchpoint").mockResolvedValue({
+			entryUrl: "blob:campaign",
+			resourceUrls: new Map(),
+			dispose: vi.fn(),
+		});
+	});
+	const tick = async (ms: number) => {
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(ms);
+		});
+	};
+	const open = async (authenticated = true) => {
+		const view = render(
+			<ProductionCampaignModal
+				authenticated={authenticated}
+				sessionSubject="poll-user"
+			/>,
+		);
+		await act(async () => {});
+		return view;
+	};
+
+	it("discovers a newly published campaign at 30 seconds without a focus event", async () => {
+		await open();
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(screen.queryByRole("dialog")).toBeNull();
+		available = true;
+		await tick(29_999);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(screen.queryByRole("dialog")).toBeNull();
+		await tick(1);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect(screen.getByRole("dialog")).toBeTruthy();
+		expect(
+			document.querySelector("opend-touchpoint")?.shadowRoot?.textContent,
+		).toContain("Verified campaign");
+	});
+
+	it("pauses polling while hidden and refreshes immediately when visible again", async () => {
+		await open();
+		hidden = true;
+		await tick(60_000);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		available = true;
+		hidden = false;
+		await act(async () => {
+			document.dispatchEvent(new Event("visibilitychange"));
+		});
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect(screen.getByRole("dialog")).toBeTruthy();
+	});
+
+	it.each(["focus", "online"])("refreshes immediately on %s", async (event) => {
+		await open();
+		available = true;
+		await act(async () => {
+			window.dispatchEvent(new Event(event));
+		});
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect(screen.getByRole("dialog")).toBeTruthy();
+	});
+
+	it("keeps an active mount and does not reopen a displayed campaign on later polls", async () => {
+		available = true;
+		await open();
+		await tick(16);
+		expect(
+			localStorage.getItem("touchpoint-displayed:v1:poll-user:campaign-1"),
+		).toBe("1");
+		const host = document.querySelector("opend-touchpoint");
+		expect(host).not.toBeNull();
+		await tick(30_000);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect(document.querySelector("opend-touchpoint")).toBe(host);
+		expect(OpenDesignTouchpointElement.prototype.mount).toHaveBeenCalledTimes(
+			1,
+		);
+		fireEvent.keyDown(document, { key: "Escape" });
+		expect(screen.queryByRole("dialog")).toBeNull();
+		await tick(60_000);
+		expect(fetchMock).toHaveBeenCalledTimes(4);
+		expect(screen.queryByRole("dialog")).toBeNull();
+	});
+
+	it("does not poll signed-out users and removes timers and wake listeners on cleanup", async () => {
+		const view = await open(false);
+		await tick(30_000);
+		expect(fetchMock).not.toHaveBeenCalled();
+		view.rerender(
+			<ProductionCampaignModal authenticated sessionSubject="poll-user" />,
+		);
+		await act(async () => {});
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		view.rerender(
+			<ProductionCampaignModal authenticated={false} sessionSubject={null} />,
+		);
+		await tick(60_000);
+		await act(async () => {
+			window.dispatchEvent(new Event("focus"));
+			window.dispatchEvent(new Event("online"));
+			document.dispatchEvent(new Event("visibilitychange"));
+		});
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		view.rerender(
+			<ProductionCampaignModal authenticated sessionSubject="poll-user" />,
+		);
+		await act(async () => {});
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		view.unmount();
+		await tick(60_000);
+		await act(async () => {
+			document.dispatchEvent(new Event("visibilitychange"));
+		});
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
+});
+
 describe("Production campaign action guard", () => {
 	it.each([500, 502, 503])(
 		"consumes an authorized action when telemetry returns %s",
@@ -741,7 +877,7 @@ describe("ProductionCampaignModal mount lifetime", () => {
 		const verified = new Promise<any>((resolve) => {
 			resolveVerified = resolve;
 		});
-		const verify = vi
+		vi
 			.spyOn(touchpointComponent, "verifyWebTouchpoint")
 			.mockReturnValue(verified);
 		const fetchMock = vi.fn(() =>

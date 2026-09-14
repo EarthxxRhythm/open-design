@@ -1,18 +1,14 @@
+import { mountTouchpoint, startTouchpointRefresh } from "./touchpoint-lifecycle";
 import { readCampaignHostLocale } from "./TestCampaignModal";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getOpenDesignHost } from "@open-design/host";
 import {
 	emitWebTouchpointDiagnostic,
 	ensureWebTouchpointElement,
-	readWebTouchpointHostContext,
 	supportsWebTouchpointCapabilities,
-	verifyWebTouchpoint,
-	webTouchpointContext,
-	type OpenDesignTouchpointElement,
 	type WebTouchpointContent,
 } from "./touchpoint-component";
 import {
-	touchpointStaticActionsMatch,
 	type TouchpointStaticAction,
 } from "./touchpoint-static-actions";
 import { dispatchProductionCampaignAction } from "./ProductionCampaignModal";
@@ -27,7 +23,6 @@ import styles from "./ProductionCampaignBadge.module.css";
 
 const PLACEMENT = "opend.home.account-badge";
 const MAX_LEASE_MS = 5 * 60_000;
-const RECHECK_MS = 30_000;
 const supportedCapabilities = new Set(["static-action"]);
 type Decision = {
 	activityId: string;
@@ -89,7 +84,6 @@ export function ProductionCampaignBadge({
 		ensureWebTouchpointElement();
 	}, []);
 	useEffect(() => {
-		const host = getOpenDesignHost();
 		const locale = readCampaignHostLocale();
 		if (testRuntime) {
 			clear();
@@ -189,22 +183,12 @@ export function ProductionCampaignBadge({
 				clear();
 			}
 		};
-		void decide();
-		const wake = () => {
-			if (!document.hidden) void decide();
-		};
-		const recheck = setInterval(() => void decide(), RECHECK_MS);
-		window.addEventListener("focus", wake);
-		window.addEventListener("online", wake);
-		document.addEventListener("visibilitychange", wake);
+		const stopRefresh = startTouchpointRefresh(decide);
 		return () => {
 			cancelled = true;
 			controller.abort();
 			if (timer) clearTimeout(timer);
-			clearInterval(recheck);
-			window.removeEventListener("focus", wake);
-			window.removeEventListener("online", wake);
-			document.removeEventListener("visibilitychange", wake);
+			stopRefresh();
 			clear();
 		};
 	}, [authenticated, sessionSubject, clear, testRuntime]);
@@ -218,111 +202,30 @@ export function ProductionCampaignBadge({
 			decision.sessionSubject !== sessionSubject
 		)
 			return;
-		let cancelled = false;
-		const mountGeneration = ++authorizationGeneration.current;
-		const current = () =>
-			!cancelled &&
-			mountGeneration === authorizationGeneration.current &&
-			authenticated &&
-			decision.sessionSubject === sessionSubject;
-		let verified: Awaited<ReturnType<typeof verifyWebTouchpoint>> | undefined;
-		const element = document.createElement(
-			"opend-touchpoint",
-		) as OpenDesignTouchpointElement;
-		let elementDisposed = false;
-		let verifiedDisposed = false;
-		const disposeElement = () => {
-			if (elementDisposed) return;
-			elementDisposed = true;
-			void element.dispose(verified?.resourceUrls).catch(() => undefined);
-		};
-		const disposeVerified = () => {
-			if (!verified || verifiedDisposed) return;
-			verifiedDisposed = true;
-			verified.dispose();
-		};
-		const dispose = () => {
-			disposeElement();
-			disposeVerified();
-		};
-		container.replaceChildren(element);
-		void (async () => {
-			try {
-				verified = await verifyWebTouchpoint(decision.content);
-				if (elementDisposed) disposeVerified();
-				if (!current()) {
-					dispose();
-					return;
-				}
-				const manifestPlacement = decision.content.manifest.placements.find(
-					(placement) => placement.key === PLACEMENT,
+		const generation = ++authorizationGeneration.current;
+		const dispose = mountTouchpoint(container, {
+			content: decision.content,
+			placementKey: PLACEMENT,
+			staticActions: decision.staticActions,
+			mode: "production",
+			locale: decision.content.locale,
+			isCurrent: () =>
+				generation === authorizationGeneration.current &&
+				decision.authorizationDeadline > Date.now(),
+			dispatchAction: async (id) => {
+				await dispatchProductionCampaignAction(
+					decision,
+					id,
+					generation,
+					() => authorizationGeneration.current,
+					decision.authorizationDeadline,
 				);
-				if (
-					!manifestPlacement ||
-					manifestPlacement.key !== PLACEMENT ||
-					!touchpointStaticActionsMatch(
-						decision.staticActions,
-						manifestPlacement.staticActions,
-					)
-				) {
-					emitWebTouchpointDiagnostic({ code: "touchpoint_decision_mismatch" });
-					dispose();
-					clear();
-					return;
-				}
-				const context = webTouchpointContext(
-					decision.content,
-					readWebTouchpointHostContext(
-						decision.content.locale,
-						document.documentElement.classList.contains("dark")
-							? "dark"
-							: "light",
-					),
-				);
-				if (!current() || !context) {
-					dispose();
-					if (current() && !context)
-						emitWebTouchpointDiagnostic({
-							code: "touchpoint_locale_unsupported",
-						});
-					return;
-				}
-				await element.mount(
-					verified.entryUrl,
-					decision.content.entryDigest,
-					{ ...context, mode: "production" },
-					verified.resourceUrls,
-					new Set(decision.staticActions.map((action) => action.id)),
-					{
-						dispatchAction: async (actionId) => {
-							await dispatchProductionCampaignAction(
-								decision,
-								actionId,
-								mountGeneration,
-								() => authorizationGeneration.current,
-								decision.authorizationDeadline,
-							);
-						},
-						onDiagnostic: emitWebTouchpointDiagnostic,
-					},
-				);
-				if (!current()) dispose();
-			} catch (error) {
-				if (current()) {
-					emitWebTouchpointDiagnostic({
-						code:
-							error instanceof Error ? error.message : "touchpoint_load_failed",
-					});
-					clear();
-				}
-				dispose();
-			}
-		})();
+			},
+			onError: () => clear(),
+		});
 		return () => {
-			cancelled = true;
 			++authorizationGeneration.current;
 			dispose();
-			container.replaceChildren();
 		};
 	}, [authenticated, decision, sessionSubject, clear]);
 

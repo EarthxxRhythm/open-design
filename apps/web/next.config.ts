@@ -171,6 +171,7 @@ export const CMS_HOST_RELEASE_INPUTS = [
   'apps/web/src/components/EntryNavRail.tsx',
   'apps/web/src/components/EntryShell.tsx',
   'apps/web/src/components/touchpoint-component.ts',
+  'apps/web/src/components/touchpoint-lifecycle.ts',
   'apps/web/src/components/touchpoint-static-actions.ts',
   'apps/web/src/components/TestCampaignModal.tsx',
   'apps/web/src/components/TestCampaignModal.module.css',
