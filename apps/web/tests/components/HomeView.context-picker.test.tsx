@@ -320,6 +320,60 @@ describe('HomeView context picker', () => {
     }));
   });
 
+  // OPEND-3085: the Home Add menu carries the same rows as the project
+  // composer's — the context actions sit flat below "Attach files" and the
+  // resource submenus follow, while the working directory keeps its own row
+  // under the input instead of a submenu group.
+  it('lists the Demo Add-menu rows on Home', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (url) => {
+      if (typeof url === 'string' && url === '/api/plugins') {
+        return new Response(JSON.stringify({ plugins: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (typeof url === 'string' && url === '/api/mcp/servers') {
+        return new Response(JSON.stringify({ servers: [], templates: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <HomeView
+        projects={[]}
+        onSubmit={() => undefined}
+        onOpenProject={() => undefined}
+        onViewAllProjects={() => undefined}
+        onBrowseRegistry={() => undefined}
+      />,
+    );
+
+    await screen.findByTestId('home-hero-input');
+    fireEvent.click(screen.getByTestId('home-hero-plus-trigger'));
+    const menu = screen.getAllByRole('menu')[0] as HTMLElement;
+    const rows = Array.from(
+      menu.querySelectorAll<HTMLElement>(
+        ':scope > .plus-menu__item, :scope > .plus-menu__submenu-row > .plus-menu__parent',
+      ),
+    ).map((row) => row.getAttribute('data-testid'));
+    expect(rows).toEqual([
+      'composer-plus-attach',
+      'composer-plus-reference-project',
+      'composer-plus-local-code',
+      'composer-plus-plugins',
+      'composer-plus-figma',
+      'composer-plus-connectors',
+      'composer-plus-mcp',
+    ]);
+    expect(screen.queryByTestId('composer-plus-working-dir')).toBeNull();
+    // The working directory stays on its own row under the input.
+    expect(screen.getByTestId('working-dir-trigger')).toBeTruthy();
+  });
+
   it('adds multiple @ plugins as context without applying or hydrating their query', async () => {
     const plugins = [
       makePlugin('chart-plugin', 'Chart Plugin'),

@@ -846,10 +846,11 @@ test('[P1] home composer plus menu opens project, local code, Figma help, and de
   // picker rather than from this menu.
   await expect(page.getByTestId('composer-plus-attach')).toBeVisible();
   await expect(page.getByTestId('composer-plus-figma')).toBeVisible();
-  // Reference-project / local-code moved to the working-dir chip's menu, so
-  // they are no longer rows of this one.
-  await expect(page.getByTestId('composer-plus-reference-project')).toHaveCount(0);
-  await expect(page.getByTestId('composer-plus-local-code')).toHaveCount(0);
+  // Reference-project / local-code sit directly under "Attach files", the
+  // same as in the project composer (OPEND-3085); the working-dir chip's menu
+  // below keeps its own copies.
+  await expect(page.getByTestId('composer-plus-reference-project')).toBeVisible();
+  await expect(page.getByTestId('composer-plus-local-code')).toBeVisible();
   // …and it does NOT carry the "查看方法" (.fig download guide) row: the menu
   // lists things to ATTACH to the message, and a help article is not one.
   await expect(page.getByTestId('composer-plus-figma-help')).toHaveCount(0);

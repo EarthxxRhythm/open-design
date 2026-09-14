@@ -374,7 +374,7 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
     onAddWorkspaceContext = () => undefined,
     onRemoveWorkspaceContext = () => undefined,
     onAddConnector = () => undefined,
-    onAddPlugin = () => undefined,
+    onAddPlugin,
     onAddMcp = () => undefined,
     onOpenPluginDetails = () => undefined,
     onOpenSkillDetails = () => undefined,
@@ -1173,11 +1173,9 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
     });
   }
 
-  // Both context actions now live in the working-dir menu (2026-08-19) —
-  // same question as the folder rows: what may the agent read besides this
-  // thread. They stay reachable when that chip is absent (a host without
-  // folder picking) by falling back to the "+" menu, so no configuration
-  // loses them.
+  // Both context actions live in the working-dir menu (2026-08-19) — same
+  // question as the folder rows: what may the agent read besides this thread —
+  // and in the Add menu, where the project composer offers them too.
   function referenceProjectAction() {
     trackHomeChatComposerClick(analytics.track, {
       page_name: 'home',
@@ -2191,7 +2189,7 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
               onSubmenuOpen={(submenu) => {
                 // Home never passes the working-dir submenu (it keeps its own
                 // footer picker), so only the resource submenus reach here.
-                if (submenu === 'toolbox' || submenu === 'workingDir') return;
+                if (submenu === 'workingDir') return;
                 trackHomeChatComposerClick(analytics.track, {
                   page_name: 'home',
                   area: 'chat_composer',
@@ -2238,7 +2236,7 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
                 });
                 pickPlugin(record);
               }}
-              onAddPlugin={() => {
+              onAddPlugin={onAddPlugin ? () => {
                 trackHomeChatComposerClick(analytics.track, {
                   page_name: 'home',
                   area: 'chat_composer',
@@ -2246,7 +2244,7 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
                   resource_kind: 'plugin',
                 });
                 onAddPlugin();
-              }}
+              } : undefined}
               skills={skillOptions}
               onPickSkill={(skill) => {
                 trackHomeChatComposerClick(analytics.track, {
@@ -2286,8 +2284,11 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
                 });
                 fileInputRef.current?.click();
               }}
-              onReferenceProject={onPickWorkingDir ? undefined : referenceProjectAction}
-              onLinkLocalCode={onPickWorkingDir ? undefined : linkLocalCodeAction}
+              // Both context actions sit in the Add menu on Home as well as
+              // in the project composer (OPEND-3085, per the Demo); the
+              // working-directory row below keeps its own copies.
+              onReferenceProject={referenceProjectAction}
+              onLinkLocalCode={linkLocalCodeAction}
               onSelectFromLibrary={() => {
                 trackHomeChatComposerClick(analytics.track, {
                   page_name: 'home',

@@ -1696,6 +1696,8 @@ export function EntryShell({
     defaultDesignSystemId,
     onSubmit: handlePluginLoopSubmit,
     onOpenProject,
+    // The Add menu's "Add plugin" row lands on the plugins page.
+    onBrowseRegistry: () => changeView('plugins'),
     onOpenIntegrations: () => openIntegrationTab('connectors'),
     onOpenMcp: () => openIntegrationTab('mcp'),
     onOpenNewProject: (tab: 'template') => {
