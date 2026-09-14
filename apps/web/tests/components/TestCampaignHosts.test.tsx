@@ -27,10 +27,8 @@ const placements = [
 	"opend.home.hover-layer",
 ] as const;
 const context = {
-	deploymentId: "deployment-four",
-	testerMemberId: "member-four",
-	scenario: "active" as const,
-	simulatedAt: "2030-01-01T00:00:00.000Z",
+	deploymentId: "deployment-1",
+	scenario: "realtime" as const,
 	updatedAt: "2030-01-01T00:00:00.000Z",
 };
 const manifest = {
@@ -72,6 +70,9 @@ function decision(placementKey: (typeof placements)[number]): TestDecision {
 				? ["static-action"]
 				: ["hover", "static-action"],
 		staticActions: [],
+		serverTime: "2030-01-01T00:00:00.000Z", authorizationExpiresAt: "2030-01-01T00:01:00.000Z",
+		startsAt: "2029-12-31T23:00:00.000Z",
+		endsAt: "2030-01-01T01:00:00.000Z",
 		testContext: { ...context, scheduleState: "active" },
 		content: {
 			id: "version-four-placement",
@@ -156,6 +157,7 @@ describe("Test decisions at the existing host touchpoints", () => {
 			},
 			context,
 			decisions,
+			isAuthorized: () => true,
 		};
 		setTestRuntimeSession(session);
 		const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {

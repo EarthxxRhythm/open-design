@@ -1,189 +1,76 @@
-import { startTouchpointRefresh } from "./touchpoint-lifecycle";
-import { readCampaignHostLocale } from "./TestCampaignModal";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { readCampaignHostLocale, recordVisibleTestTouchpoint, useTestRuntime } from "./TestCampaignModal";
+import { useCallback } from "react";
 import { getOpenDesignHost } from "@open-design/host";
-import {
-	emitWebTouchpointDiagnostic,
-	supportsWebTouchpointCapabilities,
-	type WebTouchpointContent,
-} from "./touchpoint-component";
+import { emitWebTouchpointDiagnostic, supportsWebTouchpointCapabilities, type WebTouchpointContent } from "./touchpoint-component";
 import { HoverTouchpointOverlay } from "./HoverTouchpointOverlay";
 import { dispatchProductionCampaignAction } from "./ProductionCampaignModal";
 import { touchpointStaticActionsMatch, type TouchpointStaticAction } from "./touchpoint-static-actions";
 import { emitProductionTouchpointLoadDiagnostic, loadProductionTouchpointDecision } from "./production-touchpoint-loader";
-import { dispatchTestCampaignAction, recordVisibleTestTouchpoint, useTestRuntime } from "./TestCampaignModal";
+import { resolveAuthorizationDeadline, type TouchpointLifecycleLoad, useTouchpointLifecycle } from "./touchpoint-lifecycle";
 import type { TestCampaignPlacement, TestDecision } from "./TestCampaignModal";
-
-import { requireCampaignAction } from "./touchpoint-navigation";
 
 const ENTRY_PLACEMENT = "opend.home.hover-entry";
 const LAYER_PLACEMENT = "opend.home.hover-layer";
 const MAX_LEASE_MS = 5 * 60_000;
 const supportedCapabilities = new Set(["hover", "static-action"]);
 type RuntimeDecision = Readonly<{ activityId: string; authorizationExpiresAt: string; touchpointDecisionId: string; deploymentId: string; endsAt: string; placementKey: string; serverTime: string; requiredCapabilities: string[]; content: WebTouchpointContent; staticActions: TouchpointStaticAction[] }>;
-type ValidDecision = Readonly<{ decision: RuntimeDecision; deadline: number; actionIds: ReadonlySet<string> }>;
-type ActiveHover = Readonly<{ entry: ValidDecision; layer: ValidDecision; expiresAt: number; authorizationGeneration: number; sessionSubject: string }>;
+type ValidDecision = Readonly<{ decision: RuntimeDecision; actionIds: ReadonlySet<string> }>;
+type ActiveHover = Readonly<{ entry: ValidDecision; layer: ValidDecision; sessionSubject: string }>;
 
-function validDecision(value: unknown, placementKey: string): ValidDecision | null {
+function validDecision(value: unknown, placementKey: string): { valid: ValidDecision; validForMs: number } | null {
 	if (!value || typeof value !== "object") return null;
 	const decision = value as RuntimeDecision;
-	const deadline = Math.min(Date.parse(decision.authorizationExpiresAt), Date.parse(decision.endsAt), Date.parse(decision.serverTime) + MAX_LEASE_MS);
-	if (!decision.activityId || !decision.touchpointDecisionId || !decision.deploymentId || decision.placementKey !== placementKey || decision.content?.placementKey !== placementKey || !Number.isFinite(deadline) || deadline <= Date.now()) return null;
+	const deadline = resolveAuthorizationDeadline(decision, MAX_LEASE_MS);
+	if (!decision.activityId || !decision.touchpointDecisionId || !decision.deploymentId || !decision.content?.id || decision.placementKey !== placementKey || decision.content?.placementKey !== placementKey || deadline === null || !Number.isFinite(deadline)) return null;
 	const placement = decision.content.manifest.placements.find((candidate) => candidate.key === placementKey);
 	if (!placement || !supportsWebTouchpointCapabilities(decision.content, decision.requiredCapabilities, supportedCapabilities) || !touchpointStaticActionsMatch(decision.staticActions, placement.staticActions)) return null;
-	return { decision, deadline, actionIds: new Set(placement.staticActions.map((action) => action.id)) };
+	return { valid: { decision, actionIds: new Set(placement.staticActions.map((action) => action.id)) }, validForMs: deadline - Date.parse(decision.serverTime) };
 }
 
 export function ProductionCampaignHover({ authenticated, sessionSubject }: { authenticated: boolean; sessionSubject: string | null }) {
-	const [active, setActive] = useState<ActiveHover | null>(null);
 	const testRuntime = useTestRuntime();
 	const testEntry = testRuntime?.decisions.get(ENTRY_PLACEMENT);
 	const testLayer = testRuntime?.decisions.get(LAYER_PLACEMENT);
-	const expiryRef = useRef(0);
-	const activeRef = useRef<ActiveHover | null>(null);
-	const requestGenerationRef = useRef(0);
-	const authorizationGenerationRef = useRef(0);
-	const clear = useCallback(() => { ++requestGenerationRef.current; ++authorizationGenerationRef.current; expiryRef.current = 0; activeRef.current = null; setActive(null); }, []);
-	useEffect(() => {
-		if (testRuntime) {
-			clear();
-			return;
-		}
+	const enabled = !testRuntime && authenticated && Boolean(sessionSubject) && getOpenDesignHost()?.client.type === "desktop" && Boolean(readCampaignHostLocale());
+	const load = useCallback(async (signal: AbortSignal, active: ActiveHover | null): Promise<TouchpointLifecycleLoad<ActiveHover>> => {
 		const locale = readCampaignHostLocale();
-		if (!authenticated || !sessionSubject || getOpenDesignHost()?.client.type !== "desktop" || !locale) { clear(); return; }
-		let timer: ReturnType<typeof setTimeout> | undefined;
-		let cancelled = false;
-		const controller = new AbortController();
-		const current = (requestGeneration: number) => !cancelled && requestGeneration === requestGenerationRef.current;
-		const decide = async () => {
-			const requestGeneration = ++requestGenerationRef.current;
-			try {
-				const mounted = activeRef.current;
-				const [entryLoaded, layerLoaded] = await Promise.all([
-					loadProductionTouchpointDecision(ENTRY_PLACEMENT, locale, controller.signal, mounted?.entry.decision.touchpointDecisionId),
-					loadProductionTouchpointDecision(LAYER_PLACEMENT, locale, controller.signal, mounted?.layer.decision.touchpointDecisionId),
-				]);
-				if (!current(requestGeneration)) return;
-				const matchesMounted = (loaded: typeof entryLoaded, decision: RuntimeDecision | undefined) =>
-					loaded.kind === "revoked" &&
-					decision &&
-					loaded.receipt.touchpointDecisionId === decision.touchpointDecisionId &&
-					loaded.receipt.deploymentId === decision.deploymentId &&
-					loaded.receipt.activityId === decision.activityId &&
-					loaded.receipt.contentVersionId === decision.content.id;
-				if (matchesMounted(entryLoaded, mounted?.entry.decision) || matchesMounted(layerLoaded, mounted?.layer.decision)) { clear(); return; }
-				if (entryLoaded.kind === "revoked" || layerLoaded.kind === "revoked") return;
-
-				if (entryLoaded.kind === "no-decision" || layerLoaded.kind === "no-decision") { if (!mounted) clear(); return; }
-				if (entryLoaded.kind !== "decision" || layerLoaded.kind !== "decision") return;
-				const entry = validDecision(entryLoaded.value, ENTRY_PLACEMENT); const layer = validDecision(layerLoaded.value, LAYER_PLACEMENT);
-				if (!entry || !layer || entry.decision.activityId !== layer.decision.activityId || entry.decision.deploymentId !== layer.decision.deploymentId || readCampaignHostLocale() !== locale) { clear(); return; }
-				const previous = activeRef.current;
-				const replacement = !previous || previous.entry.decision.touchpointDecisionId !== entry.decision.touchpointDecisionId || previous.layer.decision.touchpointDecisionId !== layer.decision.touchpointDecisionId;
-				if (!replacement && expiryRef.current > Date.now()) return;
-				if (timer) clearTimeout(timer);
-				const expiresAt = Math.min(entry.deadline, layer.deadline);
-				expiryRef.current = expiresAt;
-				const authorizationGeneration = replacement ? ++authorizationGenerationRef.current : previous.authorizationGeneration;
-				const nextActive = { entry, layer, expiresAt, authorizationGeneration, sessionSubject }; activeRef.current = nextActive; setActive(nextActive);
-				timer = setTimeout(() => { if (expiryRef.current === expiresAt) clear(); }, Math.max(0, expiresAt - Date.now()));
-			} catch (error) {
-				if (!current(requestGeneration) || (error instanceof DOMException && error.name === "AbortError")) return;
-				const diagnostic = emitProductionTouchpointLoadDiagnostic(error);
-				if (diagnostic) emitWebTouchpointDiagnostic(diagnostic);
-				clear();
-			}
-		};
-		const stopRefresh = startTouchpointRefresh(decide);
-		return () => { cancelled = true; controller.abort(); if (timer) clearTimeout(timer); stopRefresh(); clear(); };
-	}, [authenticated, clear, sessionSubject, testRuntime]);
+		if (!locale || !sessionSubject) return { kind: "clear" };
+		const [entryLoaded, layerLoaded] = await Promise.all([
+			loadProductionTouchpointDecision(ENTRY_PLACEMENT, locale, signal, active?.entry.decision.touchpointDecisionId),
+			loadProductionTouchpointDecision(LAYER_PLACEMENT, locale, signal, active?.layer.decision.touchpointDecisionId),
+		]);
+		const matches = (loaded: typeof entryLoaded, decision: RuntimeDecision | undefined) => loaded.kind === "revoked" && decision && loaded.receipt.touchpointDecisionId === decision.touchpointDecisionId && loaded.receipt.deploymentId === decision.deploymentId && loaded.receipt.activityId === decision.activityId && loaded.receipt.contentVersionId === decision.content.id;
+		if (matches(entryLoaded, active?.entry.decision) || matches(layerLoaded, active?.layer.decision)) return { kind: "clear" };
+		if (entryLoaded.kind === "revoked" || layerLoaded.kind === "revoked") return { kind: "retain" };
+		if (entryLoaded.kind === "no-decision" || layerLoaded.kind === "no-decision") return active ? { kind: "retain" } : { kind: "clear" };
+		if (entryLoaded.kind !== "decision" || layerLoaded.kind !== "decision") return { kind: "retain" };
+		const entry = validDecision(entryLoaded.value, ENTRY_PLACEMENT);
+		const layer = validDecision(layerLoaded.value, LAYER_PLACEMENT);
+		if (!entry || !layer || entry.valid.decision.activityId !== layer.valid.decision.activityId || entry.valid.decision.deploymentId !== layer.valid.decision.deploymentId || readCampaignHostLocale() !== locale) return { kind: "clear" };
+		return { kind: "decision", value: { entry: entry.valid, layer: layer.valid, sessionSubject }, key: `${entry.valid.decision.activityId}:${entry.valid.decision.deploymentId}:${entry.valid.decision.content.id}:${entry.valid.decision.touchpointDecisionId}:${layer.valid.decision.touchpointDecisionId}`, validForMs: Math.min(entry.validForMs, layer.validForMs) };
+	}, [sessionSubject]);
+	const onError = useCallback((error: unknown) => {
+		const diagnostic = emitProductionTouchpointLoadDiagnostic(error);
+		if (diagnostic) emitWebTouchpointDiagnostic(diagnostic);
+	}, []);
+	const lifecycle = useTouchpointLifecycle({ enabled, identity: sessionSubject, load, onError });
+	const active = lifecycle.current;
 	const onTestVisible = useCallback((decision: TestDecision, placementKey: TestCampaignPlacement) => {
 		if (testRuntime) recordVisibleTestTouchpoint(testRuntime, decision, placementKey);
 	}, [testRuntime]);
-	const onEntryVisible = useCallback(() => {
-		if (testEntry) onTestVisible(testEntry, ENTRY_PLACEMENT);
-	}, [onTestVisible, testEntry]);
-	const onLayerVisible = useCallback(() => {
-		if (testLayer) onTestVisible(testLayer, LAYER_PLACEMENT);
-	}, [onTestVisible, testLayer]);
+	const onEntryVisible = useCallback(() => { if (testEntry) onTestVisible(testEntry, ENTRY_PLACEMENT); }, [onTestVisible, testEntry]);
+	const onLayerVisible = useCallback(() => { if (testLayer) onTestVisible(testLayer, LAYER_PLACEMENT); }, [onTestVisible, testLayer]);
 	const onDiagnostic = useCallback((code: string) => emitWebTouchpointDiagnostic({ code }), []);
-  const testEntryActionIds = useMemo(
-		() => new Set(testEntry?.staticActions.map((action) => action.id)),
-		[testEntry],
-	);
-	const testLayerActionIds = useMemo(
-		() => new Set(testLayer?.staticActions.map((action) => action.id)),
-		[testLayer],
-	);
-	const dispatchEntryAction = useCallback(
-		async (actionId: string) => {
-			if (testRuntime) {
-				requireCampaignAction(
-					Boolean(authenticated && testEntry) &&
-						(await dispatchTestCampaignAction(testEntry!, actionId)),
-				);
-				return;
-			}
-			requireCampaignAction(
-				Boolean(authenticated && active) &&
-					(await dispatchProductionCampaignAction(
-						active!.entry.decision,
-						actionId,
-						active!.authorizationGeneration,
-						() => authorizationGenerationRef.current,
-						active!.expiresAt,
-					)),
-			);
-		},
-		[authenticated, testRuntime, testEntry, active],
-	);
-	const dispatchLayerAction = useCallback(
-		async (actionId: string) => {
-			if (testRuntime) {
-				requireCampaignAction(
-					Boolean(authenticated && testLayer) &&
-						(await dispatchTestCampaignAction(testLayer!, actionId)),
-				);
-				return;
-			}
-			requireCampaignAction(
-				Boolean(authenticated && active) &&
-					(await dispatchProductionCampaignAction(
-						active!.layer.decision,
-						actionId,
-						active!.authorizationGeneration,
-						() => authorizationGenerationRef.current,
-						active!.expiresAt,
-					)),
-			);
-		},
-		[authenticated, testRuntime, testLayer, active],
-	);
-	if (authenticated && testRuntime && testEntry && testLayer) {
-		return (
-			<HoverTouchpointOverlay
-				entry={testEntry.content}
-				layer={testLayer.content}
-				mode="test"
-				entryActionIds={testEntryActionIds}
-				layerActionIds={testLayerActionIds}
-				dispatchEntryAction={dispatchEntryAction}
-				dispatchLayerAction={dispatchLayerAction}
-				onEntryVisible={onEntryVisible}
-				onLayerVisible={onLayerVisible}
-				onDiagnostic={onDiagnostic}
-			/>
-		);
-	}
-	return authenticated && active?.sessionSubject === sessionSubject ? (
-		<HoverTouchpointOverlay
-			entry={active.entry.decision.content}
-			layer={active.layer.decision.content}
-			entryActionIds={active.entry.actionIds}
-			layerActionIds={active.layer.actionIds}
-			onDiagnostic={onDiagnostic}
-			dispatchEntryAction={dispatchEntryAction}
-			dispatchLayerAction={dispatchLayerAction}
-		/>
-	) : null;
+	const dispatchEntryAction = useCallback((actionId: string) => {
+		if (!active) return Promise.resolve();
+		const generation = lifecycle.generation;
+		return dispatchProductionCampaignAction(active.entry.decision, actionId, generation, () => lifecycle.isCurrent(generation) ? generation : -1, lifecycle.deadline).then(() => undefined);
+	}, [active, lifecycle.generation, lifecycle.isCurrent]);
+	const dispatchLayerAction = useCallback((actionId: string) => {
+		if (!active) return Promise.resolve();
+		const generation = lifecycle.generation;
+		return dispatchProductionCampaignAction(active.layer.decision, actionId, generation, () => lifecycle.isCurrent(generation) ? generation : -1, lifecycle.deadline).then(() => undefined);
+	}, [active, lifecycle.generation, lifecycle.isCurrent]);
+	if (authenticated && testRuntime && testEntry && testLayer) return <HoverTouchpointOverlay entry={testEntry.content} layer={testLayer.content} isAuthorized={() => testRuntime.isAuthorized()} mode="test" onEntryVisible={onEntryVisible} onLayerVisible={onLayerVisible} onDiagnostic={onDiagnostic} />;
+	return authenticated && active?.sessionSubject === sessionSubject ? <HoverTouchpointOverlay entry={active.entry.decision.content} layer={active.layer.decision.content} isAuthorized={() => lifecycle.isCurrent(lifecycle.generation)} entryActionIds={active.entry.actionIds} layerActionIds={active.layer.actionIds} onDiagnostic={onDiagnostic} dispatchEntryAction={dispatchEntryAction} dispatchLayerAction={dispatchLayerAction} /> : null;
 }
