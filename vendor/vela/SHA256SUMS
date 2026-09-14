@@ -2,3 +2,5 @@ a2f4d2f97bac0ddfe2d237401026c9b016367ce37a895f48b104f21ad25f4719  powerformer-ve
 3330ea41ca85c2d41ad5f0ac97cdc8ddcb2cf12ed09fd2f556e2644fd57836e5  powerformer-vela-cli-darwin-arm64-0.0.1-test.failure-evidence.g906ab82.tgz
 dbf8a0d20b93974eaa6ed3a5a596b18d14e00ffa1523b883256c02215768ec44  powerformer-vela-cli-0.0.1-test.harness-align.gdb5a86e.tgz
 fbd7597242c0d1e882b3d09cd19702d7b03c6159875fa7fad7e6f9cbb66e828d  powerformer-vela-cli-darwin-arm64-0.0.1-test.harness-align.gdb5a86e.tgz
+02e001a49c6ea34bf8365f2e1e64f108bed371dac43309a94db5a86297fbb88d  powerformer-vela-cli-0.0.1-test.harness-align.gdb5a86e.execfix.tgz
+7a0688c99f892afcffab34283b44d469be338f5571796dd2fee026efa4e79b1a  powerformer-vela-cli-darwin-arm64-0.0.1-test.harness-align.gdb5a86e.execfix.tgz
