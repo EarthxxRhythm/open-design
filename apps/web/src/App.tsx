@@ -5575,14 +5575,20 @@ function AppInner() {
           dockLine
         />
       )}
-      <TestCampaignModal
-        authenticated={isAmrSessionAuthenticated(amrLoginStatus)}
-        sessionSubject={amrLoginStatus?.user?.id ?? null}
-      />
-      <ProductionCampaignModal
-        authenticated={isAmrSessionAuthenticated(amrLoginStatus)}
-        sessionSubject={amrLoginStatus?.user?.id ?? null}
-      />
+      {/* Account restoration can finish while login/onboarding is still visible.
+          Keep campaign hosts out of that flow, independently of authentication. */}
+      {!(route.kind === 'home' && route.view === 'onboarding') && (
+        <>
+          <TestCampaignModal
+            authenticated={isAmrSessionAuthenticated(amrLoginStatus)}
+            sessionSubject={amrLoginStatus?.user?.id ?? null}
+          />
+          <ProductionCampaignModal
+            authenticated={isAmrSessionAuthenticated(amrLoginStatus)}
+            sessionSubject={amrLoginStatus?.user?.id ?? null}
+          />
+        </>
+      )}
       <TooltipLayer />
       <UpdateDialog />
       {/* Mounted at shell level, outside the route views, so a survey armed by
