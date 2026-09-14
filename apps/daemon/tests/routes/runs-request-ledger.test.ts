@@ -32,12 +32,40 @@ describe('individual Run request ledger route', () => {
       const address = server.address();
       if (!address || typeof address === 'string') throw new Error('missing test server address');
       const url = `http://127.0.0.1:${address.port}/api/runs/${run.id}`;
-      const response = await fetch(url);
+      const response = await fetch(`${url}?include=requestLedger`);
       expect(response.status).toBe(200);
       expect(await response.json()).toMatchObject({ id: run.id, status: 'succeeded', requestLedger: ledger });
       expect(readRunRequestLedger).toHaveBeenCalledWith(run, '/isolated-data');
       readRunRequestLedger.mockClear();
-      const denied = await fetch(url, { headers: { 'x-od-workspace-id': 'foreign-workspace', 'x-od-workspace-member-id': 'foreign-member' } });
+      const missing = await fetch(`${url}-missing?include=requestLedger`);
+      expect(missing.status).toBe(404);
+      expect(readRunRequestLedger).not.toHaveBeenCalled();
+
+      // Keep a ledger request unresolved while ordinary recovery probes complete.
+      // The deadline bounds a real HTTP regression, not a sleep for readiness.
+      let releaseLedger!: (value: typeof ledger) => void;
+      let signalStarted!: () => void;
+      const started = new Promise<void>(resolve => { signalStarted = resolve; });
+      const pending = new Promise<typeof ledger>(resolve => { releaseLedger = resolve; });
+      readRunRequestLedger.mockImplementation(() => { signalStarted(); return pending; });
+      const expanded = fetch(`${url}?include=requestLedger`);
+      try {
+        await started;
+        const probes = await Promise.all(['', '?include=unknown', '?include='].map(query =>
+          fetch(`${url}${query}`, { signal: AbortSignal.timeout(1_500) })));
+        for (const probe of probes) {
+          expect(probe.status).toBe(200);
+          const status = await probe.json();
+          expect(status).toMatchObject({ id: run.id, status: 'succeeded', deliverableValid: true });
+          expect(status).not.toHaveProperty('requestLedger');
+        }
+        expect(readRunRequestLedger).toHaveBeenCalledTimes(1);
+      } finally {
+        releaseLedger(ledger);
+        await (await expanded).json();
+      }
+      readRunRequestLedger.mockClear();
+      const denied = await fetch(`${url}?include=requestLedger`, { headers: { 'x-od-workspace-id': 'foreign-workspace', 'x-od-workspace-member-id': 'foreign-member' } });
       expect(denied.status).toBe(403);
       expect(readRunRequestLedger).not.toHaveBeenCalled();
     } finally {

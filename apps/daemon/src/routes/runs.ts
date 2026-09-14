@@ -3364,9 +3364,13 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     const run = design.runs.get(runId);
     if (!run) return sendApiError(res, 404, 'NOT_FOUND', 'run not found');
     if (!await authorizeRunProject(req, res, run, { mode: 'read' })) return;
+    // Recovery/status probes must never wait for the external ledger CLI.
+    // Evaluation consumers explicitly expand the receipt after authorization.
     const status = {
       ...statusWithStrategyTask(run),
-      requestLedger: await readRunRequestLedger(run, RUNTIME_DATA_DIR),
+      ...(req.query.include === 'requestLedger'
+        ? { requestLedger: await readRunRequestLedger(run, RUNTIME_DATA_DIR) }
+        : {}),
     };
     if (!design.runs.isTerminal(run.status)) {
       res.json(status);

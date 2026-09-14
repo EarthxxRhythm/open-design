@@ -1,10 +1,15 @@
 # Generation request ledger
 
-`GET /api/runs/:id` and `od run info <id> --json` expose an additive
-`requestLedger` receipt using `generation-request-ledger-v1`. Existing status,
-deliverable checks, and authorization remain authoritative and unchanged.
-Only terminal AMR Runs query Vela. Other runtimes and active Runs return an
-explicit incomplete receipt without starting a ledger subprocess.
+`GET /api/runs/:id?include=requestLedger` and `od run info <id> --json` expose
+an additive `requestLedger` receipt using `generation-request-ledger-v1`.
+The CLI explicitly requests this expansion for evaluation consumers. Ordinary
+`GET /api/runs/:id` status/recovery probes omit the ledger and never start or
+wait for its external subprocess, including when an expanded request is pending.
+Existing status, deliverable checks, and authorization remain authoritative.
+Only explicitly expanded terminal AMR Runs query Vela. Expanded responses for
+other runtimes and active Runs return an incomplete receipt without starting a
+ledger subprocess. Direct API evaluation consumers must send the include query;
+a missing receipt must not be interpreted as zero cost or complete capture.
 
 The daemon uses its existing `integrations/vela-command` resolver and the Run's
 frozen Workspace. Vela must provide
