@@ -1,7 +1,15 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+	act,
+	cleanup,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { I18nProvider, useI18n } from "../../src/i18n";
 type HostGlobal = typeof globalThis & { __cmsTestHost?: unknown };
 vi.mock("@open-design/host", () => ({
 	OPEN_DESIGN_HOST_VERSION: 2,
@@ -12,6 +20,7 @@ import { ProductionCampaignBadge } from "../../src/components/ProductionCampaign
 import { ProductionCampaignHover } from "../../src/components/ProductionCampaignHover";
 import { ProductionCampaignModal } from "../../src/components/ProductionCampaignModal";
 import {
+	TestCampaignModal,
 	setTestRuntimeSession,
 	clearTestRuntimeSession,
 	type TestDecision,
@@ -64,13 +73,14 @@ function decision(placementKey: (typeof placements)[number]): TestDecision {
 		manifestHash: "sha256:four-manifest",
 		placementKey,
 		requiredCapabilities:
-		placementKey === "opend.home.campaign-modal"
-			? ["close", "static-action"]
-			: placementKey === "opend.home.account-badge"
-				? ["static-action"]
-				: ["hover", "static-action"],
+			placementKey === "opend.home.campaign-modal"
+				? ["close", "static-action"]
+				: placementKey === "opend.home.account-badge"
+					? ["static-action"]
+					: ["hover", "static-action"],
 		staticActions: [],
-		serverTime: "2030-01-01T00:00:00.000Z", authorizationExpiresAt: "2030-01-01T00:01:00.000Z",
+		serverTime: "2030-01-01T00:00:00.000Z",
+		authorizationExpiresAt: "2030-01-01T00:01:00.000Z",
 		startsAt: "2029-12-31T23:00:00.000Z",
 		endsAt: "2030-01-01T01:00:00.000Z",
 		testContext: { ...context, scheduleState: "active" },
@@ -99,7 +109,13 @@ describe("Test decisions at the existing host touchpoints", () => {
 	beforeEach(() => {
 		vi.stubEnv("NEXT_PUBLIC_CMS_HOST_RELEASE", `sha256:${"a".repeat(64)}`);
 		document.documentElement.lang = "zh-CN";
-		vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+		vi.stubGlobal(
+			"ResizeObserver",
+			class {
+				observe() {}
+				disconnect() {}
+			},
+		);
 		(globalThis as HostGlobal).__cmsTestHost = {
 			version: 2,
 			client: { type: "desktop", osLocale: "en-CN" },
@@ -109,10 +125,16 @@ describe("Test decisions at the existing host touchpoints", () => {
 			resourceUrls: new Map(),
 			dispose: vi.fn(),
 		} as never);
-		vi.spyOn(OpenDesignTouchpointElement.prototype, "mount").mockImplementation(async function (this: OpenDesignTouchpointElement) {
-			this.shadowRoot?.replaceChildren(document.createTextNode("Test host content"));
-		});
-		vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue({ length: 1, item: () => null } as unknown as DOMRectList);
+		vi
+			.spyOn(OpenDesignTouchpointElement.prototype, "mount")
+			.mockImplementation(async function (this: OpenDesignTouchpointElement) {
+				this.shadowRoot?.replaceChildren(
+					document.createTextNode("Test host content"),
+				);
+			});
+		vi
+			.spyOn(HTMLElement.prototype, "getClientRects")
+			.mockReturnValue({ length: 1, item: () => null } as unknown as DOMRectList);
 	});
 	afterEach(() => {
 		clearTestRuntimeSession();
@@ -122,26 +144,127 @@ describe("Test decisions at the existing host touchpoints", () => {
 		vi.restoreAllMocks();
 		delete (globalThis as HostGlobal).__cmsTestHost;
 	});
-	it("keeps a production hover pair mounted across unrelated parent renders",async()=>{
-		vi.stubGlobal("fetch",async(url:string)=>{
-			const placement=new URL(url,"http://localhost").searchParams.get("placementKey") as (typeof placements)[number];
-			return new Response(JSON.stringify({...decision(placement),
-				touchpointDecisionId:`decision-${placement}`,
-				serverTime:new Date().toISOString(),
-				authorizationExpiresAt:new Date(Date.now()+60_000).toISOString(),
-				endsAt:new Date(Date.now()+300_000).toISOString(),
-			}));
+
+	it("switches all Test placements together when the client language changes without changing deployment", async () => {
+		const deployment = {
+			id: context.deploymentId,
+			activityId: "activity-four",
+			snapshotHash: "sha256:four-snapshot",
+			snapshot: {
+				contentVersionId: "version-four-placement",
+				manifestHash: "sha256:four-manifest",
+				artifactHash: "sha256:four-artifact",
+				placementKeys: [...placements],
+			},
+		};
+		const requests: Array<{ placement: string; locale: string }> = [];
+		const pending: Array<() => void> = [];
+		let holdJapanese = false;
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: string) => {
+				const url = new URL(input, "http://localhost");
+				if (url.pathname.endsWith("/deployments"))
+					return Response.json({ deployments: [deployment] });
+				if (url.pathname.endsWith("/context")) return Response.json(context);
+				if (url.pathname === "/api/touchpoints/test-runtime") {
+					const placement = placements.find(
+						(key) => key === url.searchParams.get("placementKey"),
+					);
+					if (!placement) throw new Error("Unexpected Test placement");
+					const locale = url.searchParams.get("locale") ?? "";
+					requests.push({ placement, locale });
+					if (holdJapanese && locale === "ja")
+						await new Promise<void>((resolve) => pending.push(resolve));
+					const value = decision(placement);
+					return Response.json({
+						...value,
+						content: {
+							...value.content,
+							locale,
+							manifest: {
+								...manifest,
+								placements: manifest.placements.map((p) => ({
+									...p,
+									locales: ["en", "ja", "zh-CN"],
+								})),
+							},
+						},
+					});
+				}
+				return Response.json(
+					{},
+					{ status: input.includes("acceptances") ? 201 : 404 },
+				);
+			}),
+		);
+		vi
+			.mocked(OpenDesignTouchpointElement.prototype.mount)
+			.mockImplementation(async function (
+				this: OpenDesignTouchpointElement,
+				_url,
+				_digest,
+				hostContext,
+			) {
+				this.shadowRoot?.replaceChildren(
+					document.createTextNode(
+						`${hostContext.placementKey}:${hostContext.locale}`,
+					),
+				);
+			});
+		function Controls() {
+			const { setLocale } = useI18n();
+			return (
+				<>
+					<button onClick={() => setLocale("ja")}>Japanese</button>
+					<button onClick={() => setLocale("zh-CN")}>Chinese</button>
+					<button onClick={() => setLocale("en")}>English</button>
+				</>
+			);
+		}
+		render(
+			<I18nProvider initial="en">
+				<Controls />
+				<TestCampaignModal authenticated sessionSubject="account-a" />
+				<ProductionCampaignModal authenticated sessionSubject="account-a" />
+				<ProductionCampaignBadge authenticated sessionSubject="account-a" />
+				<ProductionCampaignHover authenticated sessionSubject="account-a" />
+			</I18nProvider>,
+		);
+		const mountedTexts = () =>
+			[...document.querySelectorAll("opend-touchpoint")]
+				.map((element) => element.shadowRoot?.textContent)
+				.sort();
+		const expected = (locale: string) =>
+			placements.map((key) => `${key}:${locale}`).sort();
+		await waitFor(() => expect(mountedTexts()).toEqual(expected("en")));
+		fireEvent.click(screen.getByText("Japanese"));
+		await waitFor(() => expect(mountedTexts()).toEqual(expected("ja")));
+		fireEvent.click(screen.getByText("Chinese"));
+		await waitFor(() => expect(mountedTexts()).toEqual(expected("zh-CN")));
+		for (const locale of ["en", "ja", "zh-CN"])
+			expect(
+				requests
+					.filter((r) => r.locale === locale)
+					.map((r) => r.placement)
+					.sort(),
+			).toEqual([...placements].sort());
+		// A late previous-language response must not restore any stale placement.
+		holdJapanese = true;
+		fireEvent.click(screen.getByText("Japanese"));
+		await waitFor(() => expect(pending).toHaveLength(4));
+		fireEvent.click(screen.getByText("English"));
+		await waitFor(() => expect(mountedTexts()).toEqual(expected("en")));
+		await act(async () => {
+			for (const resolve of pending) resolve();
 		});
-		const {rerender}=render(<ProductionCampaignHover authenticated sessionSubject="stable-user" />);
-		await screen.findByTestId("cms-hover-overlay-root");
-		const entry=screen.getByTestId("cms-hover-overlay-root").querySelector("opend-touchpoint");
-		await waitFor(()=>expect(entry).not.toHaveAttribute("hidden"));
-		rerender(<ProductionCampaignHover authenticated sessionSubject="stable-user" />);
-		expect(OpenDesignTouchpointElement.prototype.mount).toHaveBeenCalledTimes(2);
+		expect(mountedTexts()).toEqual(expected("en"));
 	});
 
 	it("uses the selected Test session at modal, badge, and paired hover hosts without production reads", async () => {
-		const decisions = new Map(placements.map((placementKey) => [placementKey, decision(placementKey)]));
+		const decisions = new Map(
+			placements.map((placementKey) => [placementKey, decision(placementKey)]),
+		);
 		const session: TestRuntimeSession = {
 			selectionKey: "deployment-four:sha256:four-snapshot:active",
 			deployment: {
@@ -161,8 +284,11 @@ describe("Test decisions at the existing host touchpoints", () => {
 		};
 		setTestRuntimeSession(session);
 		const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
-			if (url.includes("acceptances")) return new Response(JSON.stringify({ id: "acceptance" }), { status: 201 });
-			return new Response(JSON.stringify({ error: "production_read_forbidden" }), { status: 404 });
+			if (url.includes("acceptances"))
+				return new Response(JSON.stringify({ id: "acceptance" }), { status: 201 });
+			return new Response(JSON.stringify({ error: "production_read_forbidden" }), {
+				status: 404,
+			});
 		});
 		vi.stubGlobal("fetch", fetchMock);
 		render(
@@ -175,14 +301,28 @@ describe("Test decisions at the existing host touchpoints", () => {
 		await screen.findByTestId("campaign-custom-element");
 		await screen.findByTestId("production-campaign-badge");
 		await screen.findByTestId("cms-hover-overlay-root");
-		await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => url.includes("acceptances")).length).toBe(3));
-		const entry = screen.getByTestId("cms-hover-overlay-root").querySelector("opend-touchpoint");
+		await waitFor(() =>
+			expect(
+				fetchMock.mock.calls.filter(([url]) => url.includes("acceptances")).length,
+			).toBe(3),
+		);
+		const entry = screen
+			.getByTestId("cms-hover-overlay-root")
+			.querySelector("opend-touchpoint");
 		expect(entry).not.toBeNull();
 		await waitFor(() => expect(entry).not.toHaveAttribute("hidden"));
 		fireEvent.pointerEnter(entry!);
-		await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => url.includes("acceptances")).length).toBe(4));
-		const reports = fetchMock.mock.calls.filter(([url]) => url.includes("acceptances")).map(([, init]) => JSON.parse(String(init?.body)));
-		expect(reports.map((report) => report.placementKey).sort()).toEqual([...placements].sort());
+		await waitFor(() =>
+			expect(
+				fetchMock.mock.calls.filter(([url]) => url.includes("acceptances")).length,
+			).toBe(4),
+		);
+		const reports = fetchMock.mock.calls
+			.filter(([url]) => url.includes("acceptances"))
+			.map(([, init]) => JSON.parse(String(init?.body)));
+		expect(reports.map((report) => report.placementKey).sort()).toEqual(
+			[...placements].sort(),
+		);
 		for (const report of reports) {
 			expect(report.hostCompatibility).toMatchObject({
 				version: 1,
@@ -190,12 +330,29 @@ describe("Test decisions at the existing host touchpoints", () => {
 				hostFamily: "open-design-desktop",
 				platform: "desktop",
 				hostRelease: `sha256:${"a".repeat(64)}`,
-				runtime: {kind: "web-component", apiVersion: 1, wrapperVersion: "vela-touchpoint-wrapper-v1", sdkVersion: "vela-touchpoint-sdk-v1"},
+				runtime: {
+					kind: "web-component",
+					apiVersion: 1,
+					wrapperVersion: "vela-touchpoint-wrapper-v1",
+					sdkVersion: "vela-touchpoint-sdk-v1",
+				},
 			});
-			expect(report.hostCompatibility.capabilities).toEqual(decisions.get(report.placementKey)?.requiredCapabilities);
+			expect(report.hostCompatibility.capabilities).toEqual(
+				decisions.get(report.placementKey)?.requiredCapabilities,
+			);
 		}
-		expect(fetchMock.mock.calls.some(([url]) => url.includes("production-runtime"))).toBe(false);
-		expect(screen.getByTestId("campaign-custom-element").querySelector("opend-touchpoint")).not.toBeNull();
-		expect(screen.getByTestId("production-campaign-badge").querySelector("opend-touchpoint")).not.toBeNull();
+		expect(
+			fetchMock.mock.calls.some(([url]) => url.includes("production-runtime")),
+		).toBe(false);
+		expect(
+			screen
+				.getByTestId("campaign-custom-element")
+				.querySelector("opend-touchpoint"),
+		).not.toBeNull();
+		expect(
+			screen
+				.getByTestId("production-campaign-badge")
+				.querySelector("opend-touchpoint"),
+		).not.toBeNull();
 	});
 });
