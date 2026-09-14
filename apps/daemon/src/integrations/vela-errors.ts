@@ -1,3 +1,5 @@
+import { DEFAULT_VELA_CONSOLE_ORIGIN } from './vela-console-origin.js';
+
 export type AmrAccountErrorCode =
   | 'AMR_AUTH_REQUIRED'
   | 'AMR_INSUFFICIENT_BALANCE'
@@ -26,7 +28,7 @@ export interface AmrAccountFailureSignal {
 // rehomed onto it (vela #1055) and the wallet route left the product's
 // information architecture, so this link must not send a user there.
 export const DEFAULT_AMR_RECHARGE_URL =
-  'https://open-design.ai/amr/dashboard?source=open_design';
+  `${DEFAULT_VELA_CONSOLE_ORIGIN}/dashboard?source=open_design`;
 
 const AMR_AUTH_REQUIRED_MESSAGE =
   'AMR sign-in is required. Sign in to AMR Cloud again, then retry this run.';

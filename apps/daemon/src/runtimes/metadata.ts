@@ -8,7 +8,7 @@ const AGENT_INSTALL_LINKS: Record<
     docsUrl: 'https://ampcode.com/manual',
   },
   amr: {
-    installUrl: 'https://open-design.ai/amr',
+    installUrl: 'https://open-design.ai/cloud/dashboard',
     docsUrl: 'https://github.com/nexu-io/open-design/blob/main/docs/new-agent-runtime-acp.md',
   },
   claude: {
