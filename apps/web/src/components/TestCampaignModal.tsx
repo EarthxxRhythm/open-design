@@ -8,6 +8,8 @@ import type {
 	TestRuntimeDecision,
 } from "@open-design/contracts/api/touchpointTestRuntime";
 import { getOpenDesignHost, OPEN_DESIGN_HOST_VERSION } from "@open-design/host";
+import { mountTouchpoint } from "./touchpoint-lifecycle";
+import { navigateCampaignTarget, resolveCampaignTarget, requireCampaignAction } from "./touchpoint-navigation";
 import {
 	type TouchpointLifecycleLoad,
 	resolveAuthorizationDeadline,
@@ -25,13 +27,8 @@ import styles from "./TestCampaignModal.module.css";
 import {
 	emitWebTouchpointDiagnostic,
 	ensureWebTouchpointElement,
-	hasWebTouchpointCloseControl,
-	type OpenDesignTouchpointElement,
-	readWebTouchpointHostContext,
 	supportsWebTouchpointCapabilities,
-	verifyWebTouchpoint,
 	type WebTouchpointContent,
-	webTouchpointContext,
 } from "./touchpoint-component";
 import {
 	type TouchpointStaticAction,
@@ -134,25 +131,22 @@ export function isSelectedTestCampaignDecision(
 	);
 }
 
-/** Test has no server event contract, so static targets remain default-deny. */
+/** Only the current live, authorized Test snapshot can navigate a registered action. */
 export async function dispatchTestCampaignAction(
 	decision: TestDecision,
 	actionId: string,
 ): Promise<boolean> {
-	if (
-		!decision.staticActions.some((action) => action.id === actionId) ||
-		!navigator.userActivation?.isActive
-	) {
-		emitWebTouchpointDiagnostic({
-			code: "touchpoint_action_denied",
-			detail: actionId,
-		});
-		return false;
+	const session = currentTestSession;
+	const placement = TEST_CAMPAIGN_PLACEMENTS.find((key) => key === decision.placementKey);
+	const target = resolveCampaignTarget(decision.staticActions, actionId);
+	if (session && placement && session.isAuthorized() && session.decisions.get(placement) === decision && decision.testContext.scheduleState === "active" && decisionMatchesSelection(decision, session.context, session.deployment, placement) && navigator.userActivation?.isActive && target) {
+		try {
+			if (await navigateCampaignTarget(target)) return true;
+		} catch {
+			// Report host navigation failure through the same action contract.
+		}
 	}
-	emitWebTouchpointDiagnostic({
-		code: "touchpoint_action_denied",
-		detail: actionId,
-	});
+	emitWebTouchpointDiagnostic({ code: "touchpoint_action_denied", detail: actionId });
 	return false;
 }
 
@@ -173,9 +167,6 @@ export function readCampaignHostLocale(): string {
 	);
 }
 
-function hostTheme(): "light" | "dark" {
-	return document.documentElement.classList.contains("dark") ? "dark" : "light";
-}
 
 function testPlacementIds(deployment: TestDeployment): TestCampaignPlacement[] {
 	return TEST_CAMPAIGN_PLACEMENTS.filter((key) =>
@@ -347,16 +338,6 @@ export function recordVisibleTestTouchpoint(
 		});
 }
 
-function actuallyVisible(element: HTMLElement): boolean {
-	if (document.hidden || !element.isConnected || element.hidden) return false;
-	return element.getClientRects().length > 0;
-}
-
-function afterPaint(): Promise<void> {
-	return new Promise((resolve) => {
-		requestAnimationFrame(() => resolve());
-	});
-}
 
 export type TestTouchpointMountProps = Readonly<{
 	decision: TestDecision;
@@ -388,106 +369,35 @@ export function TestTouchpointMount({
 	useEffect(() => {
 		const container = containerRef.current;
 		if (!container) return;
-		let cancelled = false;
-		let verified: Awaited<ReturnType<typeof verifyWebTouchpoint>> | undefined;
-		let closeControlObserver: MutationObserver | undefined;
-		const element = document.createElement(
-			"opend-touchpoint",
-		) as OpenDesignTouchpointElement;
-		onCloseControlChange?.(null);
-		container.replaceChildren(element);
+		setReady(false);
 		const authorized = () =>
 			isAuthorized() &&
 			currentTestSession?.isAuthorized() === true &&
 			currentTestSession.decisions.get(placementKey) === decision;
-		const mount = async () => {
-			if (!authorized()) return;
-			try {
-				verified = await verifyWebTouchpoint(decision.content);
-				const context = webTouchpointContext(
-					decision.content,
-					readWebTouchpointHostContext(readCampaignHostLocale(), hostTheme()),
-				);
-				if (cancelled || !context || !authorized()) {
-					verified.dispose();
-					onCloseControlChange?.(false);
-					if (!cancelled)
-						emitWebTouchpointDiagnostic({
-							code: "touchpoint_locale_unsupported",
-						});
-					return;
-				}
-				await element.mount(
-					verified.entryUrl,
-					decision.content.entryDigest,
-					{ ...context, mode: "test" },
-					verified.resourceUrls,
-					new Set(decision.staticActions.map((action) => action.id)),
-					{
-						requestClose,
-						dispatchAction: async (id) => {
-							await dispatchTestCampaignAction(decision, id);
-						},
-						onDiagnostic: emitWebTouchpointDiagnostic,
-					},
-				);
-				if (cancelled || !authorized()) {
-					void element.dispose(verified.resourceUrls).catch(() => undefined);
-					verified.dispose();
-					return;
-				}
-				onCloseControlChange?.(hasWebTouchpointCloseControl(element));
-				closeControlObserver = new MutationObserver(() => {
-					if (cancelled) return;
-					onCloseControlChange?.(hasWebTouchpointCloseControl(element));
-				});
-				const closeControlObserverOptions: MutationObserverInit = {
-					attributes: true,
-					attributeFilter: [
-						"aria-label",
-						"aria-disabled",
-						"aria-hidden",
-						"class",
-						"disabled",
-						"hidden",
-						"style",
-						"title",
-					],
-					childList: true,
-					characterData: true,
-					subtree: true,
-				};
-				if (element.shadowRoot)
-					closeControlObserver.observe(
-						element.shadowRoot,
-						closeControlObserverOptions,
-					);
-				const dialog = element.closest('[role="dialog"]');
-				if (dialog)
-					closeControlObserver.observe(dialog, closeControlObserverOptions);
-				setReady(true);
-				await afterPaint();
-				if (!cancelled && authorized() && actuallyVisible(element))
-					onVisible(decision, placementKey);
-			} catch (error) {
-				if (cancelled) return;
-				onCloseControlChange?.(false);
+		return mountTouchpoint(container, {
+			content: decision.content,
+			placementKey,
+			staticActions: decision.staticActions,
+			mode: "test",
+			locale: readCampaignHostLocale(),
+			isCurrent: authorized,
+			dispatchAction: async (id) => {
+				requireCampaignAction(await dispatchTestCampaignAction(decision, id));
+			},
+			requestClose,
+			onCloseControlChange,
+			onReady: () => {
+				if (authorized()) setReady(true);
+			},
+			onVisible: () => {
+				if (authorized()) onVisible(decision, placementKey);
+			},
+			onError: (error) =>
 				emitWebTouchpointDiagnostic({
-					code:
-						error instanceof Error ? error.message : "touchpoint_load_failed",
-				});
-			}
-		};
-		void mount();
-		return () => {
-			cancelled = true;
-			closeControlObserver?.disconnect();
-			onCloseControlChange?.(null);
-			void element.dispose(verified?.resourceUrls).catch(() => undefined);
-			verified?.dispose();
-			container.replaceChildren();
-		};
-	}, [decision, onCloseControlChange, onVisible, placementKey, requestClose]);
+						code: error,
+				}),
+		});
+	}, [decision, isAuthorized, onCloseControlChange, onVisible, placementKey, requestClose]);
 	return (
 		<div
 			ref={containerRef}
