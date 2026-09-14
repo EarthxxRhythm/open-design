@@ -701,12 +701,31 @@ export const amrAgentDef = {
   firstOutputTimeoutMs: 2 * 60 * 1000,
 } satisfies RuntimeAgentDef;
 
-/** Model-only reasoning may produce no stream deltas for several minutes.
+/** Reasoning may produce no stream deltas for several minutes.
  * Keep a finite wait, separate from the 30-minute whole-answer deadline.
  */
-export const AMR_DIRECT_MODEL_FIRST_OUTPUT_TIMEOUT_MS = 10 * 60 * 1000;
+export const AMR_FIRST_OUTPUT_TIMEOUT_MS = 10 * 60 * 1000;
 
-/** Preserve every harness timeout; only model-only reasoning needs a longer first-output window. */
-export function amrFirstOutputTimeoutMs(runtime: AmrRuntime | undefined, defaultMs: number | undefined): number | undefined {
-  return runtime === 'none' ? AMR_DIRECT_MODEL_FIRST_OUTPUT_TIMEOUT_MS : defaultMs;
+/** @deprecated Kept as the previous name for the same value. */
+export const AMR_DIRECT_MODEL_FIRST_OUTPUT_TIMEOUT_MS = AMR_FIRST_OUTPUT_TIMEOUT_MS;
+
+/**
+ * Every AMR runtime waits on the same provider, so they share one first-output
+ * budget.
+ *
+ * This used to hand the longer window to `none` alone, on the reading that only
+ * model-only reasoning goes silent for minutes. A harness does not make the
+ * provider answer sooner — it adds spawning the CLI, loading or re-seeding the
+ * session, and replaying a transcript on top of the identical wait — so giving
+ * it a fifth of the model-only budget bounded the wrong thing. The harness
+ * evaluation measured it: `none` finished 45 of 45 deepseek cases with no
+ * stall, while Claude, OpenCode and DSH lost the heaviest prompts to
+ * "stalled without emitting a first output for 120s", every one of them with
+ * ttft 0 — the provider had simply not started answering yet.
+ *
+ * The 30-minute inactivity watchdog still bounds a genuinely hung run, and
+ * OD_CHAT_RUN_FIRST_OUTPUT_TIMEOUT_MS still overrides this per daemon.
+ */
+export function amrFirstOutputTimeoutMs(_runtime: AmrRuntime | undefined, _defaultMs: number | undefined): number | undefined {
+  return AMR_FIRST_OUTPUT_TIMEOUT_MS;
 }

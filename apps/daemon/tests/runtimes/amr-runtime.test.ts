@@ -24,9 +24,13 @@ it.each(['codex', 'claude', 'dsh', 'none'] as const)('passes %s through and keep
   expect(agentSessionStorageKey('amr', runtime)).toBe(`amr:${runtime}`);
 });
 
-it('extends the first-output window only for model-only calls', () => {
-  expect(amrFirstOutputTimeoutMs('none', 120_000)).toBe(600_000);
-  for (const runtime of ['opencode', 'pi', 'codex', 'claude', 'dsh', undefined] as const) {
-    expect(amrFirstOutputTimeoutMs(runtime, 120_000)).toBe(120_000);
+// Every AMR runtime waits on the same provider before the first token, and a
+// harness adds its own spawn/resume/replay on top of that wait rather than
+// shortening it. The old split gave the harnesses a fifth of the model-only
+// budget, which cost the harness evaluation its heaviest prompts to a
+// "stalled without emitting a first output for 120s" with ttft 0.
+it('gives every AMR runtime the same first-output window', () => {
+  for (const runtime of ['none', 'opencode', 'pi', 'codex', 'claude', 'dsh', undefined] as const) {
+    expect(amrFirstOutputTimeoutMs(runtime, 120_000)).toBe(600_000);
   }
 });
