@@ -1,5 +1,4 @@
 import { createCodexTurnUsage } from '../../observability/codex-turn-usage.js';
-import { evidenceMode } from '../../observability/eval-context.js';
 /** @module agent-protocol/codex-app-server/normalize
  *
  * Translates codex `app-server` JSON-RPC notifications into the OpenDesign
@@ -557,7 +556,7 @@ export function createCodexAppServerNormalizer(
     if (cacheWrite !== undefined) usage.cached_write_tokens = cacheWrite;
     if (totalTokens !== undefined) usage.total_tokens = totalTokens;
     if (Object.keys(usage).length === 0) return;
-    emit({ type: 'usage', usage, ...(evidenceMode(process.env.OPEN_DESIGN_EVAL_CONTRACT_V2_MODE) !== 'off' ? { usageScope: 'sessionCumulative', evaluationTurnUsage: evaluationUsage.add(str(params.turnId), tokenUsage) } : {}) });
+    emit({ type: 'usage', usage, usageScope: 'sessionCumulative', evaluationTurnUsage: evaluationUsage.add(str(params.turnId), tokenUsage) });
     emitThinkingTokens(reasoning);
   }
 

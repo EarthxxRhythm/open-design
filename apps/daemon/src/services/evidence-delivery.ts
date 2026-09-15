@@ -156,8 +156,12 @@ export function mergeObjectUploadReceipts(previous: TraceObjectUploadManifests |
   return result;
 }
 
+export const taskObjectDeliveryEnabled = (mode: string | undefined): boolean => mode === undefined || evidenceMode(mode) === 'send';
+
 export async function drainEvidence(dataDir: string, fetchImpl?: typeof fetch): Promise<void> {
-  if (evidenceMode(process.env.OPEN_DESIGN_OBJECT_OUTBOX_MODE) !== 'send') return;
+  // Task content is part of ordinary consented telemetry. Keep an explicit
+  // off/observe kill switch without requiring an acceptance-only enable flag.
+  if (!taskObjectDeliveryEnabled(process.env.OPEN_DESIGN_OBJECT_OUTBOX_MODE)) return;
   const cfg = await readAppConfig(dataDir);
   if (cfg.telemetry?.metrics !== true || cfg.telemetry.content !== true) return;
   const sink = readRunTelemetrySinkConfig(process.env, agentCliEnvForAgent(cfg.agentCliEnv, 'amr'));

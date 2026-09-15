@@ -1740,6 +1740,8 @@ function safeQualityManifestEntry(
  * local-path masking, and never admits raw provider attributes.
  */
 export function buildSafeRunQualityProjectionV1(input: {
+  /** Object snapshots keep complete policy-redacted content; transport still enforces its object size cap. */
+  contentStorage?: 'object';
   prefs: TelemetryPrefs;
   messageOutput?: string;
   errorMessage?: string;
@@ -1759,7 +1761,7 @@ export function buildSafeRunQualityProjectionV1(input: {
 }): SafeRunQualityV1 | undefined {
   const wantsContent = input.prefs.metrics === true && input.prefs.content === true;
   const output = wantsContent
-    ? safeQualityText(input.messageOutput, OUTPUT_MAX_BYTES)
+    ? safeQualityText(input.messageOutput, input.contentStorage === 'object' ? Infinity : OUTPUT_MAX_BYTES)
     : undefined;
   const errorMessage = safeQualityText(input.errorMessage, OUTPUT_MAX_BYTES);
   const error = errorMessage || input.errorCode || input.failure
@@ -1779,16 +1781,16 @@ export function buildSafeRunQualityProjectionV1(input: {
           : {}),
       }
     : undefined;
-  const tools = wantsContent ? input.tools?.slice(0, 256).map((tool) => {
+  const tools = wantsContent ? input.tools?.slice(0, input.contentStorage === 'object' ? undefined : 256).map((tool) => {
     const safeInput = safeQualityText(
       traceSafeToolPayload(tool.name, 'input',
         tool.input === undefined ? undefined : redactSecrets(tool.input)),
-      TOOL_INPUT_MAX_BYTES,
+      input.contentStorage === 'object' ? Infinity : TOOL_INPUT_MAX_BYTES,
     );
     const safeOutput = safeQualityText(
       traceSafeToolPayload(tool.name, 'output',
         tool.output === undefined ? undefined : redactSecrets(tool.output)),
-      TOOL_OUTPUT_MAX_BYTES,
+      input.contentStorage === 'object' ? Infinity : TOOL_OUTPUT_MAX_BYTES,
     );
     return {
       callHash: createHash('sha256').update(tool.id, 'utf8').digest('hex'),

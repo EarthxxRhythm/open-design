@@ -1,5 +1,5 @@
 import { codexTurnUsageFromEvents } from './observability/codex-turn-usage.js';
-import { enqueueObjectEvidence, inheritFrozenAttachments, readObjectEvidence, enqueueFeedbackEvidence, drainEvidence } from './services/evidence-delivery.js';
+import { enqueueObjectEvidence, taskObjectDeliveryEnabled, inheritFrozenAttachments, readObjectEvidence, enqueueFeedbackEvidence, drainEvidence } from './services/evidence-delivery.js';
 import { attachmentContext, buildEvalContext, evidenceMode } from './observability/eval-context.js';
 // Daemon ↔ langfuse-trace bridge.
 //
@@ -38,6 +38,7 @@ import { listMessages } from './db.js';
 import {
   deriveLangfuseDeliveryState,
   buildSafeRunQualityProjectionV1,
+  buildTracePayload,
   readFeedbackTelemetrySinkConfig,
   readTaskTelemetrySinkConfig,
   readRunTelemetrySinkConfig,
@@ -63,7 +64,7 @@ import {
   shouldFullyRedactToolPayload,
   toolPayloadRedactionPlaceholder,
 } from './langfuse-trace.js';
-import type { PromptStackTelemetry } from './prompt-telemetry.js';
+import { redactPromptText, type PromptStackTelemetry } from './prompt-telemetry.js';
 import { redactSecrets } from './redact.js';
 import {
   hasExplicitRequestedModelForAnalytics,
@@ -148,6 +149,9 @@ export interface DaemonRunRecord {
 }
 
 export interface BuildSafeRunQualityProjectionFromDaemonOpts {
+  exactPrompt?: { text: string; stage: string; sha256: string; utf8Bytes: number };
+  captureObjects?: boolean;
+  onTraceProjection?: (projection: { input?: unknown; output?: unknown; metadata: Record<string, unknown> }) => void;
   db: unknown;
   dataDir: string;
   run: SafeRunQualityDaemonRunRecord;
@@ -160,7 +164,7 @@ export interface BuildSafeRunQualityProjectionFromDaemonOpts {
 }
 
 /** Minimal durable Run surface required to rebuild the Task-safe projection. */
-export interface SafeRunQualityDaemonRunRecord {
+export interface SafeRunQualityDaemonRunRecord extends Pick<DaemonRunRecord, 'model' | 'resolvedModelId' | 'reasoning' | 'skillId' | 'designSystemId' | 'designSystemDigest' | 'designSystemSelectionSource' | 'promptCache' | 'clientType' | 'preflightAgentCliVersion' | 'strategyRolloutDecision' | 'retryAttemptCount' | 'retryFinalResult' | 'retrySuppressedReason' | 'retryOriginalFailure'> {
   id: string;
   projectId: string | null;
   conversationId: string | null;
@@ -462,7 +466,7 @@ export function projectDeliverableSyntaxTelemetry(
 }
 
 function turnInfoFromRun(
-  run: DaemonRunRecord,
+  run: Pick<DaemonRunRecord, 'model' | 'resolvedModelId' | 'reasoning' | 'skillId' | 'designSystemId' | 'designSystemDigest' | 'designSystemSelectionSource' | 'promptCache'>,
   agentReportedModel: string | null,
 ): TurnInfo | undefined {
   const turn: TurnInfo = {};
@@ -1317,7 +1321,7 @@ function normalizeStatus(s: string): ReportContext['run']['status'] {
 export async function buildSafeRunQualityProjectionFromDaemon(
   opts: BuildSafeRunQualityProjectionFromDaemonOpts,
 ): Promise<SafeRunQualityV1 | undefined> {
-  if (opts.prefs.metrics !== true || opts.prefs.content !== true) return undefined;
+  if (opts.prefs.metrics !== true) return undefined;
   const { db, dataDir, run } = opts;
   let messageContent = '';
   let resultDeliveryState: unknown;
@@ -1336,7 +1340,7 @@ export async function buildSafeRunQualityProjectionFromDaemon(
       const message = assistantIndex >= 0 ? messages[assistantIndex] : undefined;
       if (message) {
         resultDeliveryState = message.resultDeliveryState;
-        if (opts.onEvaluationContext && opts.prefs.artifactManifest === true) {
+        if (opts.prefs.artifactManifest === true) {
           evaluationAttachments = attachmentContext(messages, assistantIndex, run.projectId ?? '');
         }
         messageContent = typeof message.content === 'string' ? message.content : '';
@@ -1362,7 +1366,26 @@ export async function buildSafeRunQualityProjectionFromDaemon(
     attachmentsRaw,
     traceObjectFilesRaw,
   });
+  const completeQuality = buildSafeRunQualityProjectionV1({
+    prefs: opts.prefs, contentStorage: 'object', messageOutput: messageContent,
+    tools: collectToolCalls(run.events, run.createdAt, run.updatedAt),
+  });
+  const redactedPrompt = opts.exactPrompt ? redactPromptText(opts.exactPrompt.text) : undefined;
+  const runEvidence = opts.prefs.content === true ? JSON.stringify({
+    schema: 'open-design.run-evidence/v1', runId: run.id, taskTraceId: opts.taskTraceId,
+    projectId: run.projectId, conversationId: run.conversationId,
+    input: redactPromptText(run.userPrompt ?? ''), output: completeQuality?.result?.output?.text ?? '',
+    tools: completeQuality?.tools ?? [],
+    ...(opts.exactPrompt && redactedPrompt !== undefined ? { prompt: {
+      boundary: 'hostComposed', stage: opts.exactPrompt.stage, availability: 'exact',
+      redactedContent: redactedPrompt, redacted: true, truncated: false,
+      sha256: createHash('sha256').update(redactedPrompt, 'utf8').digest('hex'),
+      bytes: Buffer.byteLength(redactedPrompt, 'utf8'),
+      sourceSha256: opts.exactPrompt.sha256, sourceBytes: opts.exactPrompt.utf8Bytes,
+    } } : {}),
+  }) : undefined;
   const objectOptions = {
+    ...(runEvidence !== undefined ? { runEvidence } : {}),
     installationId: opts.installationId ?? null,
     projectId: run.projectId ?? '',
     runId: run.id,
@@ -1379,7 +1402,8 @@ export async function buildSafeRunQualityProjectionFromDaemon(
     ...(opts.env ? { env: opts.env } : {}),
     ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
   };
-  const captureTaskObjects = opts.taskTraceId && evidenceMode((opts.env ?? process.env).OPEN_DESIGN_OBJECT_OUTBOX_MODE) === 'send';
+  const objectMode = (opts.env ?? process.env).OPEN_DESIGN_OBJECT_OUTBOX_MODE;
+  const captureTaskObjects = opts.taskTraceId && opts.captureObjects !== false && taskObjectDeliveryEnabled(objectMode);
   let frozen = captureTaskObjects ? await readObjectEvidence(dataDir, run.id) : undefined;
   if (captureTaskObjects && !frozen && ['succeeded', 'failed', 'canceled'].includes(run.status)) {
     const captured = await freezeTraceObjectSources({ ...objectOptions, prompt: redactSecrets(objectOptions.prompt) });
@@ -1448,6 +1472,52 @@ export async function buildSafeRunQualityProjectionFromDaemon(
     firstTokenSeen: Boolean(run.analyticsTelemetry?.firstTokenAt),
   });
   const deliverableSyntax = projectDeliverableSyntaxTelemetry(run);
+  if (opts.onTraceProjection) {
+    const analytics = scanRunEventsForUsageAnalytics(run.events, run.resolvedModelId ?? run.model, 0);
+    const turnUsage = run.agentId === 'codex' ? codexTurnUsageFromEvents(run.events) : null;
+    const usage = turnUsage
+      ? { inputTokens: turnUsage.input, inputTokensEffective: turnUsage.input, outputTokens: turnUsage.output, totalTokens: turnUsage.total }
+      : run.agentId === 'codex' ? undefined : messageUsageFromAnalytics(analytics);
+    const context: ReportContext = {
+      installationId: opts.installationId ?? null, projectId: run.projectId ?? '',
+      conversationId: run.conversationId ?? '', ...(run.agentId ? { agentId: run.agentId } : {}),
+      prefs: opts.prefs,
+      run: { runId: run.id, status, startedAt: run.createdAt, endedAt: run.updatedAt,
+        ...(error ? { error } : {}), ...(errorCode ? { errorCode } : {}), ...(failure ? { failure } : {}),
+        ...(stderr ? { stderr } : {}), ...(stdout ? { stdout } : {}), diagnostics,
+        timings: summarizeRunTimingAnalytics({ runCreatedAt: run.createdAt, runUpdatedAt: run.updatedAt,
+          analyticsCapturedAt: run.updatedAt, events: run.events, ...(run.analyticsTelemetry ? { telemetry: run.analyticsTelemetry } : {}) }),
+        retryAttemptCount: run.retryAttemptCount ?? 0,
+        ...(run.retryFinalResult ? { retryFinalResult: run.retryFinalResult } : {}),
+        ...(run.retrySuppressedReason ? { retrySuppressedReason: run.retrySuppressedReason } : {}),
+        ...(run.retryOriginalFailure ? { retryOriginalFailure: run.retryOriginalFailure } : {}),
+      },
+      message: { messageId: run.assistantMessageId ?? '', prompt: redactPromptText(run.userPrompt ?? ''), output: messageContent, ...(usage ? { usage } : {}) },
+      eventsSummary: summarizeEvents(run.events, Math.max(0, run.updatedAt - run.createdAt)),
+      artifacts: summarizeProducedFiles(traceObjectFilesRaw),
+      attachmentManifest: manifests.attachmentManifest, artifactManifest: manifests.artifactManifest,
+      ...(manifests.inputTextSnapshotManifest ? { inputTextSnapshotManifest: manifests.inputTextSnapshotManifest } : {}),
+      manifestCompleteness: manifests.completeness,
+      traceObjectSummary: buildTraceObjectSummary({ traceObjectFilesRaw, uploaded: manifests }),
+      ...(turnInfoFromRun(run, analytics.agent_reported_model) ? { turn: turnInfoFromRun(run, analytics.agent_reported_model)! } : {}),
+      runtime: { ...getRuntimeInfo(null), ...getDetectedRuntimeVersions(run.agentId),
+        ...(run.clientType ? { clientType: run.clientType } : {}),
+        ...(run.preflightAgentCliVersion ? { agentCliVersion: run.preflightAgentCliVersion } : {}),
+      },
+      ...(run.strategyRolloutDecision ? { strategyRolloutDecision: run.strategyRolloutDecision } : {}),
+      ...(run.promptTelemetry ? { promptTelemetry: run.promptTelemetry } : {}),
+      ...(deliverableSyntax ? { deliverableSyntax } : {}),
+    };
+    const event = buildTracePayload(context)[0] as { body: { input?: unknown; output?: unknown; metadata: Record<string, unknown> } };
+    opts.onTraceProjection({ input: event.body.input, output: event.body.output, metadata: {
+      ...event.body.metadata,
+      provider_reported_usage: analytics,
+      provider_reported_usage_scope: run.agentId === 'codex' ? 'provider_session' : 'provider_run',
+      input_truncated: Buffer.byteLength(context.message.prompt) > 64 * 1024,
+      output_truncated: completeQuality?.result?.output?.text !== event.body.output,
+      ...(opts.prefs.content === true ? { promptStack: run.promptTelemetry } : {}),
+    } });
+  }
   if (opts.onEvaluationContext) {
     const evaluationUsage = messageUsageFromAnalytics(scanRunEventsForUsageAnalytics(run.events, undefined, 0));
     opts.onEvaluationContext(buildEvalContext({
@@ -1850,7 +1920,7 @@ export async function reportRunFeedbackFromDaemon(
     customReason: opts.customReason,
     ...(opts.scoreMetadata ? { metadata: opts.scoreMetadata } : {}),
   };
-  if (evidenceMode(process.env.OPEN_DESIGN_OBJECT_OUTBOX_MODE) === 'send') {
+  if (evidenceMode(process.env.OPEN_DESIGN_OBJECT_OUTBOX_MODE) === 'send' || (ctx.traceId && taskObjectDeliveryEnabled(process.env.OPEN_DESIGN_OBJECT_OUTBOX_MODE))) {
     const queued = await enqueueFeedbackEvidence(opts.dataDir, { ...ctx, customReason: redactSecrets(ctx.customReason), ...(ctx.metadata ? { metadata: { ...ctx.metadata, customReason: redactSecrets(ctx.customReason) } } : {}) });
     if (queued === 'capacity_exceeded') return { status: 'accepted', deliveryStatus: 'unavailable', reason: 'outbox_capacity_exceeded' };
     void drainEvidence(opts.dataDir, opts.fetchImpl).catch(() => console.warn('[evidence-outbox] delivery_pass_failed'));

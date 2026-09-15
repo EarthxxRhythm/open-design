@@ -7917,10 +7917,10 @@ export async function startServer({
       if (run.assistantMessageId) {
         const messageTelemetry = getMessageTelemetryFinalizationState(db, run.assistantMessageId);
         // An empty canceled assistant can be marked finalized by the UI without
-        // ever claiming a Task delivery. In v2, let the durable Run/Task gates in
+        // ever claiming a Task delivery. For Task-owned Runs, let the durable gates in
         // reportFinalizedMessage decide whether delivery is already owned.
         if (messageTelemetry.finalizedAt !== null
-          && process.env.OPEN_DESIGN_EVAL_CONTRACT_V2_MODE !== 'send') return;
+          && !getStrategyTaskExecutionByRunId(db, run.id)) return;
       }
       reportFinalizedMessage(
         {

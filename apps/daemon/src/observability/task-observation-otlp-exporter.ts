@@ -201,6 +201,10 @@ function taskTraceAttributes(
   );
   return attributes([
     ['langfuse.trace.name', 'open-design-strategy-task'],
+    ['langfuse.trace.input', jsonString(aggregate.traceProjection?.input)],
+    ['langfuse.trace.output', jsonString(aggregate.traceProjection?.output)],
+    ...Object.entries(aggregate.traceProjection?.metadata ?? {}).map(([key, value]) =>
+      [`langfuse.trace.metadata.${key}`, typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' ? value : jsonString(value)] as const),
     ['langfuse.session.id', aggregate.root.conversationId],
     ['user.id', context?.installationId ?? undefined],
     ['langfuse.version', context?.appVersion ?? aggregate.root.strategyVersion],

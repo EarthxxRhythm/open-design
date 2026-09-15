@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { projectTaskTrace } from './task-trace-projection.js';
 
 import {
   NORMALIZED_AGENT_OBSERVATION_V1_SCHEMA,
@@ -150,6 +151,7 @@ function distinctRuntimeVersions(
 }
 
 export interface StrategyTaskObservationAggregateV1 {
+  traceProjection?: ReturnType<typeof projectTaskTrace>;
   schema: 'open-design.strategy-task-observation/v1';
   root: StrategyTaskObservationRootV1;
   observations: NormalizedAgentObservationV1[];
@@ -1096,6 +1098,7 @@ export function buildLegacyTaskObservationPayload(
     });
   };
   pushEvent('trace-create', {
+    ...(aggregate.traceProjection ? { input: aggregate.traceProjection.input, output: aggregate.traceProjection.output } : {}),
     id: traceId,
     name: 'open-design-strategy-task',
     sessionId: aggregate.root.conversationId,
@@ -1110,13 +1113,14 @@ export function buildLegacyTaskObservationPayload(
         }
       : {}),
     metadata: {
+      ...aggregate.traceProjection?.metadata,
       ...(aggregate.evaluation ? {
         eval_context_v2: aggregate.evaluation.context,
         eval_context_v2_runs: aggregate.evaluation.runs,
         status: aggregate.evaluation.context.productOutcome.runStatus,
-        success: aggregate.evaluation.context.evaluationOutcome === 'failed' ? false : undefined,
-        artifact_manifest: aggregate.evaluation.context.artifacts.entries,
-        manifest_completeness: aggregate.evaluation.context.completeness.status,
+        success: aggregate.evaluation.context.evaluationOutcome === 'failed' ? false : aggregate.evaluation.context.productOutcome.runStatus === 'succeeded',
+        artifact_manifest: aggregate.traceProjection?.metadata.artifact_manifest ?? aggregate.evaluation.context.artifacts.entries,
+        manifest_completeness: aggregate.traceProjection?.metadata.manifest_completeness ?? aggregate.evaluation.context.completeness.status,
       } : {}),
       schema: aggregate.schema,
       taskExecutionId: aggregate.root.taskExecutionId,

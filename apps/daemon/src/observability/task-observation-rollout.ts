@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto';
+import { taskRunUsage, projectTaskTrace, type TaskRunTraceProjection } from './task-trace-projection.js';
+import { getConversation } from '../db.js';
+import { redactPromptText } from '../prompt-telemetry.js';
 import { evidenceMode, type EvalContextV2 } from './eval-context.js';
 
 import {
@@ -478,17 +481,19 @@ async function taskAggregate(
     installationId?: string | null;
     appVersionInfo?: { version: string; channel: string; packaged: boolean } | null;
   },
+  sendObjects = false,
 ): Promise<StrategyTaskObservationAggregateV1> {
   const evaluationMode = evidenceMode((options.env ?? process.env).OPEN_DESIGN_EVAL_CONTRACT_V2_MODE);
   const evaluations = new Map<string, EvalContextV2>();
+  const traceProjections = new Map<string, TaskRunTraceProjection>();
   const observationGroups = await Promise.all(task.runs.map(async (mapping) => {
     const run = options.getRun(mapping.runId);
     if (!run) return [];
-    const usage = scanRunEventsForUsageAnalytics(
+    const usage = taskRunUsage(run.agentId, run.events, scanRunEventsForUsageAnalytics(
       run.events,
       run.resolvedModelId ?? run.model,
       0,
-    );
+    ));
     const timing = summarizeRunTimingAnalytics({
       runCreatedAt: run.createdAt,
       runUpdatedAt: run.updatedAt,
@@ -518,6 +523,7 @@ async function taskAggregate(
           dataDir: options.dataDir,
           run: {
             ...run,
+            model: run.model ?? '',
             projectId: task.projectId,
             conversationId: task.conversationId,
             assistantMessageId: run.assistantMessageId ?? null,
@@ -529,7 +535,10 @@ async function taskAggregate(
             events: run.events.map((event, index) => ({ id: index + 1, ...event })),
           },
           prefs: telemetry.prefs,
-          ...(evaluationMode === 'send' ? { taskTraceId: `strategy-task:${task.taskExecutionId}` } : {}),
+          exactPrompt: { ...mapping.finalText, stage: mapping.inputStage },
+          onTraceProjection: projection => traceProjections.set(run.id, { runId: run.id, ...projection }),
+          taskTraceId: `strategy-task:${task.taskExecutionId}`,
+          captureObjects: sendObjects,
           ...(evaluationMode !== 'off' ? { onEvaluationContext: (context: EvalContextV2) => { evaluations.set(run.id, context); } } : {}),
           ...(telemetry.installationId !== undefined
             ? { installationId: telemetry.installationId }
@@ -626,6 +635,14 @@ async function taskAggregate(
     const context = evaluations.get(mapping.runId);
     return context ? [{ runId: mapping.runId, context }] : [];
   });
+  aggregate.traceProjection = projectTaskTrace(task.runs.flatMap(mapping => {
+    const projection = traceProjections.get(mapping.runId);
+    return projection ? [projection] : [];
+  }), Math.max(0, aggregate.root.updatedAt - aggregate.root.createdAt));
+  if (aggregate.traceProjection && telemetry.prefs.content === true) {
+    const conversation = getConversation(options.db, task.conversationId);
+    if (conversation?.title) aggregate.traceProjection.metadata.sessionTitle = redactPromptText(conversation.title);
+  }
   if (runs.length) {
     const failure = runs.find(run => run.context.evaluationOutcome === 'failed');
     const selected = failure ?? runs.at(-1)!;
@@ -1254,7 +1271,7 @@ export function createTaskObservationRolloutService(
     let sink: RunTelemetrySinkConfig | null = null;
     let exportContext: TaskObservationExportContextV1 | undefined;
     try {
-      aggregate = await taskAggregate(task, options, telemetry);
+      aggregate = await taskAggregate(task, options, telemetry, true);
       recordAggregate(task.taskExecutionId, aggregate);
       sink = effectiveSink();
       const appVersionInfo = runAppVersionInfoForTask(task, options)

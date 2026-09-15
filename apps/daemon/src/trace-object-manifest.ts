@@ -34,6 +34,7 @@ export interface TraceObjectUploadManifests {
 }
 
 export interface TraceObjectSource {
+  redacted?: boolean;
   sourcePathHash?: string;
   objectClass: ObjectClass;
   id: string;
@@ -48,6 +49,8 @@ export interface TraceObjectSource {
 }
 
 export interface BuildTraceObjectManifestsOptions {
+  /** Already policy-redacted complete Run evidence, frozen with the other Run objects. */
+  runEvidence?: string;
   installationId: string | null;
   projectId: string;
   runId: string;
@@ -222,7 +225,7 @@ function manifestBase(
     ...(source.sizeBytes !== undefined ? { size_bytes: source.sizeBytes } : {}),
     mime_type: source.mime,
     ...(extension ? { extension } : {}),
-    redacted: false,
+    redacted: source.redacted === true,
     truncated: source.truncated === true,
     stored_in_open_design: false,
     retention_policy: 'observability_90d' as const,
@@ -595,6 +598,16 @@ async function collectSources(
     });
   }
 
+  if (opts.prefs.content === true && opts.runEvidence !== undefined) {
+    const body = Buffer.from(opts.runEvidence, 'utf8');
+    sources.push({
+      objectClass: 'input_text_snapshot', id: objectId('evidence', `${opts.runId}:${sha256(body)}`),
+      filename: 'run-evidence.json', mime: 'application/json', type: 'text',
+      ...(body.byteLength <= config.objectMaxBytes && (opts.snapshotMaxBytes === undefined || snapshotBytes + body.byteLength <= opts.snapshotMaxBytes)
+        ? { body } : { reason: 'object_too_large' }),
+      sizeBytes: body.byteLength, source: 'user_prompt', redacted: true, truncated: false,
+    });
+  }
   return sources;
 }
 
