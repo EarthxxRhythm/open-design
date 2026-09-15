@@ -122,14 +122,15 @@ async function seedBalanceFailure(page: Page, locale: 'en' | 'zh-CN') {
 
 async function expectActionsContained(
   card: Locator,
-  primaryAction: Locator,
-  retryAction: Locator,
-  options: { sameRow?: boolean } = {},
+  actionLabels: string[],
 ) {
-  await expect(primaryAction).toBeVisible();
-  await expect(retryAction).toBeVisible();
-  await primaryAction.click({ trial: true });
-  await retryAction.click({ trial: true });
+  const footer = card.locator('[data-user-action-footer="true"]');
+  await expect(footer.getByRole('button')).toHaveText(actionLabels);
+  for (const name of actionLabels) {
+    const action = footer.getByRole('button', { name, exact: true });
+    await expect(action).toBeVisible();
+    await action.click({ trial: true });
+  }
 
   const layout = await card.evaluate((element) => {
     // `RunErrorCard` 把动作直接排在 `[data-user-action-footer]` 这一层。
@@ -158,6 +159,7 @@ async function expectActionsContained(
           left: rect.left,
           right: rect.right,
           top: rect.top,
+          bottom: rect.bottom,
           width: rect.width,
           height: rect.height,
         };
@@ -172,22 +174,22 @@ async function expectActionsContained(
   expect(layout.actionScrollWidth).toBeLessThanOrEqual(layout.actionClientWidth);
   expect(layout.actionLeft).toBeGreaterThanOrEqual(layout.cardLeft);
   expect(layout.actionRight).toBeLessThanOrEqual(layout.cardRight);
-  // 四颗:常驻的〔联系支持〕〔导出日志〕+ 这一档的主动作 + 重试。
-  // 前两颗不挑失败类型(产品 2026-08-26 裁决),所以它们也在这条窄面板守卫里。
-  expect(layout.buttons).toHaveLength(4);
+  // OPEND-2807/G16: Contact + Export + Retry for a failed Cloud run.
+  // Balance-specific actions and Switch to Cloud do not belong on this card.
+  expect(layout.buttons).toHaveLength(3);
   for (const button of layout.buttons) {
     expect(button.width).toBeGreaterThan(0);
     expect(button.height).toBeGreaterThan(0);
     expect(button.left).toBeGreaterThanOrEqual(layout.cardLeft);
     expect(button.right).toBeLessThanOrEqual(layout.cardRight);
   }
-  if (options.sameRow) {
-    // 按**这两颗具体的按钮**比,不按下标 —— 动作行会换行,下标不再等于「那一对」。
-    const [primaryBox, retryBox] = await Promise.all([
-      primaryAction.boundingBox(),
-      retryAction.boundingBox(),
-    ]);
-    expect(primaryBox?.y).toBe(retryBox?.y);
+  // The actual narrow-card layout stacks the three actions without overlap.
+  for (let index = 1; index < layout.buttons.length; index += 1) {
+    const previous = layout.buttons[index - 1];
+    const current = layout.buttons[index];
+    expect(current.top).toBeGreaterThanOrEqual(previous.bottom);
+    expect(current.left).toBe(previous.left);
+    expect(current.right).toBe(previous.right);
   }
 }
 
@@ -195,23 +197,12 @@ test('[P1] zh-CN balance recovery actions stay inside a narrow ChatPane', async 
   await seedBalanceFailure(page, 'zh-CN');
 
   const card = runErrorCard(page);
-  const recharge = card.getByRole('button', { name: '充值' });
-  const retry = card.getByRole('button', { name: '重试' });
-  await expectActionsContained(card, recharge, retry, { sameRow: true });
+  await expectActionsContained(card, ['联系我们', '导出日志', '重试']);
 });
 
-test('[P1] expanded English balance actions stay inside a narrow ChatPane', async ({ page }) => {
+test('[P1] English balance recovery actions stay inside a narrow ChatPane', async ({ page }) => {
   await seedBalanceFailure(page, 'en');
 
   const card = runErrorCard(page);
-  const recharge = card.getByRole('button', { name: 'Top up' });
-  await expect(recharge).toBeVisible({ timeout: T.long });
-  await recharge.evaluate((button) => {
-    button.textContent = 'Top up OpenDesign Cloud balance';
-  });
-  const expandedRecharge = card.getByRole('button', {
-    name: 'Top up OpenDesign Cloud balance',
-  });
-  const retry = card.getByRole('button', { name: 'Retry' });
-  await expectActionsContained(card, expandedRecharge, retry);
+  await expectActionsContained(card, ['Contact us', 'Export logs', 'Retry']);
 });
