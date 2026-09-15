@@ -1521,7 +1521,7 @@ export function EntryTopRightCluster({
       {accountInRail
         ? createPortal(
             <div className="entry-nav-rail__account-dock">
-              <RailSocialRow page={page} dimensions={workspaceDimensions} variant="dock" />
+              <RailSocialRow page={page} dimensions={workspaceDimensions} />
               <div
                 ref={accountContainerRef}
                 className={`entry-nav-rail__account${accountOpen ? ' is-menu-open' : ''}`}
@@ -1860,26 +1860,23 @@ function XMark({ size }: { size: number }) {
 }
 
 /**
- * Community / contact links (Discord / X / mail).
+ * Community / contact links (Discord / X / mail), icon only (OPEND-3180).
  *
- * Two homes, one row: the signed-out rail keeps it in the footer as compact
- * icon buttons (`footer`), and the signed-in account dock stacks it directly
- * above the identity row with a label beside each glyph (`dock`, per product:
- * 左边图标，右边文本 — the dock CSS spreads the three across the row and drops
- * the labels once the rail gets too narrow for them).
+ * One row, two homes: the signed-in account dock stacks it directly above
+ * the identity row, and the signed-out rail renders the same row in its local
+ * dock. The glyph is all a sighted user sees — the name lives on
+ * `aria-label` and rides the shared `.od-tooltip` layer on hover, so the icon
+ * still explains itself without a label beside it.
  */
 function RailSocialRow({
   page,
   dimensions,
-  variant = 'footer',
 }: {
   page: TrackingWorkspacePage;
   dimensions: ReturnType<typeof workspaceAnalyticsDimensions>;
-  variant?: 'footer' | 'dock';
 }) {
   const { t, locale } = useI18n();
   const analytics = useAnalytics();
-  const dock = variant === 'dock';
   // The rail sits on the leading edge, so tooltips open away from it —
   // right in LTR, left once RTL moves the whole rail to the right edge.
   // Without the flip the bubble would be clamped against the viewport
@@ -1892,17 +1889,12 @@ function RailSocialRow({
   const communityLabel = t('entry.discordAria');
   const xLabel = t('entry.xAria');
   const mailLabel = t('entry.mailAria');
-  const rowClass = dock ? 'entry-nav-rail__menu-social' : 'entry-nav-rail__social';
-  const btnClass = dock
-    ? 'entry-nav-rail__menu-social-btn'
-    : 'entry-nav-rail__social-btn od-tooltip';
-  // The dock names each link inline, so the bubble is redundant there; a
-  // native title still covers the narrow-rail state where the label hides.
-  const hint = (label: string) =>
-    dock
-      ? { title: label }
-      : { 'data-tooltip': label, 'data-tooltip-placement': tooltipPlacement };
-  const glyph = dock ? 16 : 15;
+  const btnClass = 'entry-nav-rail__menu-social-btn od-tooltip';
+  const hint = (label: string) => ({
+    'data-tooltip': label,
+    'data-tooltip-placement': tooltipPlacement,
+  });
+  const glyph = 16;
 
   function track(element: AccountMenuClickProps['element']) {
     trackAccountMenuClick(analytics.track, {
@@ -1914,7 +1906,7 @@ function RailSocialRow({
   }
 
   return (
-    <div className={rowClass} data-testid="entry-nav-rail-social">
+    <div className="entry-nav-rail__menu-social" data-testid="entry-nav-rail-social">
       <a
         className={btnClass}
         href={DISCORD_URL}
@@ -1925,7 +1917,6 @@ function RailSocialRow({
         onClick={() => track('discord')}
       >
         <Icon name="discord" size={glyph} />
-        {dock ? <span className="entry-nav-rail__menu-social-label">Discord</span> : null}
       </a>
       <a
         className={btnClass}
@@ -1936,7 +1927,6 @@ function RailSocialRow({
         onClick={() => track('twitter')}
       >
         <XMark size={glyph} />
-        {dock ? <span className="entry-nav-rail__menu-social-label">X</span> : null}
       </a>
       <a
         className={btnClass}
@@ -1946,9 +1936,6 @@ function RailSocialRow({
         onClick={() => track('email')}
       >
         <Icon name="mail" size={glyph} />
-        {dock ? (
-          <span className="entry-nav-rail__menu-social-label">{t('entry.socialMail')}</span>
-        ) : null}
       </a>
     </div>
   );
@@ -2669,7 +2656,7 @@ export function EntryNavRail({
             className="entry-nav-rail__account-dock entry-nav-rail__account-dock--local"
             data-testid="entry-nav-local-account-dock"
           >
-            <RailSocialRow page={analyticsPage} dimensions={workspaceDimensions} variant="dock" />
+            <RailSocialRow page={analyticsPage} dimensions={workspaceDimensions} />
             <div className="entry-nav-rail__account">
               <button
                 type="button"

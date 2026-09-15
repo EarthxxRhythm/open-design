@@ -1130,7 +1130,6 @@ export interface Dict {
   'entry.xAria': string;
   'entry.mailAria': string;
   /** Label beside the mail glyph in the rail's account dock social row. */
-  'entry.socialMail': string;
   'entry.accountSettings': string;
   'chat.collapsePane': string;
   'collabPresence.ariaOne': string;

@@ -771,7 +771,6 @@ export const zhTW: Dict = {
   "entry.discordOnlineLabel": "{count} 在線",
   "entry.xAria": "追蹤 @OpenDesignHQ，掌握新功能",
   "entry.mailAria": "有問題？寫信給我們",
-  "entry.socialMail": "郵件",
   "entry.accountSettings": "設定",
   "chat.collapsePane": "收起對話欄",
   "collabPresence.ariaOne": "1 位協作者在線",

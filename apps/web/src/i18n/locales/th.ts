@@ -764,7 +764,6 @@ export const th: Dict = {
   'entry.discordOnlineLabel': 'ออนไลน์ {count} คน',
   'entry.xAria': 'ติดตาม @OpenDesignHQ เพื่อดูฟีเจอร์ใหม่',
   'entry.mailAria': 'มีคำถาม? ส่งอีเมลถึงเรา',
-  'entry.socialMail': 'อีเมล',
   'entry.accountSettings': 'การตั้งค่า',
   'chat.collapsePane': 'ย่อแผงสนทนา',
   'collabPresence.ariaOne': '1 collaborator online',

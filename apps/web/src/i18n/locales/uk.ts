@@ -764,7 +764,6 @@ export const uk: Dict = {
   'entry.discordOnlineLabel': '{count} онлайн',
   'entry.xAria': 'Стежте за @OpenDesignHQ, щоб дізнаватися новини',
   'entry.mailAria': 'Є питання? Напишіть нам',
-  'entry.socialMail': 'Пошта',
   'entry.accountSettings': 'Налаштування',
   'chat.collapsePane': 'Згорнути панель розмови',
   'collabPresence.ariaOne': '1 collaborator online',

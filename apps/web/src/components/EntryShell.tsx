@@ -2062,6 +2062,7 @@ export function EntryShell({
                     onOpen={(id) => onOpenProject(id)}
                     onViewAll={() => {}}
                     onDelete={onDeleteProject}
+                    onDuplicate={onDuplicateProject}
                     onRename={onRenameProject}
                   />
                 </div>
@@ -2101,6 +2102,7 @@ export function EntryShell({
                     onOpen={handleOpenAllProjects}
                     onViewAll={() => {}}
                     onDelete={onDeleteProject}
+                    onDuplicate={onDuplicateProject}
                     onRename={onRenameProject}
                     canAssignInviteRoles={workspaceContext?.permissions.canInviteMembers === true}
                     canManageProjectCollection={workspaceContext?.permissions.canShareProjects === true}

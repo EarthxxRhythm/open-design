@@ -764,7 +764,6 @@ export const hu: Dict = {
   'entry.discordOnlineLabel': '{count} online',
   'entry.xAria': 'Kövesd az @OpenDesignHQ-t az újdonságokért',
   'entry.mailAria': 'Kérdésed van? Írj nekünk e-mailt',
-  'entry.socialMail': 'E-mail',
   'entry.accountSettings': 'Beállítások',
   'chat.collapsePane': 'Beszélgetéspanel összecsukása',
   'collabPresence.ariaOne': '1 collaborator online',

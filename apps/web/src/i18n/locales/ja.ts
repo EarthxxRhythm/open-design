@@ -764,7 +764,6 @@ export const ja: Dict = {
   'entry.discordOnlineLabel': '{count} 人がオンライン',
   'entry.xAria': '@OpenDesignHQ をフォローして最新情報をチェック',
   'entry.mailAria': 'ご質問はメールでどうぞ',
-  'entry.socialMail': 'メール',
   'entry.accountSettings': '設定',
   'chat.collapsePane': '会話パネルを折りたたむ',
   'collabPresence.ariaOne': '1 collaborator online',

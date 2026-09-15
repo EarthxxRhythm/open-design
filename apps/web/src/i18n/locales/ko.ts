@@ -764,7 +764,6 @@ export const ko: Dict = {
   'entry.discordOnlineLabel': '{count}명 온라인',
   'entry.xAria': '@OpenDesignHQ 팔로우하고 새 소식 받기',
   'entry.mailAria': '궁금한 점은 이메일로 문의하기',
-  'entry.socialMail': '이메일',
   'entry.accountSettings': '설정',
   'chat.collapsePane': '대화 패널 접기',
   'collabPresence.ariaOne': '1 collaborator online',

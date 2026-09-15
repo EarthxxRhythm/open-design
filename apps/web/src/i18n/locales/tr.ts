@@ -764,7 +764,6 @@ export const tr: Dict = {
   'entry.discordOnlineLabel': '{count} çevrimiçi',
   'entry.xAria': 'Yenilikler için @OpenDesignHQ hesabını takip et',
   'entry.mailAria': 'Sorunuz mu var? Bize e-posta gönderin',
-  'entry.socialMail': 'E-posta',
   'entry.accountSettings': 'Ayarlar',
   'chat.collapsePane': 'Konuşma panelini daralt',
   'collabPresence.ariaOne': '1 collaborator online',
