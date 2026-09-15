@@ -27,7 +27,6 @@ async function seedCloudRunFailure(page: Page, locale: 'en' | 'zh-CN') {
   await page.addInitScript((nextLocale) => {
     window.localStorage.setItem('open-design:locale', nextLocale);
     window.localStorage.setItem('open-design:locale-source', 'manual');
-    window.localStorage.setItem('open-design.project.chatPanelWidth', '320');
   }, locale);
   await routeAgents(page, [AMR_AGENT]);
   await page.route('**/api/skills', (route) => route.fulfill({ json: { skills: [] } }));
@@ -117,9 +116,20 @@ async function seedCloudRunFailure(page: Page, locale: 'en' | 'zh-CN') {
   await gotoProject(page, projectId);
   const split = page.locator('.split');
   await expect(split).toBeVisible({ timeout: T.long });
-  await split.evaluate((element) => {
-    (element as HTMLElement).style.setProperty('--project-chat-panel-width', '320px');
+  const resizeHandle = page.getByRole('separator', {
+    name: locale === 'zh-CN' ? '调整聊天面板大小' : 'Resize chat panel',
+    exact: true,
   });
+  await expect(resizeHandle).toBeVisible();
+  await resizeHandle.press('Home');
+  await expect(resizeHandle).toHaveAttribute('aria-valuemin', /^\d+$/);
+  const minimumWidth = (await resizeHandle.getAttribute('aria-valuemin'))!;
+  expect(Number(minimumWidth)).toBeGreaterThan(0);
+  await expect(resizeHandle).toHaveAttribute('aria-valuenow', minimumWidth);
+  await expect.poll(async () => {
+    const bounds = await split.locator('.split-chat-slot').boundingBox();
+    return Math.round(bounds?.width ?? 0);
+  }).toBe(Number(minimumWidth));
 }
 
 async function expectActionsContained(
@@ -145,6 +155,7 @@ async function expectActionsContained(
       ? Array.from(actions.querySelectorAll<HTMLElement>('button'))
       : [];
     const cardRect = element.getBoundingClientRect();
+    const slotRect = element.closest('.split-chat-slot')?.getBoundingClientRect();
     const actionRect = actions?.getBoundingClientRect() ?? null;
     return {
       cardClientWidth: element.clientWidth,
@@ -155,6 +166,9 @@ async function expectActionsContained(
       actionRight: actionRect?.right ?? -1,
       cardLeft: cardRect.left,
       cardRight: cardRect.right,
+      slotLeft: slotRect?.left ?? -1,
+      slotRight: slotRect?.right ?? -1,
+      slotWidth: slotRect?.width ?? -1,
       buttons: buttons.map((button) => {
         const rect = button.getBoundingClientRect();
         return {
@@ -169,9 +183,12 @@ async function expectActionsContained(
     };
   });
 
-  // The 320px split leaves 274px of content width inside the real error card.
-  // Pin that geometry so a wider test viewport cannot hide this regression.
-  expect(layout.cardClientWidth).toBe(274);
+  // Home reached the product's advertised minimum, confirmed by the actual
+  // slot above. Measure containment without forcing an unreachable CSS width.
+  expect(layout.cardClientWidth).toBeGreaterThan(0);
+  expect(layout.cardClientWidth).toBeLessThanOrEqual(layout.slotWidth);
+  expect(layout.cardLeft).toBeGreaterThanOrEqual(layout.slotLeft);
+  expect(layout.cardRight).toBeLessThanOrEqual(layout.slotRight);
   expect(layout.cardScrollWidth).toBe(layout.cardClientWidth);
   expect(layout.actionScrollWidth).toBeLessThanOrEqual(layout.actionClientWidth);
   expect(layout.actionLeft).toBeGreaterThanOrEqual(layout.cardLeft);
