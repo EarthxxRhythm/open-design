@@ -70,6 +70,15 @@ Admin 排期输入和展示固定使用北京时间 `Asia/Shanghai`（UTC+08:00�
 
 OpenDesign 实施位置：`touchpoint-lifecycle.ts` 统一拥有 30 秒 polling、请求超时、服务器相对授权期限、开始边界重新 GET、页面恢复/可见性、请求取消及代际隔离。各宿主的数据适配器只获取和验证响应；生产继续调用 `loadProductionTouchpointDecision`，Test 在选择作用域创建 context 并获取 placements。相同 immutable decision 的正常 polling 续期保留挂载身份，不重复展示/验收。授权到期撤下内容，不自行将服务器 active 状态改为 ended。
 
+### Test deployment 目录发现（OPEND-3172）
+
+“唯一共享生命周期”指展示授权与挂载的 owner，不代表 deployment 目录只能在初始化读取。目录发现由 `test-deployment-selection.ts` 独立拥有：前台每 30 秒读取目录，focus、online、pageshow 和恢复可见时立即刷新；单次请求 10 秒超时，单飞并取消过期请求。空目录、未开始和已结束的选中活动均不能终止目录发现。
+
+- 普通客户端沿用服务端最新优先的目录顺序选择第一个受支持 deployment；调试模式保留人工选择，不自动抢选。目录不提供排期授权，未来活动只能在 realtime decision 验证后展示。
+- 相同 deployment 与快照保留原 selection 对象，不能因新 JSON 对象重建 adapter、context 或挂载。替换、快照变化和成功目录确认移除才改变选择；目录请求失败、超时、格式错误不能被当成空目录，也不能延长原展示授权。
+- 账号变化、卸载和页面隐藏取消旧目录请求，迟到结果不得覆盖新选择。目录选择只输入现有 Test adapter；context、decision、开始边界、续期和到期仍由原共享生命周期负责，不在目录层复制展示时钟。
+- 目录刷新不发布临时空 Test session；切换期间由现有未授权 Test session 保持 Test/Production 隔离。旧授权不能随着目录发现或重试被恢复。
+
 ### 生产展示授权约束：必须原样保留上限
 
 生产不是“活动未结束就能一直展示”。共享的 `resolveAuthorizationDeadline` 为生产保留有效截止：
