@@ -862,6 +862,7 @@ export const uk: Dict = {
   'home.createTimedOut': 'Підготовка проєкту перевищила ліміт часу й не розпочалася. Надішліть ще раз.',
   'home.bundledScenarioMissing': 'Bundled scenario "{scenarioId}" is not installed. Reinstall the daemon to restore the default plugin set.',
   "entry.cloudCalloutBody": "Увійдіть, щоб використовувати OpenDesign Cloud і співпрацювати в хмарі",
+  "entry.localAccountName": "Локальний режим",
   "entry.cloudCalloutDismissAria": "Закрити повідомлення OpenDesign Cloud",
   'entry.workspaceLockedNote': 'This workspace is locked. Restore billing to resume editing shared projects.',
   'entry.workspaceLockedRecover': 'Restore access',

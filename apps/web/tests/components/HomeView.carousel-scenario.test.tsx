@@ -168,7 +168,6 @@ describe('HomeView one-click create from a scene-specific carousel line', () => 
         projects={[]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 

@@ -47,7 +47,6 @@ function renderHomeWithRecommendation() {
         projects={[] as never}
         onSubmit={() => undefined}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
         recommendation={recommendation}
         onRecommendationStart={() => true}
         onRecommendationDismiss={() => undefined}

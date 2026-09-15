@@ -1705,6 +1705,12 @@ export async function listProjectRuns(
  * it silently returns `[]` there. Asking per project id takes the route's
  * authorized branch instead and actually works.
  *
+ * Without a workspace context the request carries no Workspace headers: that
+ * is the local CLI / BYOK shell asking about an unbound local project, which
+ * the route serves through its headerless branch (OPEND-3140). A bound
+ * project asked about headerlessly is filtered to its non-AMR runs by the
+ * daemon, never refused, so a local row can only under-report, not error.
+ *
  * Returns `null` when the project is unreadable or the daemon is unreachable,
  * so a caller can tell "no runs" apart from "could not ask".
  */

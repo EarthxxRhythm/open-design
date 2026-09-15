@@ -474,34 +474,40 @@ test('[P1] entry top navigation matches the current home tab structure', async (
   await expect(page.getByTestId('home-hero-plugin-presets')).toHaveCount(0);
 });
 
-test('[P1] home view exposes the redesigned hero, recent projects, and starters', async ({ page }) => {
+test('[P1] home view exposes the redesigned hero, rail recent projects, and the 项目 page', async ({ page }) => {
   await createProject(page, 'Home structure recent project');
   await gotoEntryHome(page);
 
   const home = page.getByTestId('entry-view-home');
-  await expect(page.getByTestId('recent-projects-strip')).toBeVisible();
+  // OPEND-3140: Home carries no recent-projects grid on the local branch
+  // either — the rail's 最近项目 section lists the catalogue.
+  await expect(page.getByTestId('recent-projects-strip')).toHaveCount(0);
+  await expect(home.locator('.recent-projects')).toHaveCount(0);
   await expect(home.getByTestId('home-hero-type-pills')).toBeVisible();
   await expect(page.getByTestId('home-hero')).toBeVisible();
   await expect(page.getByTestId('entry-nav-home')).toHaveAttribute('aria-current', 'page');
+  await ensureRailOpen(page);
+  await expect(
+    page.getByTestId('entry-nav-recent-item').filter({ hasText: 'Home structure recent project' }),
+  ).toBeVisible();
 
-  // NOTE: /projects currently has no UI entry. #5517 dropped the rail's
-  // Projects destination, and Home passes `heading` to RecentProjectsStrip,
-  // which flips it into the full-page-grid header that omits the
-  // `recent-projects-view-all` button — so `HomeView.onViewAllProjects` is
-  // wired but unreachable. Drive the route directly until an entry returns.
-  await page.goto('/projects', { waitUntil: 'domcontentloaded' });
-  await page.getByText('Loading OpenDesign…').waitFor({ state: 'hidden', timeout: T.long });
-  await expect(page).toHaveURL(/\/projects$/);
-  await expect(page.getByTestId('entry-view-projects')).toBeVisible();
+  // The rail's 项目 item opens the browsable catalogue with its controls.
+  await page.getByTestId('entry-nav-drafts').click();
+  await expect(page).toHaveURL(/\/drafts$/);
+  await expect(page.getByTestId('recent-projects-strip')).toBeVisible();
+  await expect(
+    page.getByTestId('recent-projects-strip').getByText('Home structure recent project', { exact: true }),
+  ).toBeVisible();
 });
 
-test('[P0] @critical recent projects strip opens a project card from Home', async ({ page }) => {
+test('[P0] @critical the rail\'s recent projects open a project from Home', async ({ page }) => {
   const created = await createProject(page, 'Recent project entry point');
   await gotoEntryHome(page);
+  await ensureRailOpen(page);
 
-  const recentStrip = page.getByTestId('recent-projects-strip');
-  await expect(recentStrip).toBeVisible();
-  await recentStrip.locator(`[data-project-id="${created.project.id}"]`).click();
+  const row = page.getByTestId('entry-nav-recent-item').filter({ hasText: 'Recent project entry point' });
+  await expect(row).toBeVisible();
+  await row.click();
   await expect(page).toHaveURL(new RegExp(`/projects/${created.project.id}`));
 });
 

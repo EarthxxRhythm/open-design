@@ -1534,8 +1534,8 @@ async function leaveProjectForEntry(page: Page) {
 
 async function gotoEntryHome(page: Page) {
   // Hold until the async projects list settles: its late resolution re-renders
-  // the home hero (recent-projects strip mounting), which keeps controls like
-  // the shortcuts trigger unstable under CI timing. Arm before navigating.
+  // the home hero (the rail's 最近项目 rows mounting), which keeps controls
+  // like the shortcuts trigger unstable under CI timing. Arm before navigating.
   const projectsSettled = page
     .waitForResponse(
       (response) =>

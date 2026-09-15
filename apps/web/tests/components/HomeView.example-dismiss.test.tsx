@@ -206,7 +206,6 @@ function renderHome(onSubmit: SubmitSpy) {
       projects={[]}
       onSubmit={onSubmit}
       onOpenProject={() => undefined}
-      onViewAllProjects={() => undefined}
     />,
   );
 }

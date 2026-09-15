@@ -26,6 +26,10 @@ test('[P2] captures the projects page surface', async ({ page }) => {
       await teamProjectsNav.click();
       await expect(page.getByRole('heading', { name: /all projects|全部项目/i })).toBeVisible();
     } else {
+      // The local shell's 项目 destination (OPEND-3140): the same page a
+      // personal workspace's 项目 item opens, listing every local project.
+      await page.getByTestId('entry-nav-drafts').click();
+      await expect(page).toHaveURL(/\/drafts$/);
       await expect(page.getByTestId('recent-projects-strip')).toBeVisible();
       await expect(page.getByText('Launchpad dashboard').first()).toBeVisible();
     }
@@ -53,6 +57,10 @@ test('[P2] captures the projects kanban surface', async ({ page }) => {
       await teamProjectsNav.click();
       await expect(page.getByRole('heading', { name: /all projects|全部项目/i })).toBeVisible();
     } else {
+      // The local shell's 项目 destination (OPEND-3140): the same page a
+      // personal workspace's 项目 item opens, listing every local project.
+      await page.getByTestId('entry-nav-drafts').click();
+      await expect(page).toHaveURL(/\/drafts$/);
       await expect(page.getByTestId('recent-projects-strip')).toBeVisible();
       await expect(page.getByText('Launchpad dashboard').first()).toBeVisible();
     }

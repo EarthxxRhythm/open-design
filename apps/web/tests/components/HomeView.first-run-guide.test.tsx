@@ -48,7 +48,6 @@ function renderHome(projects: unknown[] = []) {
         projects={projects as never}
         onSubmit={() => undefined}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />
     </I18nProvider>,
   );
@@ -105,7 +104,6 @@ describe('Home first-run guide trail', () => {
           projectsLoading
           onSubmit={() => undefined}
           onOpenProject={() => undefined}
-          onViewAllProjects={() => undefined}
         />
       </I18nProvider>,
     );
@@ -126,7 +124,6 @@ describe('Home first-run guide trail', () => {
           projectsLoading
           onSubmit={() => undefined}
           onOpenProject={() => undefined}
-          onViewAllProjects={() => undefined}
         />
       </I18nProvider>,
     );
@@ -145,7 +142,6 @@ describe('Home first-run guide trail', () => {
           projectsLoading={false}
           onSubmit={() => undefined}
           onOpenProject={() => undefined}
-          onViewAllProjects={() => undefined}
         />
       </I18nProvider>,
     );

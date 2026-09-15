@@ -1086,9 +1086,11 @@ export function EntryShell({
   }
   // Workspace-only destinations. Personal and team workspaces both use these;
   // signed-out/local state falls back to home once the context has resolved.
-  // `community` is allowed in both states, so it is not guarded.
+  // `community` is allowed in both states, so it is not guarded, and neither
+  // is `drafts` any more (OPEND-3140): without a workspace it is the local
+  // project list — `buildDraftsList` folds to every local project — and the
+  // rail's 项目 item opens it on both branches.
   const isWorkspaceOnlyView =
-    view === 'drafts' ||
     view === 'all-projects' ||
     view === 'members' ||
     view === 'board' ||
@@ -1836,10 +1838,6 @@ export function EntryShell({
               <HomeView
                 {...homeViewProps}
                 isActive={view === 'home'}
-                onViewAllProjects={() => changeView('projects')}
-                onDeleteProject={onDeleteProject}
-                onDuplicateProject={onDuplicateProject}
-                onRenameProject={onRenameProject}
                 /* Home is the one composer in the shell and consumes the page
                    handoff. The community view used to dock a second HomeView
                    (`variant="dock"`) with a handoff of its own; that mount

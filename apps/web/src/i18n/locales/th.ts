@@ -862,6 +862,7 @@ export const th: Dict = {
   'home.createTimedOut': 'การเตรียมโปรเจกต์หมดเวลาก่อนจะเริ่มได้ โปรดส่งอีกครั้ง',
   'home.bundledScenarioMissing': 'Bundled scenario "{scenarioId}" is not installed. Reinstall the daemon to restore the default plugin set.',
   "entry.cloudCalloutBody": "ลงชื่อเข้าใช้เพื่อใช้ OpenDesign Cloud และทำงานร่วมกันบนคลาวด์",
+  "entry.localAccountName": "โหมดโลคัล",
   "entry.cloudCalloutDismissAria": "ปิดข้อความ OpenDesign Cloud",
   'entry.workspaceLockedNote': 'This workspace is locked. Restore billing to resume editing shared projects.',
   'entry.workspaceLockedRecover': 'Restore access',

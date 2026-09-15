@@ -193,7 +193,6 @@ describe('HomeView chip/plugin selection survives a real unmount+remount', () =>
         projects={[]}
         onSubmit={() => undefined}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -217,7 +216,6 @@ describe('HomeView chip/plugin selection survives a real unmount+remount', () =>
         projects={[]}
         onSubmit={() => undefined}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -255,7 +253,6 @@ describe('HomeView chip/plugin selection survives a real unmount+remount', () =>
         projects={[]}
         onSubmit={() => undefined}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -286,7 +283,6 @@ describe('HomeView chip/plugin selection survives a real unmount+remount', () =>
         projects={[]}
         onSubmit={() => undefined}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 

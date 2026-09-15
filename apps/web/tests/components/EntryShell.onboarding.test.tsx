@@ -452,7 +452,10 @@ describe('EntryShell route scroll isolation', () => {
 });
 
 describe('EntryShell project reopen request priority', () => {
-  it('aborts Home cover work, keeps hidden Projects idle, and lets the foreground files read finish', async () => {
+  // The catalogue grid — and its background cover scan — lives on the 项目
+  // page now that Home carries no grid on either branch (OPEND-2683 /
+  // OPEND-3140); the invariant is unchanged, the surface moved.
+  it('aborts the 项目 page cover work, keeps hidden Projects idle, and lets the foreground files read finish', async () => {
     const files = [{
       name: 'index.html',
       path: 'index.html',
@@ -474,7 +477,7 @@ describe('EntryShell project reopen request priority', () => {
           // reader — cancellable or not — one shared request carrying the
           // shared AbortSignal, so "is this the background scan?" is the
           // request ordinal, not the presence of a signal. Request #1 is
-          // Home's cover scan and must hang until it is aborted; the
+          // the 项目 page's cover scan and must hang until it is aborted; the
           // foreground read that follows it must be answered.
           const isBackgroundCoverScan = fileRequests.length === 0;
           fileRequests.push(init);
@@ -517,7 +520,7 @@ describe('EntryShell project reopen request priority', () => {
     const onOpenProject = vi.fn((projectId: string) => {
       expect(projectId).toBe('project-reopen');
       // App leaves EntryShell when it opens ProjectView. Model that boundary
-      // directly so the mounted Home strip must cancel its background probe.
+      // directly so the mounted strip must cancel its background probe.
       cleanup();
     });
 
@@ -532,11 +535,12 @@ describe('EntryShell project reopen request priority', () => {
         status: { value: 'not_started' },
       }],
       onOpenProject,
-    });
+    }, '/drafts');
 
     await waitFor(() => expect(fileRequests).toHaveLength(1));
     const homeSignal = fileRequests[0]?.signal;
     expect(homeSignal).toBeDefined();
+    expect(screen.getByTestId('recent-projects-strip')).toBeTruthy();
     // DesignsTab is mounted under EntryShell's hidden Projects pane, but its
     // own background files/live-artifact scans must remain dormant.
     expect(

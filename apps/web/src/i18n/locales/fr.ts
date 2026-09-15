@@ -862,6 +862,7 @@ export const fr: Dict = {
   'home.daemonRecovering': 'Connexion au service local interrompue. Reconnexion automatique en cours…',
   'home.bundledScenarioMissing': 'Le scénario intégré « {scenarioId} » n’est pas installé. Réinstallez le daemon pour restaurer les plugins par défaut.',
   "entry.cloudCalloutBody": "Connectez-vous pour utiliser OpenDesign Cloud et collaborer dans le cloud",
+  "entry.localAccountName": "Mode local",
   "entry.cloudCalloutDismissAria": "Fermer la note OpenDesign Cloud",
   'entry.workspaceLockedNote': "Cet espace de travail est verrouillé. Rétablissez la facturation pour reprendre la modification des projets partagés.",
   'entry.workspaceLockedRecover': "Rétablir l'accès",

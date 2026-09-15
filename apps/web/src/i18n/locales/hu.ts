@@ -862,6 +862,7 @@ export const hu: Dict = {
   'home.createTimedOut': 'A projekt előkészítése túllépte az időkorlátot, és nem indult el. Küldd el újra.',
   'home.bundledScenarioMissing': 'Bundled scenario "{scenarioId}" is not installed. Reinstall the daemon to restore the default plugin set.',
   "entry.cloudCalloutBody": "Jelentkezzen be az OpenDesign Cloud használatához és a felhőalapú együttműködéshez",
+  "entry.localAccountName": "Helyi mód",
   "entry.cloudCalloutDismissAria": "OpenDesign Cloud értesítés bezárása",
   'entry.workspaceLockedNote': 'This workspace is locked. Restore billing to resume editing shared projects.',
   'entry.workspaceLockedRecover': 'Restore access',

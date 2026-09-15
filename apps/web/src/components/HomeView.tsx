@@ -2,8 +2,8 @@
 // when the left nav rail's "Home" tab is active.
 //
 // Owns the prompt state + active plugin lifecycle and stitches
-// together the smaller pieces (HomeHero, RecentProjectsStrip,
-// PluginsHomeSection). Replaces the older left-side `PluginLoopHome`
+// together the smaller pieces (HomeHero, PluginsHomeSection; the recent
+// projects live in the entry rail, not here). Replaces the older left-side `PluginLoopHome`
 // surface by lifting its plugin orchestration up here so the prompt
 // textarea can live centered in the hero.
 
@@ -27,7 +27,6 @@ import {
   automaticStrategyTaskProfileForRouteId,
   DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID,
 } from '@open-design/contracts';
-import { projectKindFromMetadataToTracking } from '@open-design/contracts/analytics';
 import { useAnalytics } from '../analytics/provider';
 import {
   trackCommunityGalleryClick,
@@ -39,7 +38,6 @@ import {
   trackPluginReplacementModalClick,
   trackPluginReplacementModalSurfaceView,
   trackPluginReplacementResult,
-  trackRecentProjectsClick,
 } from '../analytics/events';
 import {
   applyPlugin,
@@ -100,7 +98,6 @@ import {
   pluginInputsAreValid,
   requiredInputsAreUserFillable,
 } from '../utils/pluginRequiredInputs';
-import { RecentProjectsStrip } from './RecentProjectsStrip';
 import { HomeHero, type ExamplePromptInfo, type HomeHeroHandle } from './HomeHero';
 import { findChip, HOME_HERO_CHIPS, type HomeHeroChip } from './home-hero/chips';
 import {
@@ -281,12 +278,6 @@ interface Props {
     payload: PluginLoopSubmit,
   ) => Promise<boolean | 'blocked' | void> | boolean | 'blocked' | void;
   onOpenProject: (id: string, fileName?: string) => void;
-  /** Signed-out shell only — the home grid's own handlers (see the grid's
-   *  mount note in the render tree). A workspace-bound Home never reads them. */
-  onViewAllProjects?: () => void;
-  onDeleteProject?: (id: string) => Promise<boolean | void> | boolean | void;
-  onDuplicateProject?: (id: string) => Promise<void> | void;
-  onRenameProject?: (id: string, name: string) => void;
   onBrowseRegistry?: () => void;
   onOpenIntegrations?: () => void;
   onOpenMcp?: () => void;
@@ -511,10 +502,6 @@ export function HomeView({
   defaultDesignSystemId = null,
   onSubmit,
   onOpenProject,
-  onViewAllProjects,
-  onDeleteProject,
-  onDuplicateProject,
-  onRenameProject,
   onBrowseRegistry,
   onOpenIntegrations,
   onOpenMcp,
@@ -3227,54 +3214,12 @@ export function HomeView({
         recommendationSlot={artifactUpgradeSlot}
       />
 
-      {/* No 最近项目 grid under the hero once the rail carries the list
-          (OPEND-2683, per product: 最近项目统一在左侧栏展示): with a cloud
-          identity the rail's 最近项目 section (EntryNavRail → RailRecentSection)
-          is the one recent-projects entry, with the status glyphs and hover
-          preview the grid used to carry, and 全部项目 / 草稿 keep
-          RecentProjectsStrip for the browsable catalogue.
-
-          The signed-out (local) shell is the migration constraint's other
-          half: its rail has no 最近项目 section yet, so pulling the grid there
-          would leave existing projects with no entry at all. It keeps the grid
-          until the rail is extended (tracked in the PR body), which is also
-          why the strip props below stay on this component. */}
-      {variant !== 'page' || recentProjectsEmpty || workspaceContext ? null : (
-      <RecentProjectsStrip
-        isActive={isActive}
-        projects={projects}
-        designSystems={designSystems}
-        heading={t('recentProjects.title')}
-        limit={1000}
-        {...(projectsLoading !== undefined ? { loading: projectsLoading } : {})}
-        onOpen={(id) => {
-          // P0 ui_click area=recent_projects element=project_card — emit
-          // before navigation so the event isn't lost when the host
-          // re-renders into the project view.
-          const project = projects.find((p) => p.id === id);
-          const projectKind = projectKindFromMetadataToTracking(project?.metadata);
-          trackRecentProjectsClick(analytics.track, {
-            page_name: 'home',
-            area: 'recent_projects',
-            element: 'project_card',
-            project_id: id,
-            ...(projectKind ? { project_kind: projectKind } : {}),
-          });
-          onOpenProject(id);
-        }}
-        onViewAll={() => {
-          trackRecentProjectsClick(analytics.track, {
-            page_name: 'home',
-            area: 'recent_projects',
-            element: 'view_all',
-          });
-          onViewAllProjects?.();
-        }}
-        {...(onDeleteProject ? { onDelete: onDeleteProject } : {})}
-        {...(onDuplicateProject ? { onDuplicate: onDuplicateProject } : {})}
-        {...(onRenameProject ? { onRename: onRenameProject } : {})}
-      />
-      )}
+      {/* No 最近项目 grid under the hero on EITHER branch (OPEND-2683, per
+          product: 最近项目统一在左侧栏展示; OPEND-3140 closed the local half):
+          the rail's 最近项目 section (EntryNavRail → RailRecentSection) is the
+          one recent-projects entry, with the status glyphs and hover preview
+          the grid used to carry, and 项目 / 全部项目 keep RecentProjectsStrip
+          for the browsable catalogue with its filter / sort / view controls. */}
 
       <AnimatePresence>
         {detailsRecord && detailsTemplate ? (

@@ -91,7 +91,6 @@ function renderHome() {
         projects={[]}
         onSubmit={() => undefined}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />
     </I18nProvider>,
   );

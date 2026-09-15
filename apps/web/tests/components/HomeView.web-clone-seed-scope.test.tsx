@@ -119,7 +119,6 @@ function renderHome() {
         projects={[]}
         onSubmit={() => undefined}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />
     </I18nProvider>,
   );
@@ -226,7 +225,6 @@ describe('Website-clone composer scaffold is host-authored, not a draft', () => 
           projects={[]}
           onSubmit={() => undefined}
           onOpenProject={() => undefined}
-          onViewAllProjects={() => undefined}
         />
       </I18nProvider>,
     );

@@ -80,7 +80,6 @@ describe('use-with-query send pulse gating', () => {
             projects={[]}
             onSubmit={() => undefined}
             onOpenProject={() => undefined}
-            onViewAllProjects={() => undefined}
             promptHandoff={createPluginUseHandoff(1, 'required-input-plugin', {
               action: 'use-with-query',
             })}
@@ -122,7 +121,6 @@ describe('static prompt-example send pulse', () => {
           projects={[]}
           onSubmit={() => undefined}
           onOpenProject={() => undefined}
-          onViewAllProjects={() => undefined}
         />
       </I18nProvider>,
     );

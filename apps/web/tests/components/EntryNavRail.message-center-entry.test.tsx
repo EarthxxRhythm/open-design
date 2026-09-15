@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
-// The signed-in dock bell and signed-out rail item are stable external
-// openers. Closing MessageCenter must return focus to the initiating control.
+// The signed-in dock bell and the signed-out local-dock bell are stable
+// external openers. Closing MessageCenter must return focus to the initiating
+// control.
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { WorkspaceCollabContext } from '@open-design/contracts';
@@ -97,7 +98,7 @@ describe('EntryNavRail message-center openers', () => {
     expect(document.activeElement).toBe(accountBell);
   });
 
-  it('returns focus to the signed-out rail opener when the panel closes', async () => {
+  it('returns focus to the signed-out dock bell when the panel closes', async () => {
     renderRail(null);
     const railOpener = screen.getByTestId('entry-nav-message-center');
 

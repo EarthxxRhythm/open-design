@@ -84,7 +84,6 @@ function renderHome(onSubmit: (payload: unknown) => Promise<boolean> | void) {
         projects={[]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />
     </I18nProvider>,
   );
@@ -247,7 +246,6 @@ describe('home composer sending state', () => {
           projects={[]}
           onSubmit={onSubmit}
           onOpenProject={() => undefined}
-          onViewAllProjects={() => undefined}
         />
       </I18nProvider>,
     );

@@ -1235,6 +1235,8 @@ export interface Dict {
   'home.createTimedOut': string;
   'home.bundledScenarioMissing': string;
   'entry.cloudCalloutBody': string;
+  /** Name of the identity row on the local (signed-out) account dock. */
+  'entry.localAccountName': string;
   'entry.cloudCalloutDismissAria': string;
   'entry.workspaceLockedNote': string;
   'entry.workspaceLockedRecover': string;

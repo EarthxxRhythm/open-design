@@ -867,6 +867,7 @@ export const zhCN: Dict = {
   'home.createTimedOut': '项目准备超时，任务尚未开始。请重新发送。',
   'home.bundledScenarioMissing': '内置场景“{scenarioId}”未安装。请重新安装 OpenDesign，以恢复默认插件。',
   "entry.cloudCalloutBody": "登录即可享受云端协作",
+  "entry.localAccountName": "本地模式",
   "entry.cloudCalloutDismissAria": "关闭 OpenDesign Cloud 版说明",
   "entry.workspaceLockedNote": "工作区已锁定，恢复账单后可继续编辑共享项目。",
   "entry.workspaceLockedRecover": "恢复访问",

@@ -647,7 +647,6 @@ function homeProps(overrides: Partial<React.ComponentProps<typeof HomeView>> = {
     projects: [],
     onSubmit: () => undefined,
     onOpenProject: () => undefined,
-    onViewAllProjects: () => undefined,
     promptTemplates: PROMPT_TEMPLATES,
     ...overrides,
   };

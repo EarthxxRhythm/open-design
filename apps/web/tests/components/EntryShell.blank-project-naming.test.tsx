@@ -32,17 +32,6 @@ import {
   invalidateProjectFilesCache,
 } from '../../src/providers/registry';
 
-const homeStrip = vi.hoisted(() => ({ onViewAll: undefined as (() => void) | undefined }));
-vi.mock('../../src/components/RecentProjectsStrip', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../src/components/RecentProjectsStrip')>();
-  return {
-    ...actual,
-    RecentProjectsStrip: (props: React.ComponentProps<typeof actual.RecentProjectsStrip>) => {
-      if (props.onViewAll) homeStrip.onViewAll = props.onViewAll;
-      return <actual.RecentProjectsStrip {...props} />;
-    },
-  };
-});
 
 const originalFetch = globalThis.fetch;
 const originalResizeObserver = globalThis.ResizeObserver;
@@ -89,8 +78,9 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-// Drafts / All-projects are workspace-only views: EntryShell redirects them
-// back to Home once the workspace-context read resolves with nothing. Give
+// All-projects is a workspace-only view: EntryShell redirects it back to Home
+// once the workspace-context read resolves with nothing (Drafts stays, as the
+// local project list, since OPEND-3140). Give
 // every test a resolved team context up front — the real bug reproduces
 // inside a team workspace ("OD Feature Team" in the live acceptance check) —
 // so the empty-state CTA renders deterministically instead of racing a
@@ -228,25 +218,44 @@ describe('EntryShell signed-out recent projects', () => {
     designSystemId: null, createdAt: 1, updatedAt: 1,
   };
   beforeEach(() => {
-    homeStrip.onViewAll = undefined;
+    // The rail is collapsed (aria-hidden) on a fresh profile; dock it open so
+    // role queries can reach its rows.
+    window.localStorage.setItem('od.entry.railOpen', 'true');
     globalThis.fetch = vi.fn(async () => jsonResponse({ context: null, projects: [], plugins: [] }));
   });
+  afterEach(() => {
+    window.localStorage.removeItem('od.entry.railOpen');
+  });
 
-  it('keeps Home card actions and the View all callback', async () => {
+  // OPEND-3140: the local shell lists its projects in the rail's 最近项目
+  // section, not in a Home grid, and the rail row's menu drives the same
+  // rename handler the grid used to.
+  it('lists local projects in the rail, not on Home, and renames from the rail row', async () => {
     const props = renderAt('/', { projects: [localProject] });
     const home = screen.getByTestId('entry-view-home');
-    await waitFor(() => expect(home.querySelector('.recent-projects')).not.toBeNull());
-    fireEvent.click(within(home.querySelector('.recent-projects') as HTMLElement).getByRole('button', { name: /more/i }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }));
-    const input = within(screen.getByRole('dialog')).getByRole('textbox');
-    fireEvent.change(input, { target: { value: 'Renamed local project' } });
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'OK' }));
+    const row = await screen.findByTestId('entry-nav-recent-item');
+    expect(row.textContent).toContain('Local project');
+    expect(home.querySelector('.recent-projects')).toBeNull();
+    expect(screen.queryByTestId('recent-projects-strip')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('entry-nav-recent-more'));
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Rename' }));
+    const input = screen.getByRole('textbox', { name: 'Rename' }) as HTMLInputElement;
+    expect(input.value).toBe('Local project');
+    await act(async () => {
+      fireEvent.change(input, { target: { value: 'Renamed local project' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+    });
     expect(props.onRenameProject).toHaveBeenCalledWith('local-project', 'Renamed local project');
-    // The full-grid header currently hides View all; exercise its supplied
-    // callback at the strip boundary without changing that existing layout.
-    expect(homeStrip.onViewAll).toBeTypeOf('function');
-    act(() => homeStrip.onViewAll!());
-    expect(window.location.pathname).toBe('/projects');
+  });
+
+  it('opens the 项目 page from the rail with the local catalogue', async () => {
+    renderAt('/', { projects: [localProject] });
+    await screen.findByTestId('entry-nav-recent-item');
+    fireEvent.click(screen.getByTestId('entry-nav-drafts'));
+    expect(window.location.pathname).toBe('/drafts');
+    const strip = await screen.findByTestId('recent-projects-strip');
+    expect(within(strip).getByText('Local project')).toBeTruthy();
   });
 
   // OPEND-2793 (product decision B): the community gallery browses without a

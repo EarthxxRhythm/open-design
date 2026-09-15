@@ -2747,19 +2747,16 @@ function uniqueProjectName(base: string): string {
 /**
  * Assert we are on a surface that lists the workspace's projects.
  *
- * #5517 deleted the rail's Projects destination (`entry-nav-projects`), so the
- * project list a user actually reaches is Home's recent-projects strip, or the
- * team workspace's 全部项目 grid. Both branches stay here because the strip is
- * suppressed while the workspace has no projects at all; a signed-in team
- * workspace then answers with the grid instead.
+ * Home lists the catalogue in the rail's 最近项目 section on both branches
+ * (OPEND-2683 / OPEND-3140), and the rail's 项目 item opens the browsable page;
+ * a signed-in team workspace answers with the 全部项目 grid instead.
  */
 async function expectProjectsView(page: Page) {
   const legacyProjectsToolbar = page.locator('.tab-panel-toolbar');
-  const homeRecentProjects = page.getByRole('heading', { name: /recent projects|最近项目/i });
   if (await legacyProjectsToolbar.isVisible().catch(() => false)) return;
-  if (await homeRecentProjects.isVisible().catch(() => false)) return;
 
   await ensureRailOpen(page);
+  await expect(page.getByTestId('entry-nav-recent-toggle')).toBeVisible();
   const allProjectsNav = page.getByTestId('entry-nav-all-projects');
   if (await allProjectsNav.isVisible().catch(() => false)) {
     await allProjectsNav.click();
@@ -2767,7 +2764,8 @@ async function expectProjectsView(page: Page) {
     return;
   }
 
-  await expect(homeRecentProjects).toBeVisible();
+  await page.getByTestId('entry-nav-drafts').click();
+  await expect(page.getByTestId('recent-projects-strip')).toBeVisible();
 }
 
 async function waitForLoadingToClear(page: Page) {

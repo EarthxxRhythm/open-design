@@ -252,12 +252,15 @@ describe('EntryNavRail 最近浏览过 section', () => {
     expect(runRequests()).toHaveLength(before);
   });
 
-  it('renders nothing without projects or without a cloud identity', () => {
+  it('renders nothing without projects', () => {
     renderRail({ recentProjects: [] });
     expect(screen.queryByTestId('entry-nav-recent-toggle')).toBeNull();
+    // A missing cloud identity is no longer a reason to hide it: the local
+    // shell lists its projects here too (OPEND-3140, see
+    // EntryNavRail.local-shell.test.tsx).
     cleanup();
     renderRail({ context: null });
-    expect(screen.queryByTestId('entry-nav-recent-toggle')).toBeNull();
+    expect(screen.getByTestId('entry-nav-recent-toggle')).toBeTruthy();
   });
 
   it('leads each row with its live run status from the runs feed', async () => {

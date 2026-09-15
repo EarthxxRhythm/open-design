@@ -711,9 +711,9 @@ export async function waitForVisualProjects(page: Page, projects: readonly Visua
     return;
   }
 
-  // Where the catalog shows depends on identity: the signed-out shell keeps
-  // Home's recent-projects grid, while a workspace-bound Home carries the list
-  // in the rail's 最近项目 section instead (#7635 / OPEND-2683). The rail is
+  // Home carries the catalog in the rail's 最近项目 section on both branches
+  // (#7635 / OPEND-2683, local half closed by OPEND-3140); the strip is the
+  // 项目 page's grid, kept here for callers that wait on that page. The rail is
   // collapsed by default, so its rows are attached rather than visible.
   const name = projects[0]?.name ?? '';
   const stripRow = page.getByTestId('recent-projects-strip').getByText(name, { exact: true });
@@ -724,6 +724,19 @@ export async function waitForVisualProjects(page: Page, projects: readonly Visua
 export async function gotoVisualHome(page: Page): Promise<void> {
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await waitForVisualReady(page);
+}
+
+/**
+ * The 项目 page (`/drafts`): where the browsable catalogue — RecentProjectsStrip
+ * with its cards and covers — lives on both branches now that Home carries no
+ * grid (OPEND-2683 / OPEND-3140). Without a workspace the page lists every
+ * local project.
+ */
+export async function gotoVisualProjectsPage(page: Page): Promise<void> {
+  await page.goto('/drafts', { waitUntil: 'domcontentloaded' });
+  await page.getByText('Loading OpenDesign…').waitFor({ state: 'hidden', timeout: T.xlong });
+  await expect(page).toHaveURL(/\/drafts$/, { timeout: T.medium });
+  await expect(page.getByTestId('recent-projects-strip')).toBeVisible({ timeout: T.medium });
 }
 
 export async function gotoVisualWorkspace(page: Page): Promise<void> {

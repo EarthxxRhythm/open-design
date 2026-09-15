@@ -862,6 +862,7 @@ export const esES: Dict = {
   'home.createTimedOut': 'La preparación del proyecto ha superado el tiempo de espera y no se ha iniciado. Vuelve a enviar.',
   'home.bundledScenarioMissing': 'Bundled scenario "{scenarioId}" is not installed. Reinstall the daemon to restore the default plugin set.',
   "entry.cloudCalloutBody": "Inicia sesión para usar OpenDesign Cloud y colaborar en la nube",
+  "entry.localAccountName": "Modo local",
   "entry.cloudCalloutDismissAria": "Cerrar el aviso de OpenDesign Cloud",
   'entry.workspaceLockedNote': 'This workspace is locked. Restore billing to resume editing shared projects.',
   'entry.workspaceLockedRecover': 'Restore access',

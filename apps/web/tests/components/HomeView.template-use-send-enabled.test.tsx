@@ -303,7 +303,6 @@ function renderHome(handoffId: number, pluginId: string) {
         projects={[]}
         onSubmit={() => undefined}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
         promptHandoff={createPluginUseHandoff(handoffId, pluginId, { action: 'use-with-query' })}
       />
     </I18nProvider>,
@@ -369,7 +368,6 @@ describe('community template Use lands a sendable composer', () => {
           projects={[]}
           onSubmit={() => undefined}
           onOpenProject={() => undefined}
-          onViewAllProjects={() => undefined}
           promptHandoff={createPluginUseHandoff(2, DESIGN_BRIEF.id, { action: 'use-with-query' })}
         />
       </I18nProvider>,
@@ -496,7 +494,6 @@ describe('community template Use lands a sendable composer', () => {
             submittedPluginInputs.push(payload.pluginInputs ?? {});
           }}
           onOpenProject={() => undefined}
-          onViewAllProjects={() => undefined}
           promptHandoff={createPluginUseHandoff(1, LIVE_DASHBOARD.id, { action: 'use-with-query' })}
         />
       </I18nProvider>

@@ -547,7 +547,6 @@ describe('HomeView prompt handoff', () => {
         projects={[]}
         onSubmit={() => submitResult}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -606,7 +605,6 @@ describe('HomeView prompt handoff', () => {
         projects={[]}
         onSubmit={() => undefined}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
     const firstTrigger = await screen.findByTestId('home-hero-type-pill-deck');
@@ -624,7 +622,6 @@ describe('HomeView prompt handoff', () => {
           projects={[]}
           onSubmit={() => undefined}
           onOpenProject={() => undefined}
-          onViewAllProjects={() => undefined}
         />,
       );
 
@@ -668,7 +665,6 @@ describe('HomeView prompt handoff', () => {
         projects={[]}
         onSubmit={() => undefined}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
         promptHandoff={createPluginAuthoringHandoff(1)}
       />,
     );
@@ -701,7 +697,6 @@ describe('HomeView prompt handoff', () => {
         projects={[]}
         onSubmit={() => undefined}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
         promptHandoff={createPluginAuthoringHandoff(1)}
       />,
     );
@@ -732,7 +727,6 @@ describe('HomeView prompt handoff', () => {
         projects={[]}
         onSubmit={() => undefined}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -771,7 +765,6 @@ describe('HomeView prompt handoff', () => {
         projects={[]}
         onSubmit={() => undefined}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -819,7 +812,6 @@ describe('HomeView prompt handoff', () => {
         projects={[]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
         promptHandoff={createPluginUseHandoff(1, 'example-web-prototype')}
       />,
     );
@@ -878,7 +870,6 @@ describe('HomeView prompt handoff', () => {
         projects={[]}
         onSubmit={() => undefined}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
         promptHandoff={createPluginUseHandoff(11, 'example-web-prototype', {
           action: 'use',
           chipId: 'prototype',
@@ -921,7 +912,6 @@ describe('HomeView prompt handoff', () => {
         projects={[]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -964,7 +954,6 @@ describe('HomeView prompt handoff', () => {
         projects={[]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -1024,7 +1013,6 @@ describe('HomeView prompt handoff', () => {
         defaultDesignSystemId="ds-refly"
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -1129,7 +1117,6 @@ describe('HomeView prompt handoff', () => {
         projects={[]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -1207,7 +1194,6 @@ describe('HomeView prompt handoff', () => {
         projects={[]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -1261,7 +1247,6 @@ describe('HomeView prompt handoff', () => {
         projects={[]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -1312,7 +1297,6 @@ describe('HomeView prompt handoff', () => {
         projects={[]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -1374,7 +1358,6 @@ describe('HomeView prompt handoff', () => {
         defaultDesignSystemId={null}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -1426,7 +1409,6 @@ describe('HomeView prompt handoff', () => {
         defaultDesignSystemId="ds-refly"
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -1494,7 +1476,6 @@ describe('HomeView prompt handoff', () => {
         defaultDesignSystemId="ds-refly"
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -1594,7 +1575,6 @@ describe('HomeView prompt handoff', () => {
         projects={[]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -1668,7 +1648,6 @@ describe('HomeView prompt handoff', () => {
         defaultDesignSystemId="ds-refly"
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -1732,7 +1711,6 @@ describe('HomeView prompt handoff', () => {
         projects={[]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
         promptHandoff={createPluginUseHandoff(21, 'example-web-prototype', {
           action: 'use',
           chipId: 'prototype',
@@ -1789,7 +1767,6 @@ describe('HomeView prompt handoff', () => {
         projects={[]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -1869,7 +1846,6 @@ describe('HomeView prompt handoff', () => {
         projects={[]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -1933,7 +1909,6 @@ describe('HomeView prompt handoff', () => {
         defaultDesignSystemId="ds-refly"
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -1992,7 +1967,6 @@ describe('HomeView prompt handoff', () => {
         projects={[]}
         onSubmit={() => undefined}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -2043,7 +2017,6 @@ describe('HomeView prompt handoff', () => {
         defaultDesignSystemId="ds-refly"
         onSubmit={() => undefined}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -2104,7 +2077,6 @@ describe('HomeView prompt handoff', () => {
         projects={[]}
         onSubmit={() => undefined}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -2116,7 +2088,6 @@ describe('HomeView prompt handoff', () => {
         projects={[]}
         onSubmit={() => undefined}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
         promptHandoff={createPluginUseHandoff(2, 'example-web-prototype', {
           action: 'use-with-query',
         })}
@@ -2175,7 +2146,6 @@ describe('HomeView prompt handoff', () => {
         projects={[]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -2186,7 +2156,6 @@ describe('HomeView prompt handoff', () => {
         projects={[]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
         promptHandoff={createPluginUseHandoff(3, 'example-web-prototype', {
           action: 'use-with-query',
         })}
@@ -2246,7 +2215,6 @@ describe('HomeView prompt handoff', () => {
         projects={[]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -2258,7 +2226,6 @@ describe('HomeView prompt handoff', () => {
         projects={[]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
         promptHandoff={createPluginUseHandoff(4, 'example-web-prototype', {
           action: 'use-with-query',
         })}
@@ -2319,7 +2286,6 @@ describe('HomeView prompt handoff', () => {
         projects={[]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -2330,7 +2296,6 @@ describe('HomeView prompt handoff', () => {
         projects={[]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
         promptHandoff={createPluginUseHandoff(6, 'example-web-prototype', {
           action: 'use-with-query',
         })}
@@ -2389,7 +2354,6 @@ describe('HomeView prompt handoff', () => {
         projects={[]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -2399,7 +2363,6 @@ describe('HomeView prompt handoff', () => {
         projects={[]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
         promptHandoff={createPluginUseHandoff(5, 'example-meta-landing', {
           action: 'use-with-query',
         })}
@@ -2440,7 +2403,6 @@ describe('HomeView prompt handoff', () => {
         projects={[]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -2497,7 +2459,6 @@ describe('HomeView prompt handoff', () => {
         projects={[]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -2553,7 +2514,6 @@ describe('HomeView prompt handoff', () => {
         projects={[]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 

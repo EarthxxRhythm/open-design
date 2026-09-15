@@ -170,7 +170,6 @@ describe('creation page active template chip → lightweight preview', () => {
         projects={[]}
         onSubmit={() => undefined}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
         promptHandoff={createPluginUseHandoff(1, 'example-fundraising-deck')}
       />,
     );
@@ -213,7 +212,6 @@ describe('creation page lightweight preview escapes the home stacking context', 
         projects={[]}
         onSubmit={() => undefined}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
         promptHandoff={createPluginUseHandoff(1, 'example-fundraising-deck')}
       />,
     );

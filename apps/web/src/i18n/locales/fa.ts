@@ -862,6 +862,7 @@ export const fa: Dict = {
   'home.createTimedOut': 'آماده‌سازی پروژه پیش از شروع به پایان مهلت رسید. دوباره ارسال کنید.',
   'home.bundledScenarioMissing': 'Bundled scenario "{scenarioId}" is not installed. Reinstall the daemon to restore the default plugin set.',
   "entry.cloudCalloutBody": "برای استفاده از OpenDesign Cloud و همکاری در فضای ابری وارد شوید",
+  "entry.localAccountName": "حالت محلی",
   "entry.cloudCalloutDismissAria": "بستن یادداشت OpenDesign Cloud",
   'entry.workspaceLockedNote': 'This workspace is locked. Restore billing to resume editing shared projects.',
   'entry.workspaceLockedRecover': 'Restore access',

@@ -39,7 +39,6 @@ async function renderMissingImageScenario(locale: 'en' | 'zh-CN') {
         projects={[]}
         onSubmit={() => undefined}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />
     </I18nProvider>,
   );

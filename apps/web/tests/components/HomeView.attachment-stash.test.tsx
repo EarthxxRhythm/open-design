@@ -63,7 +63,6 @@ function renderHome(variant: 'page' | 'dock' = 'page', strict = false) {
         variant={variant}
         onSubmit={() => Promise.resolve(true)}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />
     </I18nProvider>
   );

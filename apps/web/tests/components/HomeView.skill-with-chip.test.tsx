@@ -229,7 +229,6 @@ function renderHome(onSubmit: SubmitSpy) {
       skills={[PROTOTYPE_SKILL, DECK_SKILL]}
       onSubmit={onSubmit}
       onOpenProject={() => undefined}
-      onViewAllProjects={() => undefined}
     />,
   );
 }

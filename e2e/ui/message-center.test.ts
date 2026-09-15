@@ -132,14 +132,14 @@ test('[P1] message center uses account read APIs when Vela is signed in', async 
   await gotoEntryHome(page);
 
   const trigger = page.getByTestId('entry-nav-message-center');
-  await expect(trigger.locator('.entry-nav-rail__btn-dot')).toBeVisible();
+  await expect(trigger.locator('.entry-nav-rail__menu-item-dot')).toBeVisible();
   await trigger.click();
 
   const dialog = page.getByTestId('message-center-dialog');
   await expect(dialog.getByText('Build output recovered')).toBeVisible();
   await dialog.getByRole('button', { name: /Build output recovered/i }).click();
   await expect.poll(() => readMessageIds).toEqual(['msg-account-build']);
-  await expect(trigger.locator('.entry-nav-rail__btn-dot')).toBeVisible();
+  await expect(trigger.locator('.entry-nav-rail__menu-item-dot')).toBeVisible();
   await expect
     .poll(() => page.evaluate((key) => window.localStorage.getItem(key), READ_KEY))
     .toBeNull();
@@ -157,7 +157,7 @@ test('[P1] message center uses account read APIs when Vela is signed in', async 
   // and the rail dot with it, and the header shelf toggle is the way back.
   await dialog.getByTestId('message-center-archive').last().click();
   await expect(dialog.getByText('Prerelease channel ready')).toHaveCount(0);
-  await expect(trigger.locator('.entry-nav-rail__btn-dot')).toHaveCount(0);
+  await expect(trigger.locator('.entry-nav-rail__menu-item-dot')).toHaveCount(0);
   await dialog.getByTestId('message-center-shelf-toggle').click();
   await expect(dialog.getByText('Prerelease channel ready')).toBeVisible();
   await expect(dialog.getByText('Build output recovered')).toHaveCount(0);

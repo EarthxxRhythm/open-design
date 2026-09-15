@@ -10,6 +10,13 @@
  * `GET /api/runs` answers 400 `PROJECT_SCOPE_REQUIRED` as soon as one run
  * belongs to a workspace-bound project. See `listRunsForProject`.
  *
+ * The feed is identity-agnostic on purpose (OPEND-3140): a surface without a
+ * cloud identity subscribes with a null context, the read goes out without
+ * Workspace headers, and the daemon's headerless branch answers for an
+ * unbound local project. The local shell's 最近项目 rows therefore get the
+ * same statuses, the same ✓-spending and the same hover preview as the
+ * cloud shell's — one store, one display mapping, no local-only copy.
+ *
  * Why a module-level store rather than per-hook state (OPEND-2795 /
  * OPEND-2762): the rail's 最近项目 rows and the workspace tab switcher each
  * used to keep their own copy, polling their own id set from a blank start.

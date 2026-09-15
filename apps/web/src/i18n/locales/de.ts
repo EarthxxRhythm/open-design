@@ -862,6 +862,7 @@ export const de: Dict = {
   'home.createTimedOut': 'Die Projektvorbereitung hat zu lange gedauert und wurde nicht gestartet. Bitte erneut senden.',
   'home.bundledScenarioMissing': 'Bundled scenario "{scenarioId}" is not installed. Reinstall the daemon to restore the default plugin set.',
   "entry.cloudCalloutBody": "Melden Sie sich an, um OpenDesign Cloud zu nutzen und in der Cloud zusammenzuarbeiten",
+  "entry.localAccountName": "Lokaler Modus",
   "entry.cloudCalloutDismissAria": "OpenDesign Cloud-Hinweis schließen",
   'entry.workspaceLockedNote': 'This workspace is locked. Restore billing to resume editing shared projects.',
   'entry.workspaceLockedRecover': 'Restore access',

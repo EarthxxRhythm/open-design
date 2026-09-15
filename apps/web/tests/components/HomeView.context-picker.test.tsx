@@ -215,7 +215,6 @@ describe('HomeView context picker', () => {
         defaultDesignSystemId={WORKSPACE_DESIGN_SYSTEM.id}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -240,7 +239,6 @@ describe('HomeView context picker', () => {
         defaultDesignSystemId={WORKSPACE_DESIGN_SYSTEM.id}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
     fireEvent.click(screen.getByTestId('home-hero-submit'));
@@ -288,7 +286,6 @@ describe('HomeView context picker', () => {
         projects={[]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -347,7 +344,6 @@ describe('HomeView context picker', () => {
         projects={[]}
         onSubmit={() => undefined}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
         onBrowseRegistry={() => undefined}
       />,
     );
@@ -400,7 +396,6 @@ describe('HomeView context picker', () => {
         projects={[]}
         onSubmit={() => undefined}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
         onBrowseRegistry={() => undefined}
       />,
     );
@@ -455,7 +450,6 @@ describe('HomeView context picker', () => {
         projects={[]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -527,7 +521,6 @@ describe('HomeView context picker', () => {
         skills={[SKILL]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -580,7 +573,6 @@ describe('HomeView context picker', () => {
         skills={[DECK_SKILL, SKILL]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -646,7 +638,6 @@ describe('HomeView context picker', () => {
         skills={[SKILL]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -715,7 +706,6 @@ describe('HomeView context picker', () => {
         connectors={[CONNECTOR]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -826,7 +816,6 @@ describe('HomeView context picker', () => {
         projects={[]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -929,7 +918,6 @@ describe('HomeView context picker', () => {
         projects={[]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
@@ -999,7 +987,6 @@ describe('HomeView context picker', () => {
         connectors={[CONNECTOR]}
         onSubmit={onSubmit}
         onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
       />,
     );
 
