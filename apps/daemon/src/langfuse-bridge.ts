@@ -36,6 +36,7 @@ import {
   deriveLangfuseDeliveryState,
   buildSafeRunQualityProjectionV1,
   readFeedbackTelemetrySinkConfig,
+  readTaskTelemetrySinkConfig,
   readRunTelemetrySinkConfig,
   reportRunCompleted,
   reportRunFeedback,
@@ -1642,6 +1643,7 @@ export async function reportRunCompletedFromDaemon(
 export interface ReportRunFeedbackFromDaemonOpts {
   dataDir: string;
   runId: string;
+  traceId?: string;
   rating: 'positive' | 'negative';
   reasonCodes: string[];
   hasCustomReason: boolean;
@@ -1681,12 +1683,15 @@ export async function reportRunFeedbackFromDaemon(
   // successful enqueue to callers when there's no Langfuse endpoint
   // configured to ship the score to.
   const configuredAmrEnv = agentCliEnvForAgent(cfg.agentCliEnv, 'amr');
-  const sink = readFeedbackTelemetrySinkConfig(process.env, configuredAmrEnv);
+  const sink = opts.traceId
+    ? readTaskTelemetrySinkConfig(process.env)
+    : readFeedbackTelemetrySinkConfig(process.env, configuredAmrEnv);
   if (!sink) {
     return { status: 'skipped_no_sink' };
   }
   const ctx: FeedbackReportContext = {
     runId: opts.runId,
+    ...(opts.traceId ? { traceId: opts.traceId } : {}),
     installationId: cfg.installationId ?? null,
     prefs,
     rating: opts.rating,
@@ -1702,6 +1707,7 @@ export async function reportRunFeedbackFromDaemon(
   void reportRunFeedback(
     ctx,
     {
+      config: sink,
       configuredEnv: configuredAmrEnv,
       ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
     },

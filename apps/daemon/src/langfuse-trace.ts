@@ -415,6 +415,8 @@ export interface ReportFeedbackOpts {
  */
 export interface FeedbackReportContext {
   runId: string;
+  /** Server-resolved Task identity; score IDs remain owned by the physical Run. */
+  traceId?: string;
   installationId: string | null;
   prefs: TelemetryPrefs;
   rating: 'positive' | 'negative';
@@ -3185,7 +3187,7 @@ export function reportRunCompleted(
 // thread `removedReasonCodes` through and emit overwriting "cleared"
 // scores for them; not done here to keep this PR scoped to the bridge.
 export function buildFeedbackPayload(ctx: FeedbackReportContext): unknown[] {
-  const traceId = ctx.runId;
+  const traceId = ctx.traceId ?? ctx.runId;
   const nowIso = new Date().toISOString();
   const batch: unknown[] = [];
 
@@ -3197,6 +3199,7 @@ export function buildFeedbackPayload(ctx: FeedbackReportContext): unknown[] {
     customReason: ctx.customReason || undefined,
     installationId: ctx.installationId ?? undefined,
     ...(ctx.metadata ?? {}),
+    ...(ctx.traceId ? { runId: ctx.runId } : {}),
   };
 
   batch.push({
@@ -3204,7 +3207,7 @@ export function buildFeedbackPayload(ctx: FeedbackReportContext): unknown[] {
     type: 'score-create',
     timestamp: nowIso,
     body: {
-      id: `${traceId}-rating`,
+      id: `${ctx.runId}-rating`,
       traceId,
       name: 'user_rating',
       value: ctx.rating === 'positive' ? 1 : -1,
@@ -3221,7 +3224,7 @@ export function buildFeedbackPayload(ctx: FeedbackReportContext): unknown[] {
       timestamp: nowIso,
       body: {
         // Stable per (run, code) so re-submission overwrites cleanly.
-        id: `${traceId}-reason-${code}`,
+        id: `${ctx.runId}-reason-${code}`,
         traceId,
         name: 'user_rating_reason',
         value: code,
