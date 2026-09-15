@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   RecentProjectsStrip,
   projectCardCategory,
+  projectKindFilterCategory,
 } from '../../src/components/RecentProjectsStrip';
 import type { Project } from '../../src/types';
 import type { WorkspaceProjectSummary } from '@open-design/contracts';
@@ -108,6 +109,21 @@ const MEDIA = project({
   updatedAt: 2,
   metadata: { kind: 'video' },
 });
+// OPEND-3107: a Document project is what the Home "Document" chip creates —
+// `kind: 'other'` with `intent: 'document'` (home-hero/chips.ts).
+const DOCUMENT = project({
+  id: 'p-document',
+  name: 'Document project',
+  updatedAt: 1.8,
+  metadata: { kind: 'other', intent: 'document' },
+});
+// OPEND-3107: an Image project is the media-generation chip's `kind: 'image'`.
+const IMAGE = project({
+  id: 'p-image',
+  name: 'Image project',
+  updatedAt: 1.5,
+  metadata: { kind: 'image' },
+});
 const DESIGN_SYSTEM = project({
   id: 'p-ds',
   name: 'Design system project',
@@ -115,13 +131,16 @@ const DESIGN_SYSTEM = project({
   metadata: { kind: 'other', importedFrom: 'design-system' },
 });
 
-const ALL_PROJECTS = [PROTOTYPE, DECK, LIVE, WEB_CLONE, MEDIA, DESIGN_SYSTEM];
+const ALL_PROJECTS = [PROTOTYPE, DECK, LIVE, WEB_CLONE, MEDIA, DOCUMENT, IMAGE, DESIGN_SYSTEM];
 
 function renderGrid(props: Partial<React.ComponentProps<typeof RecentProjectsStrip>> = {}) {
   return render(
     <RecentProjectsStrip
       heading="All projects"
       projects={ALL_PROJECTS}
+      // The strip caps at 6 cards by default; the fixtures outgrew that, and
+      // the page mode this mirrors passes an effectively unbounded limit too.
+      limit={ALL_PROJECTS.length}
       onOpen={() => {}}
       {...props}
     />,
@@ -176,6 +195,39 @@ describe('projectCardCategory', () => {
   });
 });
 
+describe('projectKindFilterCategory (OPEND-3107)', () => {
+  // The dropdown offers exactly six types; every project resolves to one of
+  // them (or to none, for kinds the list deliberately no longer names).
+  it('maps each project to the filter bucket the dropdown offers', () => {
+    expect(projectKindFilterCategory(PROTOTYPE)).toBe('prototype');
+    expect(projectKindFilterCategory(DECK)).toBe('slide');
+    expect(projectKindFilterCategory(DOCUMENT)).toBe('document');
+    expect(projectKindFilterCategory(IMAGE)).toBe('image');
+    expect(projectKindFilterCategory(WEB_CLONE)).toBe('web-clone');
+    expect(projectKindFilterCategory(DESIGN_SYSTEM)).toBe('design-system');
+  });
+
+  it('folds a live-artifact project into Prototype now that Live Artifact is not offered', () => {
+    // Its metadata is `kind: 'prototype'`; without this it would match no type
+    // at all once the Live Artifact option is gone.
+    expect(projectKindFilterCategory(LIVE)).toBe('prototype');
+  });
+
+  it('keeps a document project out of the Prototype bucket', () => {
+    // The card still wears the Prototype chip (projectCategory falls through),
+    // but the filter must not list it under Prototype AND Document.
+    expect(projectCardCategory(DOCUMENT)).toBe('prototype');
+    expect(projectKindFilterCategory(DOCUMENT)).toBe('document');
+  });
+
+  it('matches video and audio projects to no offered type', () => {
+    expect(projectKindFilterCategory(MEDIA)).toBeNull();
+    expect(
+      projectKindFilterCategory(project({ id: 'p-audio', metadata: { kind: 'audio' } })),
+    ).toBeNull();
+  });
+});
+
 describe('RecentProjectsStrip type filter (#77)', () => {
   it('omits the redundant owner filter from the drafts space', () => {
     const { container } = renderGrid({ heading: 'Drafts', space: 'drafts' });
@@ -197,7 +249,7 @@ describe('RecentProjectsStrip type filter (#77)', () => {
     expect(filters).toEqual(['All', 'Any type']);
   });
 
-  it('offers exactly the artifact types the cards stamp on themselves', () => {
+  it('offers the six product types in order: Prototype, Slides, Document, Image, Website clone, Design System (OPEND-3107)', () => {
     const { container } = renderGrid();
 
     const menu = openKindMenu(container);
@@ -206,35 +258,50 @@ describe('RecentProjectsStrip type filter (#77)', () => {
     expect(options).toEqual([
       'Any type',
       'Prototype',
-      'Slide',
-      'Live Artifact',
+      'Slides',
+      'Document',
+      'Image',
       'Website clone',
-      'Media',
       'Design System',
     ]);
-    // The legacy taxonomy's catch-all bucket matched no chip at all.
+    // Dropped by OPEND-3107 (Live Artifact, Media) and by the earlier
+    // taxonomy cleanup (Other): none may come back under any label.
+    expect(options).not.toContain('Live Artifact');
+    expect(options).not.toContain('Media');
     expect(options).not.toContain('Other');
+    expect(options).not.toContain('Slide');
   });
 
   it('filters the grid down to the projects wearing the picked chip', () => {
     const { container } = renderGrid();
 
-    fireEvent.click(within(openKindMenu(container)).getByText('Slide'));
-    expect(cardNames(container)).toEqual(['Deck project']);
+    const kindTrigger = () => container.querySelectorAll('.recent-projects__filter')[1]!;
 
-    fireEvent.click(within(openKindMenu(container)).getByText('Live Artifact'));
-    expect(cardNames(container)).toEqual(['Live project']);
+    fireEvent.click(within(openKindMenu(container)).getByText('Slides'));
+    expect(cardNames(container)).toEqual(['Deck project']);
+    // The trigger names the picked type (OPEND-3107 acceptance).
+    expect(kindTrigger().textContent?.trim()).toBe('Slides');
+
+    fireEvent.click(within(openKindMenu(container)).getByText('Document'));
+    expect(cardNames(container)).toEqual(['Document project']);
+    expect(kindTrigger().textContent?.trim()).toBe('Document');
+
+    fireEvent.click(within(openKindMenu(container)).getByText('Image'));
+    expect(cardNames(container)).toEqual(['Image project']);
+    expect(kindTrigger().textContent?.trim()).toBe('Image');
 
     // recvpZbvupSr1o: Website clone must be its own filter bucket, separate
-    // from both Live Artifact and the blank Prototype bucket it used to hide in.
+    // from the blank Prototype bucket it used to hide in.
     fireEvent.click(within(openKindMenu(container)).getByText('Website clone'));
     expect(cardNames(container)).toEqual(['Web clone project']);
 
     fireEvent.click(within(openKindMenu(container)).getByText('Design System'));
     expect(cardNames(container)).toEqual(['Design system project']);
 
+    // Prototype keeps the live-artifact project (no Live Artifact option any
+    // more) but not the document project, which has its own bucket.
     fireEvent.click(within(openKindMenu(container)).getByText('Prototype'));
-    expect(cardNames(container)).toEqual(['Prototype project']);
+    expect(cardNames(container)).toEqual(['Prototype project', 'Live project']);
 
     fireEvent.click(within(openKindMenu(container)).getByText('Any type'));
     expect(cardNames(container)).toHaveLength(ALL_PROJECTS.length);

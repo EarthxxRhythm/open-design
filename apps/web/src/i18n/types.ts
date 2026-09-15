@@ -1488,6 +1488,8 @@ export interface Dict {
   'recentProjects.kindAll': string;
   'recentProjects.kindPrototype': string;
   'recentProjects.kindSlides': string;
+  'recentProjects.kindDocument': string;
+  'recentProjects.kindImage': string;
   'recentProjects.kindMedia': string;
   'recentProjects.kindOther': string;
   'recentProjects.inviteTeammates': string;

@@ -162,13 +162,13 @@ const DESIGN_SYSTEM_TAG_LABEL = 'Design System';
 type DictKey = Parameters<ReturnType<typeof useT>>[0];
 
 type OwnerFilter = 'all' | 'mine' | 'others';
-/** The type filter speaks the SAME vocabulary the cards stamp on themselves
- *  ({@link projectCardCategory}), so "原型 / 幻灯片 / 实时看板 / 媒体 /
- *  Design System" in the dropdown mean exactly the chips a user can read off
- *  the grid. It used to run a private taxonomy off `metadata.kind`
- *  (prototype/deck/media/other), which offered a 其他 bucket no card ever
- *  shows and no 实时看板 / Design System filter for chips every card does. */
-type ProjectKindFilter = 'all' | ProjectCardCategory;
+/** The type filter offers the six product types (OPEND-3107), resolved per
+ *  project by {@link projectKindFilterCategory}. That resolver is derived from
+ *  the chip vocabulary ({@link projectCardCategory}) so the dropdown can never
+ *  name a type no project resolves to, but it is not identical to it: Document
+ *  and Image are split out of the Prototype / Media chips, and Live Artifact
+ *  folds back into Prototype. */
+type ProjectKindFilter = 'all' | ProjectKindFilterCategory;
 type ProjectSort = 'updatedDesc' | 'updatedAsc' | 'nameAsc';
 
 const OWNER_FILTER_OPTIONS: Array<{ id: OwnerFilter; labelKey: DictKey }> = [
@@ -181,18 +181,19 @@ type KindFilterOption =
   | { id: ProjectKindFilter; labelKey: DictKey; label?: undefined }
   | { id: ProjectKindFilter; label: string; labelKey?: undefined };
 
-// One entry per chip the grid can render, reusing that chip's own i18n key so
-// the filter label and the card label can never drift apart. `brand` is absent
-// on purpose: `projectCardCategory` resolves every brand-kind project to
-// 'design-system' first (see `isDesignSystemProject`), so a 'brand' option
-// could only ever match nothing.
+// The six product types, in the order product specified (OPEND-3107):
+// Prototype, Slides, Document, Image, Website clone, Design System. Prototype
+// and Website clone reuse their card chip's key so the two labels cannot
+// drift; Slides / Document / Image are the filter's own nouns (the Slide chip
+// stays singular on the card). Live Artifact and Media are deliberately not
+// offered — see `projectKindFilterCategory` for where those projects go.
 const KIND_FILTER_OPTIONS: KindFilterOption[] = [
   { id: 'all', labelKey: 'recentProjects.kindAll' },
   { id: 'prototype', labelKey: 'designs.tagPrototype' },
-  { id: 'slide', labelKey: 'designs.tagSlide' },
-  { id: 'live-artifact', labelKey: 'designs.tagLiveArtifact' },
+  { id: 'slide', labelKey: 'recentProjects.kindSlides' },
+  { id: 'document', labelKey: 'recentProjects.kindDocument' },
+  { id: 'image', labelKey: 'recentProjects.kindImage' },
   { id: 'web-clone', labelKey: 'designs.tagWebClone' },
-  { id: 'media', labelKey: 'designs.tagMedia' },
   { id: 'design-system', label: DESIGN_SYSTEM_TAG_LABEL },
 ];
 
@@ -547,7 +548,7 @@ export function RecentProjectsStrip({
           ownerFilter === 'all' ||
           (ownerFilter === 'mine' && creator.ownedBySelf) ||
           (ownerFilter === 'others' && !creator.ownedBySelf);
-        const kindMatches = kindFilter === 'all' || projectCardCategory(project) === kindFilter;
+        const kindMatches = kindFilter === 'all' || projectKindFilterCategory(project) === kindFilter;
         return ownerMatches && kindMatches;
       })
       .slice(0, resolvedLimit),
@@ -2490,6 +2491,47 @@ export type ProjectCardCategory = ProjectCategory | 'design-system';
  */
 export function projectCardCategory(project: Project): ProjectCardCategory {
   return isDesignSystemProject(project) ? 'design-system' : projectCategory(project);
+}
+
+/** The six types the project list's type filter offers (OPEND-3107). */
+export type ProjectKindFilterCategory =
+  | 'prototype'
+  | 'slide'
+  | 'document'
+  | 'image'
+  | 'web-clone'
+  | 'design-system';
+
+/**
+ * The type-filter bucket a project falls into, or `null` when the offered
+ * list names none of it (video and audio projects, since Media is no longer
+ * offered). Built on top of {@link projectCardCategory} so the filter stays
+ * anchored to what the card shows, with three deliberate differences:
+ * - a Document project (`intent: 'document'`, created by the Home Document
+ *   chip) wears the Prototype chip but filters as Document, not Prototype;
+ * - an Image project (`kind: 'image'`) wears the Media chip but filters as
+ *   Image;
+ * - a Live Artifact project (`kind: 'prototype'`) filters as Prototype, so it
+ *   stays reachable now that Live Artifact is not an option.
+ */
+export function projectKindFilterCategory(project: Project): ProjectKindFilterCategory | null {
+  switch (projectCardCategory(project)) {
+    case 'design-system':
+      return 'design-system';
+    case 'slide':
+      return 'slide';
+    case 'web-clone':
+      return 'web-clone';
+    case 'media':
+      return project.metadata?.kind === 'image' ? 'image' : null;
+    case 'prototype':
+    case 'live-artifact':
+      return project.metadata?.intent === 'document' ? 'document' : 'prototype';
+    case 'brand':
+      // Unreachable in practice: projectCardCategory resolves brand-kind
+      // projects to 'design-system' first.
+      return null;
+  }
 }
 
 export function projectCategory(project: Project): ProjectCategory {

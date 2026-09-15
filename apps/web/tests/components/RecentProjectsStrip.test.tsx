@@ -1280,11 +1280,11 @@ describe('recvqbipG9QDTt — Recent Projects filter needs a visible clear entry'
       />,
     );
 
-    // Every project here falls back to the 'prototype' card category
-    // (projectCategory's default), so filtering to Media leaves zero
+    // Every project here falls back to the 'prototype' filter bucket
+    // (projectKindFilterCategory's default), so filtering to Image leaves zero
     // matches — exactly the "did my projects disappear?" scenario reported.
     fireEvent.click(screen.getByRole('button', { name: 'Any type' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Media' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Image' }));
 
     expect(screen.queryByText('Only Project')).toBeNull();
     const clearButton = screen.getByTestId('recent-projects-clear-filters');

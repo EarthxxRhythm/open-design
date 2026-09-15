@@ -160,7 +160,7 @@ test('[P0] workspace switcher changes identity, returns Home, and exposes team n
   await ensureRailOpen(page);
 
   await expect(page.getByTestId('workspace-switcher')).toContainText('Ada workspace');
-  await expect(page.getByTestId('entry-nav-drafts')).toContainText('Personal projects');
+  await expect(page.getByTestId('entry-nav-drafts')).toContainText('Projects');
   await expect(page.getByTestId('entry-nav-all-projects')).toHaveCount(0);
 
   await page.getByTestId('entry-nav-design-systems').click();
@@ -183,7 +183,7 @@ test('[P0] workspace switcher changes identity, returns Home, and exposes team n
   await expect(page.getByTestId('workspace-switcher')).toContainText('Atlas Team');
   await expect(page.getByTestId('entry-view-home')).toBeVisible();
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByTestId('entry-nav-drafts')).toContainText('Personal projects');
+  await expect(page.getByTestId('entry-nav-drafts')).toContainText('Projects');
   await expect(page.getByTestId('entry-nav-all-projects')).toContainText('Team projects');
   await expect(page.getByTestId('entry-nav-all-projects')).toBeVisible();
 

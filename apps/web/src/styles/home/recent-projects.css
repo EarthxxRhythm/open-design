@@ -54,6 +54,12 @@
   align-items: flex-end;
   gap: var(--spacing-8);
   min-width: 0;
+  /* Pin to the top of the head row rather than centering in it (OPEND-3110):
+     the row is 39px tall because of the filter pills beside the title, and
+     centering the 28.8px heading line box in it pushed the title 5px below the
+     24px content gutter (QA measured 29). Top-pinned, the title box starts on
+     the same 24px line as its left edge. */
+  align-self: flex-start;
 }
 .recent-projects__description {
   margin: 0;
