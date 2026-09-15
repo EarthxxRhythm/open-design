@@ -18,7 +18,7 @@ import { buildPath, navigate, type EntryHomeView, type Route } from '../router';
 import type { Project } from '../types';
 import type { ProjectDisplayStatus, WorkspaceCollabContext } from '@open-design/contracts';
 import { Icon, type IconName } from './Icon';
-import { hasRunStatusGlyph, ProjectRunStatusIcon } from './ProjectRunStatusIcon';
+import { hasRunStatusGlyph, ProjectIdleGlyph, ProjectRunStatusIcon } from './ProjectRunStatusIcon';
 import {
   ProjectHoverPreviewCard,
   useProjectHoverCover,
@@ -693,14 +693,16 @@ function ChromeHomeGlyph() {
 /**
  * The glyph leading one dropdown row.
  *
- * A project row with something to report shows its run status; every other row
- * — nothing running, a status that draws nothing (not_started / canceled), a
- * status that has not arrived yet, or a non-project tab like the plugin
- * marketplace — leads with the row's own icon, the folder (per product: 空的
- * 那个位置放文件夹 icon). The slot is therefore never empty, and the column
- * never has to decide whether to exist. Same component the rail's 最近项目 rows
- * lead with (RailRecentRow), so the two can never tell different stories about
- * the same project (OPEND-2694).
+ * A project row with something to report shows its run status; a project row
+ * with nothing to report — nothing running, a status that draws nothing
+ * (not_started), a status that has not arrived yet — leads with the idle
+ * project glyph. Both are the very components the rail's 最近项目 rows lead
+ * with (RailRecentRow), so the two can never tell different stories about the
+ * same project: not for its status (OPEND-2694) and not for its resting state
+ * either (OPEND-3129 — this slot used to draw the tab's folder while the rail
+ * drew the chat mark, and one project read as two). A non-project tab such as
+ * the plugin marketplace keeps its own icon. The slot is therefore never
+ * empty, and the column never has to decide whether to exist.
  *
  * Unknown is deliberately treated as "nothing to report" rather than guessed
  * at: a guess would flash the wrong status glyph on every open.
@@ -711,9 +713,12 @@ function leadGlyphFor(
   runStatusByProjectId: ReadonlyMap<string, ProjectDisplayStatus>,
   t: ReturnType<typeof useT>,
 ): ReactNode {
-  const status = tab.kind === 'project' ? runStatusByProjectId.get(tab.projectId) : undefined;
-  if (!status || !hasRunStatusGlyph(status)) {
+  if (tab.kind !== 'project') {
     return <Icon name={display.icon} size={14} />;
+  }
+  const status = runStatusByProjectId.get(tab.projectId);
+  if (!status || !hasRunStatusGlyph(status)) {
+    return <ProjectIdleGlyph size={14} />;
   }
   return (
     <ProjectRunStatusIcon status={status} size={14} label={t(STATUS_LABEL_KEYS[status])} />
@@ -1865,9 +1870,9 @@ export function WorkspaceTabsBar({
                       onFocus={(event) => showPreviewNow(tab.id, event.currentTarget)}
                     >
                       {/* Always up: every row fills the slot now — a run
-                          status when there is one, the folder icon otherwise —
-                          so the column can't half-exist and names stay on one
-                          shared left edge. */}
+                          status when there is one, the idle project glyph
+                          otherwise — so the column can't half-exist and names
+                          stay on one shared left edge. */}
                       <span className="workspace-tabs-dropdown__row-lead">
                         {leadGlyphFor(tab, display, runStatusByProjectId, t)}
                       </span>

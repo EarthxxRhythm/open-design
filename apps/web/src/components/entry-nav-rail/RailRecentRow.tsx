@@ -12,7 +12,7 @@ import type { ProjectDisplayStatus, WorkspaceCollabContext } from '@open-design/
 
 import { useT } from '../../i18n';
 import { Icon } from '../Icon';
-import { hasRunStatusGlyph, ProjectRunStatusIcon } from '../ProjectRunStatusIcon';
+import { hasRunStatusGlyph, ProjectIdleGlyph, ProjectRunStatusIcon } from '../ProjectRunStatusIcon';
 import { STATUS_LABEL_KEYS } from '../../state/projectRunStatus';
 import type { Project } from '../../types';
 import type { ProjectMoveErrorKind } from '../project-actions/useWorkspaceProjectMove';
@@ -120,31 +120,6 @@ function DeleteMark() {
       focusable="false"
     >
       <path d="M20 7V20C20 21.1046 19.1046 22 18 22H6C4.89543 22 4 21.1046 4 20V7H2V5H22V7H20ZM6 7V20H18V7H6ZM11 9H13V11H11V9ZM11 12H13V14H11V12ZM11 15H13V17H11V15ZM7 2H17V4H7V2Z" />
-    </svg>
-  );
-}
-
-/**
- * The mark every recent row leads with (supplied artwork): a chat bubble with a
- * spark, i.e. "a conversation with the agent lives in here" — which is what a
- * project is from the rail's point of view.
- *
- * Inlined for the same reason as the marks above: the shared icon set has no
- * glyph for it, and this is the only place it appears. `currentColor` is what
- * lets it take the row's ink, including the darker hover one.
- */
-function ChatMark() {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      width={16}
-      height={16}
-      fill="currentColor"
-      aria-hidden
-      focusable="false"
-    >
-      <path d="M7.0009 4.00001C3.6869 4.00001 1 6.69522 1 9.99416V22.0001H14.999C18.3131 22.0001 21 19.3049 21 16.0059V12.0001H19V16.0059C19 18.2043 17.2045 20.0001 14.999 20.0001H3V9.99416C3 7.79582 4.7954 6.00001 7.0009 6.00001H13V4.00001H7.0009ZM13 14.0001H15V12.0001H13V14.0001ZM7 14.0001H9V12.0001H7V14.0001ZM19.4707 2.31934C19.2942 1.89355 18.7058 1.89355 18.5293 2.31934L18.2764 2.93067C17.8445 3.97346 17.0385 4.80618 16.0254 5.25685L15.3076 5.57618C14.8973 5.759 14.8974 6.35621 15.3076 6.53908L16.0674 6.87697C17.055 7.31625 17.8466 8.11947 18.2861 9.12795L18.5332 9.69338C18.7136 10.1075 19.2863 10.1075 19.4668 9.69338L19.7139 9.12795C20.1534 8.11948 20.9449 7.31625 21.9326 6.87697L22.6924 6.53908C23.1025 6.35621 23.1026 5.759 22.6924 5.57618L21.9746 5.25685C20.9615 4.80619 20.1555 3.97349 19.7236 2.93067L19.4707 2.31934Z" />
     </svg>
   );
 }
@@ -337,10 +312,12 @@ export function RailRecentRow({
           {/* The row's leading glyph, in the SAME column the destinations put
               their icons in, so the rail stays one left edge. A project with a
               run to report shows that run's status instead of the chat mark
-              (per product: 和项目切换器里的状态对齐) — the very same component
+              (per product: 和项目切换器里的状态对齐) — the very same components
               the workspace tab dropdown leads its rows with
-              (`leadGlyphFor` in WorkspaceTabsBar), so the two can never tell
-              different stories about the same project. */}
+              (`leadGlyphFor` in WorkspaceTabsBar), status and idle mark alike
+              (OPEND-3129), so the two can never tell different stories about
+              the same project. 16 in an 18px slot: the box this row always
+              gave the mark. */}
           <span className="entry-nav-rail__recent-icon">
             {runStatus && hasRunStatusGlyph(runStatus) ? (
               <ProjectRunStatusIcon
@@ -349,7 +326,7 @@ export function RailRecentRow({
                 label={t(STATUS_LABEL_KEYS[runStatus])}
               />
             ) : (
-              <ChatMark />
+              <ProjectIdleGlyph size={16} />
             )}
           </span>
           <span className="entry-nav-rail__recent-name">{project.name}</span>

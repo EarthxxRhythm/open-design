@@ -126,6 +126,42 @@ function InterruptedBadge({ size, label }: { size: number; label?: string }) {
   );
 }
 
+/**
+ * The glyph a project leads with when it has nothing to report (OPEND-3129):
+ * a chat bubble with a spark, i.e. "a conversation with the agent lives in
+ * here" — which is what a project is from either list's point of view.
+ *
+ * ONE component for both surfaces that list projects — the rail's 最近项目
+ * rows and the project switcher above the chat — for the same reason those two
+ * share `ProjectRunStatusIcon` above: an idle project must look like one and
+ * the same thing wherever the user finds it, and the rail drawing this mark
+ * while the switcher drew a folder read as two different projects. Pairs with
+ * `hasRunStatusGlyph`: callers draw this exactly when that says there is no
+ * status to draw.
+ *
+ * Inlined rather than added to the shared icon set: no `IconName` maps to this
+ * artwork, and these two slots are the only places it appears. `currentColor`
+ * lets it take each slot's own ink — the rail row's, hover included, and the
+ * switcher's muted text — so colour stays the caller's decision, as it is for
+ * the status glyphs. `size` likewise: each slot keeps the box it always had.
+ */
+export function ProjectIdleGlyph({ size = 14 }: { size?: number }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="currentColor"
+      aria-hidden
+      focusable="false"
+      data-testid="project-idle-glyph"
+    >
+      <path d="M7.0009 4.00001C3.6869 4.00001 1 6.69522 1 9.99416V22.0001H14.999C18.3131 22.0001 21 19.3049 21 16.0059V12.0001H19V16.0059C19 18.2043 17.2045 20.0001 14.999 20.0001H3V9.99416C3 7.79582 4.7954 6.00001 7.0009 6.00001H13V4.00001H7.0009ZM13 14.0001H15V12.0001H13V14.0001ZM7 14.0001H9V12.0001H7V14.0001ZM19.4707 2.31934C19.2942 1.89355 18.7058 1.89355 18.5293 2.31934L18.2764 2.93067C17.8445 3.97346 17.0385 4.80618 16.0254 5.25685L15.3076 5.57618C14.8973 5.759 14.8974 6.35621 15.3076 6.53908L16.0674 6.87697C17.055 7.31625 17.8466 8.11947 18.2861 9.12795L18.5332 9.69338C18.7136 10.1075 19.2863 10.1075 19.4668 9.69338L19.7139 9.12795C20.1534 8.11948 20.9449 7.31625 21.9326 6.87697L22.6924 6.53908C23.1025 6.35621 23.1026 5.759 22.6924 5.57618L21.9746 5.25685C20.9615 4.80619 20.1555 3.97349 19.7236 2.93067L19.4707 2.31934Z" />
+    </svg>
+  );
+}
+
 export function ProjectRunStatusIcon({ status, size = 14, label }: Props) {
   switch (status) {
     case 'succeeded':
