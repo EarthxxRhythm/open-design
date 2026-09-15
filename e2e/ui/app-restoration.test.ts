@@ -49,7 +49,10 @@ function stagedAttachmentName(page: Page, name: string): Locator {
 
 async function expectFriendlyGenericRunFailure(page: Page): Promise<void> {
   const card = runErrorCard(page);
-  await expect(card).toContainText("This one didn't get through");
+  await expect(card).toContainText('The task could not be completed');
+  await expect(card.getByTestId('chat-run-error-description')).toHaveText(
+    'This task failed to run. Please retry. If it fails again, please contact support.',
+  );
   // Raw daemon/provider details belong in exported logs, not on the recovery
   // card. The surrounding cases still prove the friendly failure survives.
   await expect(card).not.toContainText('connection refused');

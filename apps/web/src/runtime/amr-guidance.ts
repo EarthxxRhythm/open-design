@@ -22,7 +22,7 @@ import { byokApiKeyIsEditableInSettings } from '../utils/byokProvider';
 // (vela #1055), so sending a user to /wallet would drop them on a surface the
 // product no longer navigates to.
 export const AMR_CONSOLE_URL =
-  'https://open-design.ai/amr/dashboard?source=open_design';
+  'https://open-design.ai/cloud/dashboard?source=open_design';
 export const DEFAULT_AMR_RECHARGE_URL = AMR_CONSOLE_URL;
 export const AMR_RECHARGE_URL = DEFAULT_AMR_RECHARGE_URL;
 
@@ -328,6 +328,7 @@ export type RunFailureMessageKey =
   | 'chat.runError.agentReplyIncompleteMessage'
   | 'chat.runError.noDeliverableMessage'
   | 'chat.runError.clarificationRepeatedMessage'
+  | 'chat.runError.regionNotSupportedMessage'
   | 'chat.runError.clientEnvironmentMessage'
   | null;
 
@@ -497,6 +498,7 @@ export type RunFailureTitleKey =
   | 'chat.runError.title.agentReplyIncomplete'
   | 'chat.runError.title.noDeliverable'
   | 'chat.runError.title.clarificationRepeated'
+  | 'chat.runError.title.regionNotSupported'
   | 'chat.runError.title.clientEnvironment'
   | 'chat.runError.title.certificateFailure'
   | 'chat.runError.title.proxyConfiguration'
@@ -538,18 +540,19 @@ export interface RunFailureUi {
    */
   cloudSwitchCta: boolean;
   /**
-   * Draw no error card at all — some other surface already owns this story.
+   * Draw no error card. Existing run status and diagnostics remain intact.
    *
-   * Two failures set it. The browser↔daemon stream drop hands its card to the
+   * The browser↔daemon stream drop hands its card to the
    * reconnect line at the tail of the conversation (grid 82–84, S29), which is
    * already saying the same thing with the right button; the insufficient
    * balance hands its card to the upgrade card (component 18). Two blocks of
    * UI for one event, in two different wordings, is exactly what the design
    * forbids.
    *
-   * This is a HAND-OFF, not a delete: it is only true while the surface named
-   * above is actually on screen. The reconnect line always is. The upgrade card
-   * is conditional — see `failureCardHandedToAmrBalanceCard`.
+   * Those hand-offs apply only while their receiving surface is on screen.
+   * The upgrade card is conditional — see `failureCardHandedToAmrBalanceCard`.
+   * Missing Git Bash also sets this flag by product decision: the existing
+   * failed-run status remains, with no replacement card or installation UI.
    */
   suppressCard?: boolean;
 }
@@ -1289,13 +1292,16 @@ const AGENT_AGNOSTIC_DETAIL_FAILURE_UI: Record<string, RunFailureUi> = {
     'chat.runError.title.sessionExpired',
     'chat.runError.sessionExpiredMessage',
   ),
-  // Windows: the agent needs Git Bash to spawn and it isn't installed
-  // (daemon user_action: install_cli). Point at installing Git for Windows,
-  // then retry — same "install the dependency, then re-run" shape as cli_missing.
-  git_bash_missing: retryWithGuidance(
-    'chat.runError.title.gitBashMissing',
-    'chat.runError.gitBashMissingMessage',
-  ),
+  // Product decision (2026-09-14): no error card for missing Git Bash.
+  // Keep the daemon's failed-run diagnosis and the existing run-status shell;
+  // suppressing this surface does not turn the failed run into a success.
+  git_bash_missing: {
+    ...retryWithGuidance(
+      'chat.runError.title.gitBashMissing',
+      'chat.runError.gitBashMissingMessage',
+    ),
+    suppressCard: true,
+  },
   // The bundled agent binary needs a CPU instruction set (AVX2) this device
   // doesn't have, so it crashes on launch — retrying reproduces the crash and
   // switching hosted models doesn't help (the runtime binary is the problem).
@@ -1553,7 +1559,8 @@ const AGENT_AGNOSTIC_DETAIL_FAILURE_UI: Record<string, RunFailureUi> = {
 //   - agent-agnostic root cause (cli missing, prompt too large, model
 //     unavailable, tool loop, bad output, bad runtime def) → named type + fix
 //   - agent-agnostic failure_detail (timeout, empty output, stale resumed
-//     session, missing Git Bash) → named type + retry, for every agent
+//     session) → named type + retry, for every agent
+//   - missing Git Bash → retain failed-run status without an error card
 //   - AMR agent, auth required      → authorize-and-retry button, clearer copy
 //   - AMR agent, insufficient funds → recharge button + manual retry, clearer copy
 //   - AMR agent, tier entitlement   → upgrade button + manual retry
@@ -1585,9 +1592,18 @@ export function resolveRunFailureUi(
     rawMessage,
     verdict,
   );
+  // S30 changes copy only. Keep the existing code/agent/verdict action
+  // selection, and never infer a region restriction from the raw message.
+  const localizedUi: RunFailureUi = detail === 'region_not_supported'
+    ? {
+      ...ui,
+      titleKey: 'chat.runError.title.regionNotSupported',
+      messageKey: 'chat.runError.regionNotSupportedMessage',
+    }
+    : ui;
   return runsOnALocalAgent(agentId)
-    ? withCloudSwitchCta(ui)
-    : withoutCloudSelfPromotion(ui);
+    ? withCloudSwitchCta(localizedUi)
+    : withoutCloudSelfPromotion(localizedUi);
 }
 
 function resolveRunFailureUiIgnoringSelfPromotion(
@@ -1760,7 +1776,7 @@ function resolveRunFailureUiIgnoringSelfPromotion(
       return failureCard(
         { directFix: 'launch-terminal-auth' },
         'chat.runError.title.signInRequired.other',
-        null,
+        'chat.runError.signInMessage.other',
         { secondaryRetry: true },
       );
     }
