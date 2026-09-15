@@ -107,6 +107,7 @@ interface TabDragTarget {
 }
 
 interface Props {
+  onDuplicateProject?: (id: string) => Promise<void> | void;
   onRenameProject?: (id: string, name: string) => Promise<unknown>;
   onDeleteProject?: (id: string) => Promise<boolean | void> | boolean | void;
   route: Route;
@@ -774,6 +775,7 @@ function DockRowPreview({
 }
 
 export function WorkspaceTabsBar({
+  onDuplicateProject,
   onRenameProject,
   onDeleteProject,
   route,
@@ -1915,19 +1917,29 @@ export function WorkspaceTabsBar({
                       <button type="button" className={styles.more}
                         aria-label={t('designFiles.rowMenu')} aria-haspopup="menu"
                         aria-expanded={dockActions === tab.id}
-                        onClick={() => { const rect = dockMenuRef.current?.getBoundingClientRect(); if (rect) setDockActionPosition(dockFlyoutPosition(rect, window.innerWidth, 120)); clearPreview(); setDockActions(dockActions === tab.id ? null : tab.id); setDockActionError(''); }}>
+                        onClick={() => { const rect = dockMenuRef.current?.getBoundingClientRect(); if (rect) setDockActionPosition(dockFlyoutPosition(rect, window.innerWidth, 160)); clearPreview(); setDockActions(dockActions === tab.id ? null : tab.id); setDockActionError(''); }}>
                         <RemixIcon name="more-2-line" size={16} />
                       </button>
                     ) : null}
                     {dockActions === tab.id && tab.kind === 'project' ? createPortal(
-                      <div className={styles.actions} role="menu" style={{ position: 'fixed', left: dockActionPosition.left, top: dockActionPosition.top, right: 'auto', width: 120, zIndex: 1200 }}>
-                        {(['rename', 'share', 'delete'] as const).map((kind) => (
+                      <div className={styles.actions} role="menu" style={{ position: 'fixed', left: dockActionPosition.left, top: dockActionPosition.top, right: 'auto', width: 160, zIndex: 1200 }}>
+                        {(['rename', 'duplicate', 'share', 'delete'] as const).map((kind) => (
                           <button key={kind} type="button" role="menuitem" className={kind === 'delete' ? styles.danger : undefined}
-                            onClick={() => { setProjectNameDraft(display.title); setDockActionError(''); setProjectAction({ kind, id: tab.projectId, title: display.title }); setDockMenuOpen(false); }}>
-                            <RemixIcon name={kind === 'rename' ? 'edit-line' : kind === 'share' ? 'share-forward-line' : 'delete-bin-line'} size={14} />
-                            {t(kind === 'rename' ? 'common.rename' : kind === 'share' ? 'common.share' : 'designs.menuDelete')}
+                            disabled={projectActionBusy || (kind === 'duplicate' && !onDuplicateProject)}
+                            onClick={async () => {
+                              if (kind === 'duplicate') {
+                                setProjectActionBusy(true); setDockActionError('');
+                                try { await onDuplicateProject?.(tab.projectId); setDockMenuOpen(false); }
+                                catch (error) { setDockActionError(String(error)); }
+                                finally { setProjectActionBusy(false); }
+                                return;
+                              }
+                              setProjectNameDraft(display.title); setDockActionError(''); setProjectAction({ kind, id: tab.projectId, title: display.title }); setDockMenuOpen(false); }}>
+                            <RemixIcon name={kind === 'rename' ? 'edit-line' : kind === 'duplicate' ? 'file-copy-line' : kind === 'share' ? 'share-forward-line' : 'delete-bin-line'} size={14} />
+                            {t(kind === 'rename' ? 'common.rename' : kind === 'duplicate' ? 'workspace.copyProject' : kind === 'share' ? 'workspace.shareToTeam' : 'designs.menuDelete')}
                           </button>
                         ))}
+                        {dockActionError ? <p role="alert">{dockActionError}</p> : null}
                       </div>, document.body,
                     ) : null}
                   </div>
@@ -2232,7 +2244,7 @@ export function WorkspaceTabsBar({
       {projectAction ? createPortal(
         <Dialog className="modal-confirm" role={projectAction.kind === 'delete' ? 'alertdialog' : 'dialog'}
           ariaLabelledBy="project-action-title" closeOnEscape onClose={() => { if (!projectActionBusy) setProjectAction(null); }}>
-          <DialogTitle id="project-action-title">{t(projectAction.kind === 'rename' ? 'common.rename' : projectAction.kind === 'share' ? 'common.share' : 'designs.menuDelete')}</DialogTitle>
+          <DialogTitle id="project-action-title">{t(projectAction.kind === 'rename' ? 'common.rename' : projectAction.kind === 'share' ? 'workspace.shareToTeam' : 'designs.menuDelete')}</DialogTitle>
           <DialogDescription>{projectAction.kind === 'delete' ? t('designs.deleteConfirm', { name: projectAction.title }) : projectAction.title}</DialogDescription>
           {projectAction.kind === 'rename' ? <input autoFocus aria-label={t('common.rename')} value={projectNameDraft} disabled={projectActionBusy} onChange={(event) => setProjectNameDraft(event.target.value)} /> : null}
           {dockActionError ? <p role="alert">{dockActionError}</p> : null}
@@ -2253,7 +2265,7 @@ export function WorkspaceTabsBar({
                 setProjectAction(null);
               } catch (error) { setDockActionError(String(error)); }
               finally { setProjectActionBusy(false); }
-            }}>{t(projectAction.kind === 'share' ? 'common.share' : projectAction.kind === 'delete' ? 'designs.menuDelete' : 'designs.renameSave')}</Button>
+            }}>{t(projectAction.kind === 'share' ? 'workspace.shareToTeam' : projectAction.kind === 'delete' ? 'designs.menuDelete' : 'designs.renameSave')}</Button>
           </DialogFooter>
         </Dialog>, document.body,
       ) : null}

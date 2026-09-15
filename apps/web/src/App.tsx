@@ -5531,6 +5531,7 @@ function AppInner() {
         data-host-platform={hostPlatform}
       >
         <WorkspaceTabsBar
+          onDuplicateProject={handleDuplicateProject}
           onRenameProject={handleRenameProject}
           onDeleteProject={handleDeleteProject}
           route={route}

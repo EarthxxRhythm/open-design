@@ -2009,9 +2009,9 @@ describe('WorkspaceTabsBar project actions', () => {
     const request = vi.spyOn(shareRequests, 'requestProjectShare').mockImplementation(() => {});
     render(<WorkspaceTabsBar route={projectRoute} projects={[project]} />);
     await openActions();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'common.share' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'workspace.shareToTeam' }));
     expect(request).not.toHaveBeenCalled();
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'common.share' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'workspace.shareToTeam' }));
     await waitFor(() => expect(request).toHaveBeenCalledWith(project.id, 'design.html'));
     expect(navigate).toHaveBeenCalledWith({ kind: 'project', projectId: project.id, conversationId: null, fileName: 'design.html' });
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
@@ -2022,8 +2022,8 @@ describe('WorkspaceTabsBar project actions', () => {
     const request = vi.spyOn(shareRequests, 'requestProjectShare').mockImplementation(() => {});
     render(<WorkspaceTabsBar route={projectRoute} projects={[project]} />);
     await openActions();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'common.share' }));
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'common.share' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'workspace.shareToTeam' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'workspace.shareToTeam' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('workspace.noFilesMatch');
     expect(request).not.toHaveBeenCalled();
     expect(screen.getByRole('dialog')).toBeTruthy();
@@ -2033,10 +2033,29 @@ describe('WorkspaceTabsBar project actions', () => {
     const remove = vi.fn();
     render(<WorkspaceTabsBar route={projectRoute} projects={[project]} onDeleteProject={remove} />);
     await openActions();
-    expect(screen.getByRole('menuitem', { name: 'common.share' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: 'workspace.shareToTeam' })).toBeTruthy();
     fireEvent.click(screen.getByRole('menuitem', { name: 'designs.menuDelete' }));
     fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'common.cancel' }));
     expect(remove).not.toHaveBeenCalled();
     expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+});
+
+describe('project dropdown duplication', () => {
+  it('duplicates the chosen project and offers team sharing', async () => {
+    window.localStorage.clear();
+    const dock = document.createElement('div');
+    document.body.append(dock);
+    setWorkspaceTabsDock(dock);
+    const duplicate = vi.fn().mockResolvedValue(undefined);
+    try {
+      render(<WorkspaceTabsBar route={projectRoute} projects={[project]} onDuplicateProject={duplicate} />);
+      fireEvent.click(await screen.findByTestId('workspace-tabs-dropdown-trigger'));
+      fireEvent.click(screen.getByRole('button', { name: 'designFiles.rowMenu' }));
+      expect(screen.getByRole('menuitem', { name: 'workspace.shareToTeam' })).toBeTruthy();
+      fireEvent.click(screen.getByRole('menuitem', { name: 'workspace.copyProject' }));
+      await waitFor(() => expect(duplicate).toHaveBeenCalledWith(project.id));
+      await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    } finally { cleanup(); setWorkspaceTabsDock(null); dock.remove(); }
   });
 });
