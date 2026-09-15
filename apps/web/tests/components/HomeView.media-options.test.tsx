@@ -605,23 +605,23 @@ describe('HomeView media composer options', () => {
     const onSubmit = vi.fn();
     renderHome({ onSubmit });
 
-    await clickHomeRailChip('image');
-    await setHomePrompt('Create a campaign image.');
+    await clickHomeRailChip('video');
+    await setHomePrompt('Create a launch teaser.');
     await submitHome();
 
     await waitFor(() => {
       expect(fetchMock.mock.calls.some(([url, init]) => (
         typeof url === 'string' &&
         url.includes('/api/plugins/od-media-generation/apply') &&
-        JSON.parse(String(init?.body)).inputs.subject === 'a polished product concept'
+        JSON.parse(String(init?.body)).inputs.subject === 'a short product reveal'
       ))).toBe(true);
     });
     const applyCall = fetchMock.mock.calls.find(([url]) => (
       typeof url === 'string' && url.includes('/api/plugins/od-media-generation/apply')
     ));
     expect(JSON.parse(String(applyCall?.[1]?.body)).inputs).toMatchObject({
-      mediaKind: 'image',
-      subject: 'a polished product concept',
+      mediaKind: 'video',
+      subject: 'a short product reveal',
       style: 'cinematic, high-quality, on-brand',
       aspect: '16:9',
     });

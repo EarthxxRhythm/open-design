@@ -74,7 +74,7 @@ describe('OD Next V2 prompt recipe', () => {
 
     const prompt = composeOdNextStrategyRequestPromptV2(pptRecipe);
     const bundledTaskSkill = composeOdNextStrategyBundleHeadV2(pptRecipe)
-      .sessionSkills.taskTypeSkill.body;
+      .sessionSkills.taskTypeSkill?.body;
 
     expect(prompt).toContain('OD Deck Protocol v1');
     expect(prompt).toContain('data-od-deck-protocol="1"');
@@ -108,7 +108,7 @@ describe('OD Next V2 prompt recipe', () => {
     };
     const textArtifactPrompt = composeOdNextStrategyRequestPromptV2(textArtifactRecipe);
     const textArtifactBundleSkill = composeOdNextStrategyBundleHeadV2(textArtifactRecipe)
-      .sessionSkills.taskTypeSkill.body;
+      .sessionSkills.taskTypeSkill?.body;
     const textArtifactStableContext = composeOdNextStrategyStableRequestContextV2(
       { deckIntent: true },
       'text_artifact',
