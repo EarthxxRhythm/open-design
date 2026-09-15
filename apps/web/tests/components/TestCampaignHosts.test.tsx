@@ -132,9 +132,10 @@ describe("Test decisions at the existing host touchpoints", () => {
 					document.createTextNode("Test host content"),
 				);
 			});
-		vi
-			.spyOn(HTMLElement.prototype, "getClientRects")
-			.mockReturnValue({ length: 1, item: () => null } as unknown as DOMRectList);
+		vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue({
+			length: 1,
+			item: () => null,
+		} as unknown as DOMRectList);
 	});
 	afterEach(() => {
 		clearTestRuntimeSession();
@@ -143,6 +144,141 @@ describe("Test decisions at the existing host touchpoints", () => {
 		vi.unstubAllEnvs();
 		vi.restoreAllMocks();
 		delete (globalThis as HostGlobal).__cmsTestHost;
+	});
+
+	it("discovers new Test deployments without reload, preserves unchanged mounts and follows replacement/removal after end", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date(context.updatedAt));
+		let catalog: string[] = [];
+		let ended = false;
+		let startsAt = Date.parse("2029-12-31T23:00:00.000Z");
+		const requested: string[] = [];
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: string, init?: RequestInit) => {
+				const url = new URL(input, "http://localhost");
+				if (url.pathname.endsWith("/deployments"))
+					return Response.json({
+						deployments: catalog.map((id) => ({
+							id,
+							activityId: "activity-four",
+							snapshotHash: "sha256:four-snapshot",
+							snapshot: {
+								contentVersionId: "version-four-placement",
+								manifestHash: "sha256:four-manifest",
+								artifactHash: "sha256:four-artifact",
+								placementKeys: [...placements],
+							},
+						})),
+					});
+				if (url.pathname.endsWith("/context"))
+					return Response.json({
+						...context,
+						deploymentId: JSON.parse(String(init?.body)).deploymentId,
+					});
+				if (url.pathname === "/api/touchpoints/test-runtime") {
+					const placement = placements.find(
+						(key) => key === url.searchParams.get("placementKey"),
+					);
+					if (!placement) throw new Error("Unexpected placement");
+					const id = url.searchParams.get("deploymentId")!;
+					requested.push(id);
+					return Response.json({
+						...decision(placement),
+						deploymentId: id,
+						serverTime: new Date().toISOString(),
+						authorizationExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+						endsAt: ended
+							? new Date(Date.now() - 1).toISOString()
+							: "2030-01-01T01:00:00.000Z",
+						startsAt: new Date(startsAt).toISOString(),
+						testContext: {
+							...context,
+							deploymentId: id,
+							scheduleState: ended
+								? "ended"
+								: Date.now() < startsAt
+									? "before"
+									: "active",
+						},
+					});
+				}
+				return Response.json(
+					{},
+					{ status: input.includes("acceptances") ? 201 : 404 },
+				);
+			}),
+		);
+		const nodes = () => [...document.querySelectorAll("opend-touchpoint")];
+		const tick = async () => {
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(30_000);
+			});
+		};
+		try {
+			await act(async () => {
+				render(
+					<I18nProvider initial="zh-CN">
+						<TestCampaignModal authenticated sessionSubject="account-a" />
+						<ProductionCampaignModal authenticated sessionSubject="account-a" />
+						<ProductionCampaignBadge authenticated sessionSubject="account-a" />
+						<ProductionCampaignHover authenticated sessionSubject="account-a" />
+					</I18nProvider>,
+				);
+			});
+			expect(nodes()).toHaveLength(0);
+			catalog = ["deployment-a"];
+			await tick();
+			expect(nodes()).toHaveLength(4);
+			expect(requested).toContain("deployment-a");
+			const originals = nodes();
+			const mounts = vi.mocked(OpenDesignTouchpointElement.prototype.mount).mock
+				.calls.length;
+			await tick();
+			expect(nodes()).toHaveLength(4);
+			for (const [index, node] of nodes().entries())
+				expect(node).toBe(originals[index]);
+			expect(OpenDesignTouchpointElement.prototype.mount).toHaveBeenCalledTimes(
+				mounts,
+			);
+			catalog = ["deployment-b"];
+			await tick();
+			expect(requested).toContain("deployment-b");
+			expect(nodes()).toHaveLength(4);
+			catalog = [];
+			await tick();
+			expect(nodes()).toHaveLength(0);
+			// An ended deployment must not stop discovery of the next one.
+			ended = true;
+			catalog = ["deployment-ended"];
+			await tick();
+			expect(requested).toContain("deployment-ended");
+			expect(nodes()).toHaveLength(0);
+			ended = false;
+			catalog = ["deployment-c"];
+			await tick();
+			expect(requested).toContain("deployment-c");
+			expect(nodes()).toHaveLength(4);
+			fireEvent.keyDown(document, { key: "Escape" });
+			expect(nodes()).toHaveLength(3);
+			await tick();
+			expect(nodes()).toHaveLength(3); // An unchanged directory cannot undo dismissal.
+			catalog = ["deployment-future"];
+			startsAt = Date.now() + 45_000;
+			await tick();
+			expect(nodes()).toHaveLength(0);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(14_999);
+			});
+			expect(nodes()).toHaveLength(0);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(1);
+			});
+			expect(nodes()).toHaveLength(4);
+		} finally {
+			cleanup();
+			vi.useRealTimers();
+		}
 	});
 
 	it("switches all Test placements together when the client language changes without changing deployment", async () => {
@@ -285,7 +421,9 @@ describe("Test decisions at the existing host touchpoints", () => {
 		setTestRuntimeSession(session);
 		const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
 			if (url.includes("acceptances"))
-				return new Response(JSON.stringify({ id: "acceptance" }), { status: 201 });
+				return new Response(JSON.stringify({ id: "acceptance" }), {
+					status: 201,
+				});
 			return new Response(JSON.stringify({ error: "production_read_forbidden" }), {
 				status: 404,
 			});

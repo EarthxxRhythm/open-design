@@ -40,40 +40,27 @@ import {
 	touchpointStaticActionsMatch,
 } from "./touchpoint-static-actions";
 
+import {
+	TEST_CAMPAIGN_PLACEMENTS,
+	type TestCampaignPlacement,
+	type TestDeployment,
+	useTestDeploymentSelection,
+} from "./test-deployment-selection";
+export {
+	TEST_CAMPAIGN_PLACEMENTS,
+	type TestCampaignPlacement,
+	type TestDeployment,
+} from "./test-deployment-selection";
+
 export const TEST_CAMPAIGN_MODAL_PLACEMENT =
 	"opend.home.campaign-modal" as const;
 export const TEST_CAMPAIGN_MODAL_CAPABILITIES = [
 	"close",
 	"static-action",
 ] as const;
-export const TEST_CAMPAIGN_PLACEMENTS = [
-	"opend.home.account-badge",
-	"opend.home.campaign-modal",
-	"opend.home.hover-entry",
-	"opend.home.hover-layer",
-] as const;
-export type TestCampaignPlacement = (typeof TEST_CAMPAIGN_PLACEMENTS)[number];
 const supportedCapabilities = new Set<string>(TEST_CAMPAIGN_MODAL_CAPABILITIES);
 const placementCapabilities = new Set(["hover", "static-action"]);
 type Scenario = "realtime";
-
-/** The list response is the selected deployment snapshot, not a presentation fixture. */
-export type TestDeployment = {
-	id: string;
-	activityId: string;
-	snapshot: {
-		contentVersionId?: string;
-		manifestHash?: string;
-		artifactHash?: string;
-		placementKeys: string[];
-		placements?: Array<{
-			key: string;
-			requiredCapabilities: string[];
-			staticActions: TouchpointStaticAction[];
-		}>;
-	};
-	snapshotHash?: string;
-};
 export type TestContext = TestRuntimeContext;
 export type TestDecision = TestRuntimeDecision<
 	WebTouchpointContent,
@@ -460,53 +447,19 @@ export function TestCampaignModal({
 			typeof window !== "undefined" &&
 			new URLSearchParams(window.location.search).get("cmsTestControls") === "1",
 	);
-	const [catalog, setCatalog] = useState<{
-		owner: string | null;
-		deployments: TestDeployment[];
-	} | null>(null);
-	const [selection, setSelection] = useState<{
-		owner: string | null;
-		deployment: TestDeployment;
-	} | null>(null);
+	const {
+		deployments,
+		selected: deployment,
+		select,
+	} = useTestDeploymentSelection({
+		enabled: compatible,
+		owner,
+		manual: showControls,
+	});
 	const publishedSession = useRef<TestRuntimeSession | null>(null);
-	const deployments =
-		compatible && catalog?.owner === owner ? catalog.deployments : [];
-	const deployment =
-		compatible && selection?.owner === owner ? selection.deployment : null;
-
 	useEffect(() => {
 		ensureWebTouchpointElement();
-		setCatalog(null);
-		setSelection(null);
-		if (!compatible) return;
-		let cancelled = false;
-		const controller = new AbortController();
-		void fetch("/api/touchpoints/test-runtime/deployments", {
-			cache: "no-store",
-			signal: controller.signal,
-		})
-			.then(async (response) => {
-				if (!response.ok) throw new Error("touchpoint_test_catalog_failed");
-				const value = (await response.json()) as { deployments?: TestDeployment[] };
-				if (cancelled || controller.signal.aborted) return;
-				const available = (value.deployments ?? []).filter(
-					(candidate) =>
-						typeof candidate.id === "string" &&
-						testPlacementIds(candidate).length > 0,
-				);
-				setCatalog({ owner, deployments: available });
-				if (!showControls && available[0])
-					setSelection({ owner, deployment: available[0] });
-			})
-			.catch(() => {
-				if (!cancelled && !controller.signal.aborted)
-					setCatalog({ owner, deployments: [] });
-			});
-		return () => {
-			cancelled = true;
-			controller.abort();
-		};
-	}, [compatible, owner, showControls]);
+	}, []);
 
 	const adapter = useMemo(() => {
 		if (!deployment) return null;
@@ -531,7 +484,10 @@ export function TestCampaignModal({
 				const response = await fetch("/api/touchpoints/test-runtime/context", {
 					method: "POST",
 					headers: { "content-type": "application/json" },
-					body: JSON.stringify({ deploymentId: selected.id, scenario: "realtime" }),
+					body: JSON.stringify({
+						deploymentId: selected.id,
+						scenario: "realtime",
+					}),
 					signal,
 				});
 				if (!current()) return { kind: "retain" };
@@ -678,7 +634,12 @@ export function TestCampaignModal({
 								decisions.map((item) => [item.placementKey, item.decision]),
 							),
 						});
-			return { kind: "decision", value: session, key: selectionKey, validForMs };
+			return {
+				kind: "decision",
+				value: session,
+				key: selectionKey,
+				validForMs,
+			};
 		};
 		return { selectionKey, load };
 	}, [deployment, locale]);
@@ -750,11 +711,7 @@ export function TestCampaignModal({
 					aria-label="Test activity"
 					value={deployment?.id ?? ""}
 					onChange={(event) => {
-						const next = deployments.find(
-							(candidate) => candidate.id === event.target.value,
-						);
-						clearTestRuntimeSession();
-						setSelection(next ? { owner, deployment: next } : null);
+						select(event.target.value);
 					}}
 				>
 					<option value="">Select a Test activity</option>
