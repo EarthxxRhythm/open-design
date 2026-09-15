@@ -16,13 +16,63 @@ is a separate capability: never infer one from the user's prompt.
 | Vela fee9d67fa + OpenCode 1.17.18 | Real Vela → OD ACP bridge | `apply_patch`: 10.002-second hold, tool preview after 72 ms, exact 123,090-byte final file, durable session captured. This is an adapter experiment, not a new AMR browser acceptance. |
 
 These are controlled local provider experiments, not live-model latency
-benchmarks. Claude/AMR have existing frontend row regression coverage; only the
-Codex and OpenCode rows above have browser witnesses from this investigation.
+benchmarks. Claude/AMR have existing frontend row regression coverage. The
+September 11 AMR result above was adapter-only; the September 15 follow-up below
+adds real daemon and browser witnesses.
 
 Claude uses `--include-partial-messages` when its help probe advertises support.
 Older builds retain the existing fallback. This does not certify arbitrary
 Bash command arguments. Codex support is scoped to official `apply_patch`
 streaming; see [Codex acceptance](codex-patch-streaming.md).
+
+## AMR daemon and browser follow-up (2026-09-15)
+
+`e2e/tests/amr/tool-preview.test.ts` launches the actual installed Vela and
+OpenCode through OD's tools-dev daemon. A loopback Chat Completions provider
+sends half of a large `apply_patch` argument, then waits until OD emits the
+matching tool preview before releasing the remainder. No preview plugin is
+injected into AMR. Both rounds verify exact 130,290-byte files, complete final
+patch input, one successful tool/result pair with the preview's identity, and
+native session recovery with the same handle and `resumed` state on round two.
+
+| Vela | OpenCode | First-turn preview | Continuation preview | Files and session |
+| --- | --- | --- | --- | --- |
+| fee9d67fa | 1.17.18 | 68 ms | 58 ms | Both exact; original session resumed |
+| fee9d67fa | 1.18.30 | 281 ms | 161 ms | Both exact; original session resumed |
+
+Times measure provider argument start to daemon SSE receipt, not browser paint
+or live-model performance. These two OpenCode versions are tested points, not
+a claim about every Vela build or older bundled OpenCode version. The first
+fixture attempt removed a trailing space from the patch; its byte assertion
+correctly failed. The fixture now removes only the terminal newline when
+constructing the patch, preserving file whitespace.
+
+A separate local browser run used Vela fee9d67fa and OpenCode 1.17.18 with a
+synthetic AMR account/workspace authority. Runs were created through the normal
+HTTP API, then the project was opened in the real web app. With arguments still
+held, the page displayed `Apply_patch` and its running indicator. The first
+hold lasted about 195 seconds while browser inspection recovered from transient
+timeouts; the continuation was observed during a 79-second hold. Both final
+123,890-byte files were exact, each had one matching final tool/result pair,
+and continuation reported `resumed` with the same native handle. This
+proves visibility during the hold, not a measured first-paint latency. Screenshots
+and event/file evidence are retained locally under
+`.tmp/amr-browser-1789443221071/`. The browser witness is manual; the committed
+opt-in test covers the daemon/SSE boundary and native continuation.
+
+AMR therefore already meets the tool-type preview red line for these tested
+versions. This follow-up adds the missing acceptance coverage, without changing
+Vela's managed configuration or adding another event subscriber. It does not
+promise an early filename or partial command: those still require upstream
+argument deltas.
+
+```sh
+OD_E2E_VELA_BIN="$(command -v vela)" OD_E2E_OPENCODE_BIN="$(command -v opencode)" corepack pnpm --filter @open-design/e2e test tests/amr/tool-preview.test.ts
+```
+
+Both executable variables are required; the test skips without them. Provider
+traffic is local and uses synthetic credentials. This is additional coverage
+of existing AMR behavior, so it is not a red-on-main bug-fix test.
 
 ## OpenCode event integration and compatibility
 
