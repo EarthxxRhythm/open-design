@@ -1,0 +1,79 @@
+"""Disposable real-content transfer measurement; immutable dogfood objects only."""
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import sys
+import time
+import urllib.request
+
+import notarization_factors as n
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from lib.r2 import R2Client, R2Credentials
+
+
+def main():
+    n.guard()
+    report = {'seconds': {}, 'scope': 'content transfer only; not a product release'}
+    def timed(name, fn):
+        start = time.monotonic()
+        try:
+            return fn()
+        finally:
+            report['seconds'][name] = round(time.monotonic() - start, 3)
+            n.write('transfer.json', report)
+            print(name, report['seconds'][name], flush=True)
+
+    timed('prepareReference', lambda: n.prepare('full'))
+    resources = n.APP / 'Contents/Resources'
+    archive = n.ROOT / 'resources.tgz'
+    timed('archive', lambda: n.run('tar', '-czf', archive, '-C', resources.parent, 'Resources'))
+    with archive.open('rb') as source:
+        digest = hashlib.file_digest(source, 'sha256').hexdigest()
+    report['archiveBytes'] = archive.stat().st_size
+    report['sha256'] = digest
+    original = [p for p in resources.rglob('*') if p.is_file() and not p.is_symlink()]
+    report['resourceFiles'] = len(original)
+    report['resourceBytes'] = sum(p.stat().st_size for p in original)
+    key = f"dogfood/0.22.0-beta.{os.environ['GITHUB_RUN_ID']}/architecture-blob-{os.environ['GITHUB_RUN_ATTEMPT']}/resources.tgz"
+    if not re.fullmatch(r'dogfood/0\.22\.0-beta\.[0-9]+/architecture-blob-[0-9]+/resources\.tgz', key):
+        raise RuntimeError('refusing non-experimental distribution key')
+    report['objectKey'] = key
+    url = os.environ['RELEASE_PUBLIC_ORIGIN'].rstrip('/') + '/' + key
+    report['publicUrl'] = url
+    client = R2Client(endpoint=os.environ['RELEASE_STORAGE_ENDPOINT'],
+                      bucket=os.environ['RELEASE_STORAGE_BUCKET'], timeout=180,
+                      credentials=R2Credentials(os.environ['RELEASE_STORAGE_ACCESS_KEY_ID'],
+                                                os.environ['RELEASE_STORAGE_SECRET_ACCESS_KEY']))
+    timed('upload', lambda: client.put_file(key=key, file=archive, content_type='application/gzip'))
+    def head():
+        with urllib.request.urlopen(urllib.request.Request(url, method='HEAD'), timeout=60) as response:
+            assert int(response.headers['Content-Length']) == report['archiveBytes']
+    timed('cdnHead', head)
+    report['publicationSeconds'] = sum(report['seconds'][k] for k in ('archive', 'upload', 'cdnHead'))
+    downloaded = n.ROOT / 'consumer.tgz'
+    def acquire():
+        with urllib.request.urlopen(url, timeout=180) as source, downloaded.open('wb') as destination:
+            shutil.copyfileobj(source, destination)
+        with downloaded.open('rb') as source:
+            assert hashlib.file_digest(source, 'sha256').hexdigest() == digest
+    timed('firstAcquireAndVerify', acquire)
+    consumer = n.ROOT / 'consumer'
+    consumer.mkdir()
+    timed('extract', lambda: n.run('tar', '-xzf', downloaded, '-C', consumer))
+    restored = consumer / 'Resources'
+    # Full archive digest and a real structured consumer read, no source fallback.
+    assert (restored / 'app/package.json').read_bytes() == (resources / 'app/package.json').read_bytes()
+    files = [p for p in restored.rglob('*') if p.is_file() and not p.is_symlink()]
+    assert len(files) == report['resourceFiles']
+    assert sum(p.stat().st_size for p in files) == report['resourceBytes']
+    report['consumerValidated'] = True
+    n.write('transfer.json', report)
+    print(json.dumps(report, indent=2))
+
+
+if __name__ == '__main__':
+    main()

@@ -1,7 +1,7 @@
 # Disposable payload-factor experiment
 
 Only `experiment/architecture-benefit-boundaries`; do not merge this workflow
-replacement. No production channel, R2, update or notification credentials.
+replacement. Apple factor jobs have no R2/update/notification credentials.
 The original release-beta four-round experiment remains unchanged.
 
 ## Purpose and limits
@@ -79,3 +79,14 @@ SHA256 before signing. Same Electron base; hidden fixture actually reads the
 real archived package metadata. This is not full application compatibility
 acceptance. It distinguishes in-bundle aggregation from external blob distribution
 before attributing the lower file-count benefit to a larger architecture change.
+
+## Externalization cost, without another notarization
+
+`blob-transfer` downloads the same pinned reference once, archives its actual
+Resources, writes exactly one immutable `dogfood/0.22.0-beta.<run>/architecture-blob-<attempt>/resources.tgz`
+object, verifies CDN HEAD size, downloads and checks its whole SHA256, extracts it
+and reads its real package metadata. Release storage credentials exist only on
+this step; no production channel, pointer or workload-cache write is possible.
+It measures externalization's archive/publication/first-acquire costs, not a
+full client upgrade or four complete plan/blob factorial releases. CDN readiness
+and consumer readiness are separate endpoints. No Apple credentials or submissions.
