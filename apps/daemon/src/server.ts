@@ -1,5 +1,4 @@
 // @ts-nocheck
-import { amrFirstOutputTimeoutMs } from './runtimes/defs/amr.js';
 import type {
   DesktopExportArtifactInput,
   DesktopExportArtifactResult,
@@ -12882,9 +12881,6 @@ export async function startServer({
         failure,
         attemptCount: run.retryAttemptCount ?? 0,
         sideEffects,
-        // AMR direct-model evaluation is one request per user turn. A host
-        // retry would silently turn that baseline into a second model call.
-        ...(def.id === 'amr' && selectedAmrRuntime === 'none' ? { maxAttempts: 0 } : {}),
       });
       if (allowRetry && decision.shouldRetry && !design.runs.isTerminal(run.status)) {
         run.retryOriginalFailure ??= failure ?? undefined;
@@ -13657,7 +13653,7 @@ export async function startServer({
     // earlier, so we keep only the new `runStartTimeMs` declaration.
     const runStartTimeMs = Date.now();
     const firstOutputTimeoutMs =
-      resolveChatRunFirstOutputTimeoutMs(amrFirstOutputTimeoutMs(selectedAmrRuntime, def.firstOutputTimeoutMs));
+      resolveChatRunFirstOutputTimeoutMs(def.firstOutputTimeoutMs);
     const artifactQuietPeriodMs = resolveChatRunArtifactQuietPeriodMs();
     // Grace before the inactivity watchdog escalates a stalled child from
     // SIGTERM to SIGKILL. Env-tunable like its OD_CHAT_RUN_* cancel-grace

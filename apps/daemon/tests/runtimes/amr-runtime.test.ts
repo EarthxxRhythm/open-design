@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { amrAgentDef, amrFirstOutputTimeoutMs } from '../../src/runtimes/defs/amr.js';
+import { amrAgentDef } from '../../src/runtimes/defs/amr.js';
 import { agentSessionStorageKey } from '../../src/runtimes/amr-session-key.js';
 
 it('selects the AMR harness per invocation without changing the default', () => {
@@ -24,13 +24,9 @@ it.each(['codex', 'claude', 'dsh', 'none'] as const)('passes %s through and keep
   expect(agentSessionStorageKey('amr', runtime)).toBe(`amr:${runtime}`);
 });
 
-// Every AMR runtime waits on the same provider before the first token, and a
-// harness adds its own spawn/resume/replay on top of that wait rather than
-// shortening it. The old split gave the harnesses a fifth of the model-only
-// budget, which cost the harness evaluation its heaviest prompts to a
-// "stalled without emitting a first output for 120s" with ttft 0.
-it('gives every AMR runtime the same first-output window', () => {
-  for (const runtime of ['none', 'opencode', 'pi', 'codex', 'claude', 'dsh', undefined] as const) {
-    expect(amrFirstOutputTimeoutMs(runtime, 120_000)).toBe(600_000);
-  }
+// Every AMR runtime shares the production 2-minute first-output window carried
+// on the shared AMR def, so the evaluation matches what online users get. Other
+// agents keep their own def value (no watchdog when it is unset).
+it('keeps the production first-output window on the shared AMR def', () => {
+  expect(amrAgentDef.firstOutputTimeoutMs).toBe(2 * 60 * 1000);
 });

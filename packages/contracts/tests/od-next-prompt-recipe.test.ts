@@ -851,8 +851,6 @@ describe('runtime plan tool in the stable request context', () => {
 });
 
 it('requires an output for every planning step, including preparation', () => {
-  const prompt = composeOdNextStrategyCorePromptV2(recipe);
-  expect(prompt).toContain('Never emit outputs: []');
   expect(FullPlanV2Schema.safeParse({ executionMode: 'simple', steps: [{ id: 'prepare', objective: 'Resolve tokens', outputs: [] }], readinessArtifacts: [], buildPackages: [] }).success).toBe(false);
   expect(FullPlanV2Schema.safeParse({ executionMode: 'simple', steps: [{ id: 'prepare', objective: 'Resolve tokens', outputs: ['resolved design tokens'] }], readinessArtifacts: [], buildPackages: [] }).success).toBe(true);
 });

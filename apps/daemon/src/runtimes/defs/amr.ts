@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execAgentFile } from './shared.js';
-import type { AmrRuntime, ModelCapability, ModelCost, ModelMetadata } from '@open-design/contracts';
+import type { ModelCapability, ModelCost, ModelMetadata } from '@open-design/contracts';
 import type { RuntimeAgentDef, RuntimeBuildOptions, RuntimeModelOption } from '../types.js';
 
 const AMR_MODELS_TIMEOUT_MS = 10_000;
@@ -697,35 +697,8 @@ export const amrAgentDef = {
   // Once the ACP handshake has completed and session/prompt is waiting on the
   // provider, transport/status heartbeats must not leave the UI in Preparing
   // indefinitely. Two minutes leaves conservative provider-startup headroom
-  // while still bounding the user's wait and one safe same-run retry.
+  // while still bounding the user's wait and one safe same-run retry. This
+  // 2-minute window is the production baseline and applies to every AMR
+  // runtime; other agents keep their own def value (no watchdog when unset).
   firstOutputTimeoutMs: 2 * 60 * 1000,
 } satisfies RuntimeAgentDef;
-
-/** Reasoning may produce no stream deltas for several minutes.
- * Keep a finite wait, separate from the 30-minute whole-answer deadline.
- */
-export const AMR_FIRST_OUTPUT_TIMEOUT_MS = 10 * 60 * 1000;
-
-/** @deprecated Kept as the previous name for the same value. */
-export const AMR_DIRECT_MODEL_FIRST_OUTPUT_TIMEOUT_MS = AMR_FIRST_OUTPUT_TIMEOUT_MS;
-
-/**
- * Every AMR runtime waits on the same provider, so they share one first-output
- * budget.
- *
- * This used to hand the longer window to `none` alone, on the reading that only
- * model-only reasoning goes silent for minutes. A harness does not make the
- * provider answer sooner — it adds spawning the CLI, loading or re-seeding the
- * session, and replaying a transcript on top of the identical wait — so giving
- * it a fifth of the model-only budget bounded the wrong thing. The harness
- * evaluation measured it: `none` finished 45 of 45 deepseek cases with no
- * stall, while Claude, OpenCode and DSH lost the heaviest prompts to
- * "stalled without emitting a first output for 120s", every one of them with
- * ttft 0 — the provider had simply not started answering yet.
- *
- * The 30-minute inactivity watchdog still bounds a genuinely hung run, and
- * OD_CHAT_RUN_FIRST_OUTPUT_TIMEOUT_MS still overrides this per daemon.
- */
-export function amrFirstOutputTimeoutMs(_runtime: AmrRuntime | undefined, _defaultMs: number | undefined): number | undefined {
-  return AMR_FIRST_OUTPUT_TIMEOUT_MS;
-}
