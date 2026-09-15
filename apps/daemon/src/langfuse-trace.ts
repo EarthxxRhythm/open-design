@@ -1,3 +1,4 @@
+import type { EvalContextV2 } from './observability/eval-context.js';
 // Langfuse trace forwarding for completed agent runs.
 //
 // This module is intentionally dependency-free (no `langfuse` SDK). It builds
@@ -243,6 +244,7 @@ export interface TraceSafeObjectManifestBase {
 }
 
 export interface AttachmentManifestEntry extends TraceSafeObjectManifestBase {
+  source_path_hash?: string;
   object_class: 'attachment';
   attachment_id: string;
 }
@@ -349,6 +351,7 @@ export interface TurnInfo {
 }
 
 export interface ReportContext {
+  evalContextV2?: EvalContextV2;
   installationId: string | null;
   projectId: string;
   conversationId: string;
@@ -2026,6 +2029,12 @@ export function buildTracePayload(
   // here. Fields are flat (Langfuse stores it as JSON but indexes shallow
   // keys best). All entries are anonymous — no PII, no credentials.
   const traceMetadata: Record<string, unknown> = {
+    ...(ctx.evalContextV2 && wantsContent ? { eval_context_v2: wantsArtifacts ? ctx.evalContextV2 : {
+      ...ctx.evalContextV2,
+      attachments: { turnDelta: { semantics: 'current_user_turn', entries: [] }, effectiveContext: { semantics: 'conversation_context_before_run', entries: [] } },
+      artifacts: { snapshotStatus: 'unavailable', entries: [] },
+      completeness: { status: 'partial', reasons: [...ctx.evalContextV2.completeness.reasons, 'artifact_manifest_consent_off'] },
+    } } : {}),
     success,
     env: environment,
     status: ctx.run.status,

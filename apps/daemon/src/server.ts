@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { startEvidenceDelivery } from './services/evidence-delivery.js';
 import type {
   DesktopExportArtifactInput,
   DesktopExportArtifactResult,
@@ -7761,6 +7762,7 @@ export async function startServer({
       readRunTelemetrySinkConfig(process.env, configuredAmrEnv()),
     ),
   );
+  const stopEvidenceDelivery = startEvidenceDelivery(RUNTIME_DATA_DIR);
   const codexThreadCleanupOwner = createCodexThreadCleanupOwner();
   const design = {
     runs: createChatRunService({
@@ -7909,7 +7911,11 @@ export async function startServer({
       if (reportedRuns.has(run.id)) return;
       if (run.assistantMessageId) {
         const messageTelemetry = getMessageTelemetryFinalizationState(db, run.assistantMessageId);
-        if (messageTelemetry.finalizedAt !== null) return;
+        // An empty canceled assistant can be marked finalized by the UI without
+        // ever claiming a Task delivery. In v2, let the durable Run/Task gates in
+        // reportFinalizedMessage decide whether delivery is already owned.
+        if (messageTelemetry.finalizedAt !== null
+          && process.env.OPEN_DESIGN_EVAL_CONTRACT_V2_MODE !== 'send') return;
       }
       reportFinalizedMessage(
         {
@@ -17810,6 +17816,7 @@ export async function startServer({
       terminalTelemetryFallbackTimers.clear();
     };
     const cleanupDaemonBackgroundWork = () => {
+      stopEvidenceDelivery();
       clearTerminalTelemetryFallbackTimers();
       amrTerminalReportDelivery.stop();
       telemetry.disposeFatalHandlers();

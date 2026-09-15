@@ -1,3 +1,6 @@
+import { codexTurnUsageFromEvents } from './observability/codex-turn-usage.js';
+import { enqueueObjectEvidence, inheritFrozenAttachments, readObjectEvidence, enqueueFeedbackEvidence, drainEvidence } from './services/evidence-delivery.js';
+import { attachmentContext, buildEvalContext, evidenceMode } from './observability/eval-context.js';
 // Daemon ↔ langfuse-trace bridge.
 //
 // langfuse-trace.ts is dependency-free and works on a flat ReportContext.
@@ -83,7 +86,7 @@ import {
 } from './run-failure-classification.js';
 import { deriveRunErrorCode, runResultFromStatus } from './run-result.js';
 import { runAdmissionEvidenceForRun } from './runtimes/run-lifecycle-analytics.js';
-import { buildTraceObjectManifests } from './trace-object-manifest.js';
+import { buildTraceObjectManifests, freezeTraceObjectSources } from './trace-object-manifest.js';
 import type { TraceArtifactObjectSource, TraceObjectUploadManifests } from './trace-object-manifest.js';
 import { getDetectedRuntimeVersions } from './runtimes/detection.js';
 import { runTelemetryDeliveryIdempotencyKey } from './observability/delivery-state.js';
@@ -150,6 +153,8 @@ export interface BuildSafeRunQualityProjectionFromDaemonOpts {
   installationId?: string | null;
   env?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
+  taskTraceId?: string;
+  onEvaluationContext?: (context: ReturnType<typeof buildEvalContext>) => void;
 }
 
 /** Minimal durable Run surface required to rebuild the Task-safe projection. */
@@ -172,7 +177,10 @@ export interface SafeRunQualityDaemonRunRecord {
   analyticsTelemetry?: RunTelemetryTimestamps | null | undefined;
   promptBudgetDiagnostics?: Partial<RunDiagnosticsAnalytics> | null | undefined;
   userPrompt?: string | undefined;
+  promptTelemetry?: ReportContext['promptTelemetry'];
   projectAttachmentPaths?: string[] | undefined;
+  artifactPaths?: string[];
+  odNextTaskInputSnapshot?: import('./strategies/od-next/task-input-snapshot.js').OdNextTaskInputSnapshotDescriptor;
   projectMetadata?: Record<string, unknown> | null | undefined;
   deliverableSyntaxRepair?: DeliverableSyntaxRepairState;
   deliverableSyntaxValidation?: DeliverableSyntaxValidationEvidence;
@@ -1264,6 +1272,8 @@ export async function buildSafeRunQualityProjectionFromDaemon(
   if (opts.prefs.metrics !== true || opts.prefs.content !== true) return undefined;
   const { db, dataDir, run } = opts;
   let messageContent = '';
+  let resultDeliveryState: unknown;
+  let evaluationAttachments: ReturnType<typeof attachmentContext> | undefined;
   let producedFilesRaw: unknown;
   let traceObjectFilesRaw: unknown;
   let attachmentsRaw: unknown;
@@ -1277,6 +1287,10 @@ export async function buildSafeRunQualityProjectionFromDaemon(
       ));
       const message = assistantIndex >= 0 ? messages[assistantIndex] : undefined;
       if (message) {
+        resultDeliveryState = message.resultDeliveryState;
+        if (opts.onEvaluationContext && opts.prefs.artifactManifest === true) {
+          evaluationAttachments = attachmentContext(messages, assistantIndex, run.projectId ?? '');
+        }
         messageContent = typeof message.content === 'string' ? message.content : '';
         producedFilesRaw = message.producedFiles;
         traceObjectFilesRaw = traceObjectFilesForTelemetry(
@@ -1290,13 +1304,17 @@ export async function buildSafeRunQualityProjectionFromDaemon(
     }
   }
 
+  if (opts.taskTraceId && Array.isArray(run.artifactPaths) && Array.isArray(traceObjectFilesRaw)) {
+    const owned = new Set(run.artifactPaths);
+    traceObjectFilesRaw = traceObjectFilesRaw.filter((file: Record<string, unknown>) => owned.has(String(file.path ?? file.name ?? file.slug ?? '')));
+  }
   const fallbackManifests = buildTraceSafeManifests({
     projectId: run.projectId,
     runId: run.id,
     attachmentsRaw,
     traceObjectFilesRaw,
   });
-  const registrationManifests = await buildTraceObjectManifests({
+  const objectOptions = {
     installationId: opts.installationId ?? null,
     projectId: run.projectId ?? '',
     runId: run.id,
@@ -1306,11 +1324,37 @@ export async function buildSafeRunQualityProjectionFromDaemon(
       ? { attachmentPaths: run.projectAttachmentPaths }
       : {}),
     artifacts: buildTraceObjectArtifactSources(traceObjectFilesRaw),
+    ...(opts.taskTraceId ? { runScopedIds: true } : {}),
+    ...(run.odNextTaskInputSnapshot ? { taskInputSnapshot: { descriptor: run.odNextTaskInputSnapshot, snapshotsRoot: path.join(dataDir, 'od-next-task-inputs') } } : {}),
     prompt: run.userPrompt ?? '',
     prefs: opts.prefs,
     ...(opts.env ? { env: opts.env } : {}),
     ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
-    uploadMode: 'manifest-only',
+  };
+  const captureTaskObjects = opts.taskTraceId && evidenceMode((opts.env ?? process.env).OPEN_DESIGN_OBJECT_OUTBOX_MODE) === 'send';
+  let frozen = captureTaskObjects ? await readObjectEvidence(dataDir, run.id) : undefined;
+  if (captureTaskObjects && !frozen && ['succeeded', 'failed', 'canceled'].includes(run.status)) {
+    const captured = await freezeTraceObjectSources({ ...objectOptions, prompt: redactSecrets(objectOptions.prompt) });
+    const sources = await inheritFrozenAttachments(dataDir, {
+      projectId: run.projectId ?? '', conversationId: run.conversationId ?? '', runId: run.id,
+    }, evaluationAttachments?.effectiveContext.entries ?? [], captured);
+    const context: ReportContext = {
+      installationId: opts.installationId ?? null, projectId: run.projectId ?? '',
+      conversationId: run.conversationId ?? '', prefs: opts.prefs,
+      run: { runId: run.id, status: normalizeStatus(run.status), startedAt: run.createdAt, endedAt: run.updatedAt },
+      message: { messageId: run.assistantMessageId ?? '', prompt: '', output: '' },
+      artifacts: [], eventsSummary: { toolCalls: 0, errors: 0, durationMs: Math.max(0, run.updatedAt - run.createdAt) },
+    };
+    await enqueueObjectEvidence(dataDir, context, sources, opts.taskTraceId);
+    frozen = await readObjectEvidence(dataDir, run.id);
+  }
+  if (captureTaskObjects && frozen) {
+    await drainEvidence(dataDir, opts.fetchImpl);
+    frozen = await readObjectEvidence(dataDir, run.id);
+  }
+  const registrationManifests = frozen?.uploaded ?? await buildTraceObjectManifests({
+    ...objectOptions, uploadMode: 'manifest-only',
+    ...(frozen ? { frozenSources: frozen.sources, now: () => new Date(frozen.capturedAt) } : {}),
   });
   const manifests = mergeTraceSafeManifests(fallbackManifests, registrationManifests);
   const status = normalizeStatus(run.status);
@@ -1356,6 +1400,21 @@ export async function buildSafeRunQualityProjectionFromDaemon(
     firstTokenSeen: Boolean(run.analyticsTelemetry?.firstTokenAt),
   });
   const deliverableSyntax = projectDeliverableSyntaxTelemetry(run);
+  if (opts.onEvaluationContext) {
+    const evaluationUsage = messageUsageFromAnalytics(scanRunEventsForUsageAnalytics(run.events, undefined, 0));
+    opts.onEvaluationContext(buildEvalContext({
+      runStatus: status, resultDeliveryState,
+      ...(evaluationAttachments ? { attachments: evaluationAttachments } : {}),
+      attachmentManifest: opts.prefs.artifactManifest === true ? manifests.attachmentManifest : [],
+      artifactManifest: opts.prefs.artifactManifest === true ? manifests.artifactManifest : [],
+      ...(run.agentId ? { agentId: run.agentId } : {}),
+      ...(evaluationUsage ? { usage: evaluationUsage } : {}),
+      turnUsage: codexTurnUsageFromEvents(run.events),
+      ...(run.promptTelemetry ? { prompt: run.promptTelemetry } : {}),
+      toolErrorCount: run.events.filter(event => event.event === 'agent' && event.data && typeof event.data === 'object' && (event.data as Record<string, unknown>).type === 'tool_result' && (event.data as Record<string, unknown>).isError === true).length,
+      ...(errorCode ? { failureCode: errorCode } : {}),
+    }));
+  }
   return buildSafeRunQualityProjectionV1({
     prefs: opts.prefs,
     messageOutput: messageContent,
@@ -1393,6 +1452,9 @@ export async function reportRunCompletedFromDaemon(
     const installationId = cfg.installationId ?? null;
     const configuredAmrEnv = agentCliEnvForAgent(cfg.agentCliEnv, 'amr');
 
+    const evalMode = evidenceMode(process.env.OPEN_DESIGN_EVAL_CONTRACT_V2_MODE);
+    let resultDeliveryState: unknown;
+    let v2Attachments: ReturnType<typeof attachmentContext> | undefined;
     let messageContent = '';
     let producedFilesRaw: unknown = undefined;
     let traceObjectFilesRaw: unknown = undefined;
@@ -1411,6 +1473,8 @@ export async function reportRunCompletedFromDaemon(
         );
         const m = assistantIndex >= 0 ? allMessages[assistantIndex] : undefined;
         if (m) {
+          resultDeliveryState = m.resultDeliveryState;
+          if (evalMode !== 'off') v2Attachments = attachmentContext(allMessages, assistantIndex, run.projectId ?? '');
           messageContent = typeof m.content === 'string' ? m.content : '';
           // listMessages returns producedFiles already parsed (db.ts:965).
           producedFilesRaw = m.producedFiles;
@@ -1519,7 +1583,27 @@ export async function reportRunCompletedFromDaemon(
         traceObjectFilesRaw,
         uploaded: finalManifests,
       }),
-    ): ReportContext => ({
+    ): ReportContext => {
+      const evaluation = evalMode === 'off' ? undefined : buildEvalContext({
+        runStatus: status, resultDeliveryState,
+        turnUsage: codexTurnUsageFromEvents(run.events),
+        toolErrorCount: run.events.filter(event => event.event === 'agent' && event.data && typeof event.data === 'object' && (event.data as Record<string, unknown>).type === 'tool_result' && (event.data as Record<string, unknown>).isError === true).length,
+        ...(v2Attachments ? { attachments: v2Attachments } : {}),
+        attachmentManifest: finalManifests.attachmentManifest,
+        artifactManifest: finalManifests.artifactManifest,
+        ...(run.agentId ? { agentId: run.agentId } : {}),
+        ...(usage ? { usage } : {}),
+        ...(run.promptTelemetry ? { prompt: run.promptTelemetry } : {}),
+        ...(errorCode ? { failureCode: errorCode } : {}),
+      });
+      if (evalMode === 'observe' && evaluation) {
+        console.info('[eval-context-v2] shadow', JSON.stringify({
+          runId: run.id, productStatus: status, evaluationOutcome: evaluation.evaluationOutcome,
+          completeness: evaluation.completeness.status, reasons: evaluation.completeness.reasons,
+        }));
+      }
+      return {
+      ...(evalMode === 'send' && evaluation ? { evalContextV2: evaluation } : {}),
       installationId,
       projectId: run.projectId ?? '',
       conversationId: run.conversationId ?? '',
@@ -1583,7 +1667,24 @@ export async function reportRunCompletedFromDaemon(
       ...(turn ? { turn } : {}),
       runtime,
       ...(run.promptTelemetry ? { promptTelemetry: run.promptTelemetry } : {}),
-    });
+    };
+    };
+
+    if (evidenceMode(process.env.OPEN_DESIGN_OBJECT_OUTBOX_MODE) === 'send') {
+      const sources = await freezeTraceObjectSources({ ...objectManifestOptions, prompt: redactSecrets(telemetryPrompt) });
+      const frozen = await buildTraceObjectManifests({ ...objectManifestOptions, frozenSources: sources, uploadMode: 'manifest-only' });
+      const context = buildContext(mergeTraceSafeManifests(manifests, frozen));
+      const queued = await enqueueObjectEvidence(dataDir, context, sources);
+      if (queued === 'not_required') {
+        return reportRunCompleted(context, { ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}) });
+      }
+      if (queued !== 'capacity_exceeded') {
+        void drainEvidence(dataDir, opts.fetchImpl).catch(() => console.warn('[evidence-outbox] delivery_pass_failed'));
+        return { langfuse_expected: true, langfuse_delivery_status: 'queued' };
+      }
+      if (context.evalContextV2) context.evalContextV2.completeness.reasons.push('outbox_capacity_exceeded');
+      return reportRunCompleted(context, { ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}) });
+    }
 
     const registrationManifests = await buildTraceObjectManifests({
       ...objectManifestOptions,
@@ -1661,7 +1762,7 @@ export interface ReportRunFeedbackFromDaemonOpts {
  * enqueued — useful for QA and e2e.
  */
 export type FeedbackReportOutcome =
-  | { status: 'accepted' }
+  | { status: 'accepted'; deliveryStatus?: 'queued' | 'unavailable'; reason?: string }
   | { status: 'skipped_consent' }
   | { status: 'skipped_no_sink' };
 
@@ -1700,6 +1801,12 @@ export async function reportRunFeedbackFromDaemon(
     customReason: opts.customReason,
     ...(opts.scoreMetadata ? { metadata: opts.scoreMetadata } : {}),
   };
+  if (evidenceMode(process.env.OPEN_DESIGN_OBJECT_OUTBOX_MODE) === 'send') {
+    const queued = await enqueueFeedbackEvidence(opts.dataDir, { ...ctx, customReason: redactSecrets(ctx.customReason), ...(ctx.metadata ? { metadata: { ...ctx.metadata, customReason: redactSecrets(ctx.customReason) } } : {}) });
+    if (queued === 'capacity_exceeded') return { status: 'accepted', deliveryStatus: 'unavailable', reason: 'outbox_capacity_exceeded' };
+    void drainEvidence(opts.dataDir, opts.fetchImpl).catch(() => console.warn('[evidence-outbox] delivery_pass_failed'));
+    return { status: 'accepted', deliveryStatus: 'queued' };
+  }
   // Fire-and-forget the actual network send so the route can respond
   // immediately. The handler's response already encodes the consent +
   // sink-presence outcome above; failures inside the send are operational

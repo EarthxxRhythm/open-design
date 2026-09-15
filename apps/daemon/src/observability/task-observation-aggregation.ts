@@ -15,6 +15,7 @@ import {
   type StrategyInputStageV2,
 } from '@open-design/contracts';
 import type Database from 'better-sqlite3';
+import type { EvalContextV2 } from './eval-context.js';
 
 import type { TelemetryPrefs } from '../app-config.js';
 import { getSnapshot } from '../plugins/snapshots.js';
@@ -155,6 +156,7 @@ export interface StrategyTaskObservationAggregateV1 {
   coverage: TaskObservationCoverageV1;
   stageTotals: TaskObservationStageTotalV1[];
   limitations: string[];
+  evaluation?: { context: EvalContextV2; runs: Array<{ runId: string; context: EvalContextV2 }> };
 }
 
 export const TASK_OBSERVATION_SCHEMA_CAPABILITY_V1 = {
@@ -1024,6 +1026,7 @@ export function safeTaskObservationQualityProjection(
         ? { statusMessage: quality.result.error.message.text }
         : {}),
       metadata: {
+        ...(aggregate.evaluation ? { eval_context_v2: aggregate.evaluation.runs.find(run => run.runId === observation.identity.runId)?.context } : {}),
         errorCode: quality?.result?.error?.code,
         failureCategory: quality?.result?.error?.category,
         failureDetail: quality?.result?.error?.detail,
@@ -1107,6 +1110,14 @@ export function buildLegacyTaskObservationPayload(
         }
       : {}),
     metadata: {
+      ...(aggregate.evaluation ? {
+        eval_context_v2: aggregate.evaluation.context,
+        eval_context_v2_runs: aggregate.evaluation.runs,
+        status: aggregate.evaluation.context.productOutcome.runStatus,
+        success: aggregate.evaluation.context.evaluationOutcome === 'failed' ? false : undefined,
+        artifact_manifest: aggregate.evaluation.context.artifacts.entries,
+        manifest_completeness: aggregate.evaluation.context.completeness.status,
+      } : {}),
       schema: aggregate.schema,
       taskExecutionId: aggregate.root.taskExecutionId,
       projectId: aggregate.root.projectId,
