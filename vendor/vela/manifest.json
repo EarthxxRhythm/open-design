@@ -1,8 +1,8 @@
 {
-  "distributionVersion": "0.0.1-test.opencode-baseline.gd23bd26",
-  "velaBinaryVersion": "0.0.1-test.opencode-baseline.gd23bd26",
-  "velaSourceCommit": "d23bd26d0f3d00e29584079c236b60a5ef469e57",
-  "openDesignBaselineCommit": "be6701205bc8590873e805ba580424e1c6f85147",
+  "distributionVersion": "0.0.1-test.harness-align.g3cb6871",
+  "velaBinaryVersion": "0.0.1-test.harness-align.g3cb6871",
+  "velaSourceCommit": "3cb687198337def235746b6000b3653d63e1fa9c",
+  "openDesignBaselineCommit": "9c964dc51ab3afc8e3926908667abcb54d5b40ba",
   "platforms": [
     "darwin-arm64"
   ],
@@ -20,17 +20,17 @@
     "codex": "0.154.0",
     "claude": "2.1.267",
     "dsh": "0.1.5-rc.1",
-    "none": "0.0.1-test.claude-bg-task.g2b20105"
+    "none": "0.0.1-test.harness-align.g3cb6871"
   },
   "openCodeBinarySHA256": "c1dec4a2f722191c0e5c31c0414c348e3ef4d9a68e844194a549ca536d148f9e",
   "openCodeUpstreamVersion": "0.0.0--202609020336",
   "npmPublished": false,
   "artifacts": [
     {
-      "file": "powerformer-vela-cli-0.0.1-test.opencode-baseline.gd23bd26.tgz"
+      "file": "powerformer-vela-cli-0.0.1-test.harness-align.g3cb6871.tgz"
     },
     {
-      "file": "powerformer-vela-cli-darwin-arm64-0.0.1-test.opencode-baseline.gd23bd26.tgz"
+      "file": "powerformer-vela-cli-darwin-arm64-0.0.1-test.harness-align.g3cb6871.tgz"
     }
   ],
   "openCodeSource": "@powerformer/vela-cli-darwin-arm64@0.0.35 (the build main ships)"
