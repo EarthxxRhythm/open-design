@@ -1173,9 +1173,10 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
     });
   }
 
-  // Both context actions live in the working-dir menu (2026-08-19) — same
-  // question as the folder rows: what may the agent read besides this thread —
-  // and in the Add menu, where the project composer offers them too.
+  // Both context actions live in the Add menu only (OPEND-3126), where the
+  // project composer offers them too. Their pick still lands on the
+  // working-directory trigger below (see `workdirSelection`), but that row's
+  // own menu no longer offers a second copy of either entry.
   function referenceProjectAction() {
     trackHomeChatComposerClick(analytics.track, {
       page_name: 'home',
@@ -2285,8 +2286,10 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
                 fileInputRef.current?.click();
               }}
               // Both context actions sit in the Add menu on Home as well as
-              // in the project composer (OPEND-3085, per the Demo); the
-              // working-directory row below keeps its own copies.
+              // in the project composer (OPEND-3085, per the Demo). This is
+              // their ONLY entry on Home (OPEND-3126): the working-directory
+              // row below no longer carries copies, so the `plus_pick`
+              // analytics are emitted from here alone.
               onReferenceProject={referenceProjectAction}
               onLinkLocalCode={linkLocalCodeAction}
               onSelectFromLibrary={() => {
@@ -2509,16 +2512,12 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
               });
               onClearWorkingDir?.();
             }}
-            // Analytics keep the original `plus_pick` element name so the
-            // funnel stays continuous across the move.
-            onReferenceProject={referenceProjectAction}
-            onLinkLocalCode={linkLocalCodeAction}
-            /* All four menu rows answer one question — what may the agent read
-               besides this thread — so they all report the same way: the
-               trigger takes the pick's name, and its hover × clears it (per
-               product: 工作目录会换成后边的文件名…和现在选择最近使用的文件夹的
-               逻辑一样). The LAST attached item is the one named; a directory
-               outranks it. */
+            /* The folder rows here and the context actions in the Add menu
+               answer one question — what may the agent read besides this
+               thread — so they all report the same way: the trigger takes the
+               pick's name, and its hover × clears it (per product: 工作目录会
+               换成后边的文件名…和现在选择最近使用的文件夹的逻辑一样). The LAST
+               attached item is the one named; a directory outranks it. */
             selection={
               workdirSelection
                 ? {
@@ -2741,8 +2740,9 @@ function PluginPromptPresets({
   // the poster rides in the row itself, on the left. The cursor-following
   // preview card that used to rise on hover is gone (per product: 去掉 hover
   // 展示的弹窗): every row already shows its own still, and the floating copy
-  // covered the rows either side of the one being read. The eye badge on the
-  // poster stays — that is a control, and still the way into the full preview.
+  // covered the rows either side of the one being read. The poster carries no
+  // eye badge either (OPEND-3100): the whole still is the way into the full
+  // preview, with nothing drawn on top of it at rest or on hover.
   return (
     <div
       className="home-hero__prompt-examples home-hero__plugin-presets-wrap"
@@ -2823,19 +2823,18 @@ function PluginPromptPresetRow({
           produces without the pointer going anywhere. The slot is rendered
           even when a plugin has no poster, so every title in the list still
           starts on one column. */}
-      {/* The WHOLE poster opens the preview (per product), not just the eye
-          badge on it — the badge is only the affordance that says so, and it
-          lets clicks through to this box. A `span`, not a `button`: the row
-          itself IS a button, and a nested one is invalid nesting React warns
-          about — so this carries the role explicitly and stops its click from
-          reaching the row, which would otherwise seed the composer instead of
-          opening the preview. */}
+      {/* The WHOLE poster opens the preview (per product) — and it is bare
+          (OPEND-3100): no eye badge on it and no "Preview" tooltip, at rest or
+          on hover. Only the accessible name says what the click does. A
+          `span`, not a `button`: the row itself IS a button, and a nested one
+          is invalid nesting React warns about — so this carries the role
+          explicitly and stops its click from reaching the row, which would
+          otherwise seed the composer instead of opening the preview. */}
       <span
         className="home-hero__plugin-preset-row-thumb"
         role="button"
         tabIndex={-1}
         aria-label={t('common.preview')}
-        title={t('common.preview')}
         onClick={(event) => {
           event.stopPropagation();
           event.preventDefault();
@@ -2845,13 +2844,6 @@ function PluginPromptPresetRow({
         {poster ? (
           <img src={poster} alt="" draggable={false} loading="lazy" decoding="async" />
         ) : null}
-        {/* Icon-only: the poster has no room for the 预览 word beside it, so
-            the label lives on the box above instead. */}
-        <span className="home-hero__plugin-preset-row-preview" aria-hidden>
-          <svg viewBox="0 0 24 24" fill="currentColor" focusable="false" aria-hidden>
-            <path d="M12.0003 3C17.3924 3 21.8784 6.87976 22.8189 12C21.8784 17.1202 17.3924 21 12.0003 21C6.60812 21 2.12215 17.1202 1.18164 12C2.12215 6.87976 6.60812 3 12.0003 3ZM12.0003 19C16.2359 19 19.8603 16.052 20.7777 12C19.8603 7.94803 16.2359 5 12.0003 5C7.7646 5 4.14022 7.94803 3.22278 12C4.14022 16.052 7.7646 19 12.0003 19ZM12.0003 16.5C9.51498 16.5 7.50026 14.4853 7.50026 12C7.50026 9.51472 9.51498 7.5 12.0003 7.5C14.4855 7.5 16.5003 9.51472 16.5003 12C16.5003 14.4853 14.4855 16.5 12.0003 16.5ZM12.0003 14.5C13.381 14.5 14.5003 13.3807 14.5003 12C14.5003 10.6193 13.381 9.5 12.0003 9.5C10.6196 9.5 9.50026 10.6193 9.50026 12C9.50026 13.3807 10.6196 14.5 12.0003 14.5Z" />
-          </svg>
-        </span>
       </span>
       <span className="home-hero__plugin-preset-row-body">
         <span className="home-hero__plugin-preset-row-head">

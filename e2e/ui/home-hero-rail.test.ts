@@ -847,8 +847,9 @@ test('[P1] home composer plus menu opens project, local code, Figma help, and de
   await expect(page.getByTestId('composer-plus-attach')).toBeVisible();
   await expect(page.getByTestId('composer-plus-figma')).toBeVisible();
   // Reference-project / local-code sit directly under "Attach files", the
-  // same as in the project composer (OPEND-3085); the working-dir chip's menu
-  // below keeps its own copies.
+  // same as in the project composer (OPEND-3085). This menu is their ONLY
+  // entry on Home (OPEND-3126): the working-dir chip's menu below no longer
+  // carries copies.
   await expect(page.getByTestId('composer-plus-reference-project')).toBeVisible();
   await expect(page.getByTestId('composer-plus-local-code')).toBeVisible();
   // …and it does NOT carry the "查看方法" (.fig download guide) row: the menu
@@ -857,9 +858,13 @@ test('[P1] home composer plus menu opens project, local code, Figma help, and de
   await page.keyboard.press('Escape');
 
   await page.getByTestId('working-dir-trigger').click();
-  await expect(page.getByTestId('working-dir-reference-project')).toBeVisible();
-  await expect(page.getByTestId('working-dir-local-code')).toBeVisible();
-  await page.getByTestId('working-dir-reference-project').click();
+  await expect(page.getByTestId('working-dir-pick')).toBeVisible();
+  await expect(page.getByTestId('working-dir-reference-project')).toHaveCount(0);
+  await expect(page.getByTestId('working-dir-local-code')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+
+  await page.getByTestId('home-hero-plus-trigger').click();
+  await page.getByTestId('composer-plus-reference-project').click();
   const referenceDialog = page.getByRole('dialog', { name: 'Reference another project' });
   await expect(referenceDialog).toBeVisible();
   await expect(referenceDialog.getByRole('option', { name: /Reference Home Project/i })).toHaveAttribute('aria-selected', 'true');
@@ -871,8 +876,8 @@ test('[P1] home composer plus menu opens project, local code, Figma help, and de
   await expect(input).toHaveText('');
 
   // One slot, newest pick wins: linking a checkout evicts the reference.
-  await page.getByTestId('working-dir-trigger').click();
-  await page.getByTestId('working-dir-local-code').click();
+  await page.getByTestId('home-hero-plus-trigger').click();
+  await page.getByTestId('composer-plus-local-code').click();
   await expect(page.getByTestId('working-dir-trigger')).toContainText('local-code-home');
   await expect(page.getByTestId('working-dir-trigger')).not.toContainText('Reference Home Project');
   await expect(input).toHaveText('');
@@ -1122,8 +1127,8 @@ test('[P1] home composer sends referenced workspace context into project creatio
   await gotoEntryHome(page);
   const input = page.getByTestId('home-hero-input');
 
-  await page.getByTestId('working-dir-trigger').click();
-  await page.getByTestId('working-dir-reference-project').click();
+  await page.getByTestId('home-hero-plus-trigger').click();
+  await page.getByTestId('composer-plus-reference-project').click();
   const referenceDialog = page.getByRole('dialog', { name: 'Reference another project' });
   await expect(referenceDialog.getByRole('option', { name: /Reference Home Payload/i })).toHaveAttribute('aria-selected', 'true');
   await referenceDialog.getByRole('button', { name: 'Reference project' }).click();
@@ -1132,8 +1137,8 @@ test('[P1] home composer sends referenced workspace context into project creatio
 
   // The working-directory row holds ONE pick; linking a checkout replaces the
   // reference, and only the survivor rides into project creation.
-  await page.getByTestId('working-dir-trigger').click();
-  await page.getByTestId('working-dir-local-code').click();
+  await page.getByTestId('home-hero-plus-trigger').click();
+  await page.getByTestId('composer-plus-local-code').click();
   await expect(page.getByTestId('working-dir-trigger')).toContainText('local-code-home-payload');
 
   await input.fill('Create a project using the referenced workspace context.');
@@ -1300,8 +1305,8 @@ test('[P1] home staged workspace context auto-sends into the first project run',
   await gotoEntryHome(page);
   const input = page.getByTestId('home-hero-input');
 
-  await page.getByTestId('working-dir-trigger').click();
-  await page.getByTestId('working-dir-reference-project').click();
+  await page.getByTestId('home-hero-plus-trigger').click();
+  await page.getByTestId('composer-plus-reference-project').click();
   const referenceDialog = page.getByRole('dialog', { name: 'Reference another project' });
   await expect(referenceDialog.getByRole('option', { name: /Reference Home Autosend/i })).toHaveAttribute('aria-selected', 'true');
   await referenceDialog.getByRole('button', { name: 'Reference project' }).click();
@@ -1309,8 +1314,8 @@ test('[P1] home staged workspace context auto-sends into the first project run',
   await expect(input).toHaveText('');
 
   // One slot: the linked checkout replaces the reference before the send.
-  await page.getByTestId('working-dir-trigger').click();
-  await page.getByTestId('working-dir-local-code').click();
+  await page.getByTestId('home-hero-plus-trigger').click();
+  await page.getByTestId('composer-plus-local-code').click();
   await expect(page.getByTestId('working-dir-trigger')).toContainText('local-code-home-autosend');
 
   await input.fill(prompt);

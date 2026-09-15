@@ -8,7 +8,7 @@
 //   - The active + pending UI states light up the right chip and
 //     disable all chips while a plugin is mid-apply.
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { InstalledPluginRecord } from '@open-design/contracts';
 import { automaticStrategyTaskProfileForRouteId } from '@open-design/contracts';
@@ -333,6 +333,40 @@ describe('HomeHero intent rail', () => {
       'Create with a focused brief using Investor deck',
     );
     expect(onOpenPluginDetails).not.toHaveBeenCalled();
+  });
+
+  // OPEND-3100 (supersedes OPEND-2697): the poster carries NO eye badge and no
+  // "Preview" tooltip — not at rest, not on hover. The whole poster is still
+  // the way into the preview; the row itself still seeds the composer.
+  it('renders the template poster without an eye badge or preview tooltip, at rest and on hover', () => {
+    const deckPlugin = makePlugin('example-deck-a', 'deck', 'Investor deck');
+    const { onOpenPluginDetails, onPickExamplePlugin } = renderHero({
+      activeChipId: 'deck',
+      pluginOptions: [deckPlugin],
+    });
+
+    const row = screen.getByTestId('home-hero-plugin-preset');
+    const thumb = row.querySelector<HTMLElement>('.home-hero__plugin-preset-row-thumb');
+    expect(thumb).not.toBeNull();
+    const expectNoEye = () => {
+      expect(row.querySelector('.home-hero__plugin-preset-row-preview')).toBeNull();
+      expect(row.querySelector('svg path[d^="M12.0003 3C17.3924"]')).toBeNull();
+      expect(within(row).queryByTitle('Preview')).toBeNull();
+      expect(thumb!.getAttribute('title')).toBeNull();
+    };
+
+    expectNoEye();
+    fireEvent.mouseEnter(row);
+    fireEvent.mouseOver(row);
+    expectNoEye();
+    fireEvent.mouseEnter(thumb!);
+    fireEvent.mouseOver(thumb!);
+    expectNoEye();
+
+    // Clicking the poster still opens the preview, not the composer seed.
+    fireEvent.click(thumb!);
+    expect(onOpenPluginDetails).toHaveBeenCalledWith(deckPlugin);
+    expect(onPickExamplePlugin).not.toHaveBeenCalled();
   });
 
   it('maps powered WebGL presets to the WebGL chip without exposing a Worker chip', () => {

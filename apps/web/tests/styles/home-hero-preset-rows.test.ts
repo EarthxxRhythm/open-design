@@ -50,7 +50,7 @@ describe('home hero — template list rows', () => {
     expect(ring).toMatch(
       /box-shadow:\s*inset 0 0 0 1px color-mix\(in srgb, var\(--border\) 70%, transparent\)/,
     );
-    // The thumb is the positioning context for that ring (and the eye badge).
+    // The thumb is the positioning context for that ring.
     expect(declarations('.home-hero__plugin-preset-row-thumb')).toMatch(/position:\s*relative/);
   });
 });
@@ -74,52 +74,27 @@ describe('home hero — placeholder caret', () => {
   });
 });
 
-describe('home hero — template row preview badge (OPEND-2697)', () => {
-  // Product: the eye is a secondary affordance. It must not compete with the
-  // row's "pick → fill the composer → send" main path, so it stays hidden at
-  // rest, fades in with the row's hover (or keyboard focus), sits on a
-  // translucent LIGHT ground rather than a dark scrim disc, and is one size
-  // step smaller than before (20 → 16).
-  const badge = declarations('.home-hero__plugin-preset-row-preview');
-  const reveal = declarations(
+describe('home hero — template poster (OPEND-3100, supersedes OPEND-2697)', () => {
+  // Product: the poster carries no eye badge at all — not at rest, not on
+  // hover, not on keyboard focus — and no "Preview" tooltip. OPEND-2697 had
+  // only quietened the badge to a hover-reveal; this removes it outright, so
+  // no rule for it may survive in the stylesheet.
+  const eyeSelectors = [
+    '.home-hero__plugin-preset-row-preview',
+    '.home-hero__plugin-preset-row-preview svg',
     '.home-hero__plugin-preset-row:not(:disabled):hover .home-hero__plugin-preset-row-preview',
-  );
+    '.home-hero__plugin-preset-row:not(:disabled):focus-visible .home-hero__plugin-preset-row-preview',
+    '.home-hero__plugin-preset-row-thumb:hover .home-hero__plugin-preset-row-preview',
+  ];
 
-  it('is hidden at rest and never a click target of its own', () => {
-    expect(badge).toMatch(/opacity:\s*0;/);
-    expect(badge).toMatch(/visibility:\s*hidden;/);
-    expect(badge).toMatch(/pointer-events:\s*none;/);
+  it('ships no eye-badge rule, for rest, hover, or focus', () => {
+    for (const selector of eyeSelectors) {
+      expect(declarations(selector), selector).toBe('');
+    }
+    expect(homeHeroCss).not.toContain('plugin-preset-row-preview');
   });
 
-  it('is one size step smaller, on a translucent light ground with dark ink', () => {
-    expect(badge).toMatch(/width:\s*16px;/);
-    expect(badge).toMatch(/height:\s*16px;/);
-    expect(declarations('.home-hero__plugin-preset-row-preview svg')).toMatch(/width:\s*11px;/);
-    expect(badge).toMatch(/background:\s*color-mix\(in srgb, #fff 82%, transparent\);/);
-    expect(badge).toMatch(/color:\s*#202020;/);
-    // No dark scrim disc anywhere on the badge, at rest or under the poster's
-    // own hover.
-    expect(badge).not.toMatch(/#000 55%/);
-    expect(declarations('.home-hero__plugin-preset-row-thumb:hover .home-hero__plugin-preset-row-preview'))
-      .not.toMatch(/#000/);
-  });
-
-  it('fades in over ~200ms and out over ~140ms on the shared ease-out curve', () => {
-    const curve = 'cubic-bezier\\(0\\.23, 1, 0\\.32, 1\\)';
-    // Rest state carries the EXIT timing (the transition that runs when hover
-    // leaves), hover carries the ENTER timing.
-    expect(badge).toMatch(new RegExp(`opacity 140ms ${curve}`));
-    expect(badge).toMatch(/visibility 0s linear 140ms/);
-    expect(reveal).toMatch(/opacity:\s*1;/);
-    expect(reveal).toMatch(/visibility:\s*visible;/);
-    expect(reveal).toMatch(new RegExp(`opacity 200ms ${curve}`));
-  });
-
-  it('shows for keyboard focus on the row as well as pointer hover', () => {
-    expect(
-      declarations(
-        '.home-hero__plugin-preset-row:not(:disabled):focus-visible .home-hero__plugin-preset-row-preview',
-      ),
-    ).toMatch(/opacity:\s*1;/);
+  it('keeps the whole poster as the preview target', () => {
+    expect(declarations('.home-hero__plugin-preset-row-thumb')).toMatch(/cursor:\s*pointer/);
   });
 });

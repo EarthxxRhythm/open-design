@@ -374,6 +374,55 @@ describe('HomeView context picker', () => {
     expect(screen.getByTestId('working-dir-trigger')).toBeTruthy();
   });
 
+  // OPEND-3126: the two context actions are reachable from the Add menu ONLY.
+  // The working-directory menu under the input is back to its folder rows, so
+  // "Reference another project" and "Link local code" are not offered twice.
+  it('keeps reference-project and local-code out of the working-directory menu (OPEND-3126)', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (url) => {
+      if (typeof url === 'string' && url === '/api/plugins') {
+        return new Response(JSON.stringify({ plugins: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (typeof url === 'string' && url === '/api/mcp/servers') {
+        return new Response(JSON.stringify({ servers: [], templates: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <HomeView
+        projects={[]}
+        onSubmit={() => undefined}
+        onOpenProject={() => undefined}
+        onViewAllProjects={() => undefined}
+        onBrowseRegistry={() => undefined}
+      />,
+    );
+
+    await screen.findByTestId('home-hero-input');
+    fireEvent.click(screen.getByTestId('working-dir-trigger'));
+    const panel = await screen.findByTestId('working-dir-panel');
+    expect(screen.getByTestId('working-dir-pick')).toBeTruthy();
+    expect(screen.queryByTestId('working-dir-reference-project')).toBeNull();
+    expect(screen.queryByTestId('working-dir-local-code')).toBeNull();
+    expect(panel.textContent).not.toContain('Reference another project');
+    expect(panel.textContent).not.toContain('Link local code');
+    // No stray separator either: the panel is one group of folder rows again.
+    expect(panel.querySelector('[role="separator"]')).toBeNull();
+    fireEvent.keyDown(document, { key: 'Escape' });
+
+    // …and the Add menu still carries both, unchanged.
+    fireEvent.click(screen.getByTestId('home-hero-plus-trigger'));
+    expect(screen.getByTestId('composer-plus-reference-project')).toBeTruthy();
+    expect(screen.getByTestId('composer-plus-local-code')).toBeTruthy();
+  });
+
   it('adds multiple @ plugins as context without applying or hydrating their query', async () => {
     const plugins = [
       makePlugin('chart-plugin', 'Chart Plugin'),
@@ -782,9 +831,10 @@ describe('HomeView context picker', () => {
     );
 
     await screen.findByTestId('home-hero-input');
-    // 引用其它项目 moved from the "+" menu into the working-dir chip's menu.
-    fireEvent.click(screen.getByTestId('working-dir-trigger'));
-    fireEvent.click(await screen.findByTestId('working-dir-reference-project'));
+    // 引用其它项目 lives in the "+" menu only (OPEND-3126); the pick still
+    // lands on the working-directory trigger below.
+    fireEvent.click(screen.getByTestId('home-hero-plus-trigger'));
+    fireEvent.click(await screen.findByTestId('composer-plus-reference-project'));
     await screen.findByText('Reference A');
     fireEvent.click(screen.getByRole('button', { name: 'Reference project' }));
 
@@ -884,9 +934,10 @@ describe('HomeView context picker', () => {
     );
 
     await screen.findByTestId('home-hero-input');
-    // 引用其它项目 moved from the "+" menu into the working-dir chip's menu.
-    fireEvent.click(screen.getByTestId('working-dir-trigger'));
-    fireEvent.click(await screen.findByTestId('working-dir-reference-project'));
+    // 引用其它项目 lives in the "+" menu only (OPEND-3126); the pick still
+    // lands on the working-directory trigger below.
+    fireEvent.click(screen.getByTestId('home-hero-plus-trigger'));
+    fireEvent.click(await screen.findByTestId('composer-plus-reference-project'));
     await screen.findByText('Reference A');
     fireEvent.click(screen.getByRole('button', { name: 'Reference project' }));
 

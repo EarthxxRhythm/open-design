@@ -264,15 +264,6 @@
   opacity: 0.55;
 }
 
-/* Splits the folder's own actions (choose / recent / clear) from the other
-   context sources that attach alongside it — reference a project, link local
-   code. One menu, two groups. */
-.divider {
-  height: 1px;
-  margin: 4px 6px;
-  background: var(--border-soft, var(--border));
-}
-
 .submenuRow {
   position: relative;
   width: 100%;
