@@ -619,6 +619,10 @@ import {
   readRunTelemetrySinkConfig,
 } from './langfuse-trace.js';
 import { reconcileDurableRunTerminals } from './runtimes/run-terminal-reconciliation.js';
+import {
+  startMessageEventPayloadHeal,
+  type MessageEventPayloadHealHandle,
+} from './storage/message-event-payload-heal.js';
 import { createTaskObservationRolloutService } from './observability/task-observation-rollout.js';
 import { strategyTaskRunObservationId } from './observability/task-observation-aggregation.js';
 import { collectCodexChildEvidence } from './runtimes/codex-child-evidence.js';
@@ -17823,7 +17827,13 @@ export async function startServer({
       for (const timer of terminalTelemetryFallbackTimers) clearTimeout(timer);
       terminalTelemetryFallbackTimers.clear();
     };
+    // One-time heal of run events stored before the payload budget existed
+    // (storage/message-event-payload-heal.ts). Started once the daemon is
+    // listening, never on a request path; stopped with the other background
+    // work below.
+    let messageEventPayloadHeal: MessageEventPayloadHealHandle | null = null;
     const cleanupDaemonBackgroundWork = () => {
+      void messageEventPayloadHeal?.stop();
       clearTerminalTelemetryFallbackTimers();
       amrTerminalReportDelivery.stop();
       telemetry.disposeFatalHandlers();
@@ -17906,6 +17916,7 @@ export async function startServer({
         }
         resolvedPort = boundPort;
         startAmrTerminalReportDeliveryAfterBind(amrTerminalReportDelivery, boundPort);
+        messageEventPayloadHeal ??= startMessageEventPayloadHeal({ db });
         // When binding to all interfaces report localhost for local callers;
         // when binding to a specific address (e.g. a Tailscale IP) report that
         // address so remote callers and the sidecar use the correct URL.
