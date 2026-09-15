@@ -15,6 +15,45 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lib.r2 import R2Client, R2Credentials
 
 
+def public_request(url, method='GET'):
+    return urllib.request.Request(url, method=method,
+                                  headers={'User-Agent': 'OpenDesign-ArchitectureProbe/1'})
+
+
+def acquire_existing():
+    """Read-only continuation of the uploaded run; never recreate its object."""
+    n.guard()
+    url = 'https://releases.open-design.ai/dogfood/0.22.0-beta.34925784500/architecture-blob-1/resources.tgz'
+    expected = '2dcfefbc98e5b355a3ce7b11f84b3d9247d64a215ecf196d543a9fb29c234ae3'
+    n.ROOT.mkdir(parents=True, exist_ok=True)
+    report = {'sourceRun': '34925784500', 'publicUrl': url, 'scope': 'read-only continuation, not initial CDN propagation', 'seconds': {}}
+    start = time.monotonic()
+    with urllib.request.urlopen(public_request(url, 'HEAD'), timeout=60) as response:
+        assert int(response.headers['Content-Length']) == 296760177
+    report['seconds']['cdnHead'] = round(time.monotonic() - start, 3)
+    n.write('acquire.json', report)
+    downloaded = n.ROOT / 'consumer.tgz'
+    start = time.monotonic()
+    with urllib.request.urlopen(public_request(url), timeout=180) as source, downloaded.open('wb') as target:
+        shutil.copyfileobj(source, target)
+    with downloaded.open('rb') as source:
+        assert hashlib.file_digest(source, 'sha256').hexdigest() == expected
+    report['seconds']['firstAcquireAndVerify'] = round(time.monotonic() - start, 3)
+    n.write('acquire.json', report)
+    consumer = n.ROOT / 'consumer'
+    consumer.mkdir()
+    start = time.monotonic()
+    n.run('tar', '-xzf', downloaded, '-C', consumer)
+    report['seconds']['extract'] = round(time.monotonic() - start, 3)
+    files = [p for p in (consumer / 'Resources').rglob('*') if p.is_file() and not p.is_symlink()]
+    assert len(files) == 14712
+    assert sum(p.stat().st_size for p in files) == 716343917
+    report['package'] = json.loads((consumer / 'Resources/app/package.json').read_text())['name']
+    report['consumerValidated'] = True
+    n.write('acquire.json', report)
+    print(json.dumps(report, indent=2))
+
+
 def main():
     n.guard()
     report = {'seconds': {}, 'scope': 'content transfer only; not a product release'}
@@ -50,13 +89,13 @@ def main():
                                                 os.environ['RELEASE_STORAGE_SECRET_ACCESS_KEY']))
     timed('upload', lambda: client.put_file(key=key, file=archive, content_type='application/gzip'))
     def head():
-        with urllib.request.urlopen(urllib.request.Request(url, method='HEAD'), timeout=60) as response:
+        with urllib.request.urlopen(public_request(url, 'HEAD'), timeout=60) as response:
             assert int(response.headers['Content-Length']) == report['archiveBytes']
     timed('cdnHead', head)
     report['publicationSeconds'] = sum(report['seconds'][k] for k in ('archive', 'upload', 'cdnHead'))
     downloaded = n.ROOT / 'consumer.tgz'
     def acquire():
-        with urllib.request.urlopen(url, timeout=180) as source, downloaded.open('wb') as destination:
+        with urllib.request.urlopen(public_request(url), timeout=180) as source, downloaded.open('wb') as destination:
             shutil.copyfileobj(source, destination)
         with downloaded.open('rb') as source:
             assert hashlib.file_digest(source, 'sha256').hexdigest() == digest
@@ -76,4 +115,9 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    if sys.argv[1:] == ['acquire-existing']:
+        acquire_existing()
+    elif not sys.argv[1:]:
+        main()
+    else:
+        raise SystemExit('expected no arguments or acquire-existing')

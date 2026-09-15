@@ -7,7 +7,7 @@ on:
         description: First factorial screen or focused repeat
         type: choice
         default: screen
-        options: [screen, count-small, count-large, bytes-few, bytes-many, endpoints, container, blob-transfer]
+        options: [screen, count-small, count-large, bytes-few, bytes-many, endpoints, container, blob-transfer, blob-acquire]
 permissions:
   contents: read
 concurrency:
@@ -36,6 +36,7 @@ jobs:
             "endpoints": ["full", "few-small"],
             "container": ["container"],
             "blob-transfer": ["full"],
+            "blob-acquire": ["full"],
           }
           with open(os.environ["GITHUB_OUTPUT"], "a") as out:
               out.write("matrix=" + json.dumps(groups[os.environ["GROUP"]]) + "\n")
@@ -43,7 +44,7 @@ jobs:
   measure:
     name: "[measure] Apple payload factors / ${{ matrix.variant }}"
     needs: select
-    if: inputs.group != 'blob-transfer'
+    if: inputs.group != 'blob-transfer' && inputs.group != 'blob-acquire'
     runs-on: macos-14
     timeout-minutes: 50
     strategy:
@@ -105,4 +106,24 @@ jobs:
           name: blob-transfer-measurements
           path: .tmp/notarization-factors/reports/
           if-no-files-found: warn
+          retention-days: 14
+  acquire:
+    name: "[measure] existing blob public acquisition only"
+    needs: select
+    if: inputs.group == 'blob-acquire'
+    runs-on: macos-14
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: "[measure] read existing object, hash, extract and consume"
+        run: python3 .github/scripts/release/blob_transfer_probe.py acquire-existing
+      - name: "[report] acquisition measurements"
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: blob-acquire-measurements
+          path: .tmp/notarization-factors/reports/
           retention-days: 14
