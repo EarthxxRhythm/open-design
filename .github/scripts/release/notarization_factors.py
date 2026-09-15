@@ -83,14 +83,19 @@ def containerize(resources):
     source = ROOT / 'container-source'
     resources.rename(source)
     resources.mkdir()
-    # Keep every native binary outside ASAR, preserving its original signature.
-    patterns = ['**/' + row['path'].removeprefix('Contents/Resources/') for row in native]
-    assert patterns, 'real reference must contain native Resources'
-    pattern = patterns[0] if len(patterns) == 1 else '{' + ','.join(patterns) + '}'
-    run('npm', 'exec', '--yes', '--package=@electron/asar@3.4.1', '--', 'asar',
-        'pack', source, resources / 'content.asar', '--unpack', pattern)
+    # Keep each native binary at its ORIGINAL Resources-relative path. The
+    # remaining non-executable files alone go into the container. No glob-based
+    # unpack inference and no native byte duplication in this measurement proxy.
+    assert native, 'real reference must contain native Resources'
     for row in native:
-        moved = resources / 'content.asar.unpacked' / row['path'].removeprefix('Contents/Resources/')
+        relative = row['path'].removeprefix('Contents/Resources/')
+        target = resources / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        (source / relative).rename(target)
+    run('npm', 'exec', '--yes', '--package=@electron/asar@3.4.1', '--', 'asar',
+        'pack', source, resources / 'content.asar')
+    for row in native:
+        moved = resources / row['path'].removeprefix('Contents/Resources/')
         with moved.open('rb') as stream:
             assert hashlib.file_digest(stream, 'sha256').hexdigest() == row['sha256']
     return {'kind': 'real content container; no externalization',
@@ -151,7 +156,7 @@ def prepare(variant):
         else:
             shutil.rmtree(resources)
         entry = resources / 'app'
-        entry.mkdir(parents=True)
+        entry.mkdir(parents=True, exist_ok=True)
         (entry / 'package.json').write_text(json.dumps({
             'name': 'notarization-timing-minimal', 'version': '1.0.0', 'main': 'main.js'}))
         # Generated runtime fixture: no dependencies, network, updater or focus.
