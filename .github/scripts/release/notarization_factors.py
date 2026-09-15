@@ -76,6 +76,27 @@ def code_inventory(files):
     return native
 
 
+def containerize(resources):
+    start = time.monotonic()
+    files = [p for p in resources.rglob('*') if p.is_file() and not p.is_symlink()]
+    native = code_inventory(files)
+    source = ROOT / 'container-source'
+    resources.rename(source)
+    resources.mkdir()
+    # Keep every native binary outside ASAR, preserving its original signature.
+    pattern = '{' + ','.join('**/' + row['path'].removeprefix('Contents/Resources/')
+                            for row in native) + '}'
+    run('npm', 'exec', '--yes', '--package=@electron/asar@3.4.1', '--', 'asar',
+        'pack', source, resources / 'content.asar', '--unpack', pattern)
+    for row in native:
+        moved = resources / 'content.asar.unpacked' / row['path'].removeprefix('Contents/Resources/')
+        with moved.open('rb') as stream:
+            assert hashlib.file_digest(stream, 'sha256').hexdigest() == row['sha256']
+    return {'kind': 'real content container; no externalization',
+            'containerSeconds': round(time.monotonic() - start, 3),
+            'nativeFilesKeptLoose': len(native), 'originalNative': native}
+
+
 
 def run(*args, timeout=600, check=True):
     # Do not log argv, which may contain credentials.
@@ -120,10 +141,14 @@ def prepare(variant):
     info = plistlib.loads(plist_path.read_bytes())
     source_version = info.get('CFBundleShortVersionString')
     info['ODNotarizationExperiment'] = os.environ['GITHUB_RUN_ID'] + '-' + variant
+    container = None
     if variant != 'full':
         resources = APP / 'Contents/Resources'
         # Exact disposable copy only; original release/worktrees untouched.
-        shutil.rmtree(resources)
+        if variant == 'container':
+            container = containerize(resources)
+        else:
+            shutil.rmtree(resources)
         entry = resources / 'app'
         entry.mkdir(parents=True)
         (entry / 'package.json').write_text(json.dumps({
@@ -133,6 +158,13 @@ def prepare(variant):
 app.setActivationPolicy('prohibited');
 app.setPath('userData', require('path').join(process.env.OD_NOTARY_EXPERIMENT_ROOT, 'runtime', 'user-data'));
 app.whenReady().then(async () => {
+  const fs = require('fs'), path = require('path');
+  const container = path.join(process.resourcesPath, 'content.asar');
+  if (fs.existsSync(container)) {
+    const metadata = JSON.parse(fs.readFileSync(path.join(container, 'app', 'package.json'), 'utf8'));
+    if (!metadata.name) throw new Error('real content not readable through ASAR');
+    console.log('CONTAINER_CONTENT_READ_OK ' + metadata.name);
+  }
   const win = new BrowserWindow({ show: false, webPreferences: { sandbox: true } });
   await win.loadURL('data:text/html,<title>Capsule bootstrap</title><h1>Ready</h1>');
   const text = await win.webContents.executeJavaScript('document.body.innerText');
@@ -143,7 +175,7 @@ app.whenReady().then(async () => {
 ''')
         info.pop('ElectronAsarIntegrity', None)
         info.pop('CFBundleIconFile', None)
-    factors = add_payload(variant) if variant != 'full' else None
+    factors = add_payload(variant) if variant in FACTORS else container
     plist_path.write_bytes(plistlib.dumps(info))
     framework = APP / 'Contents/Frameworks/Electron Framework.framework/Resources/Info.plist'
     electron = plistlib.loads(framework.read_bytes()).get('CFBundleVersion')
@@ -237,7 +269,7 @@ def measure(variant):
         timed('staple', 'xcrun', 'stapler', 'staple', APP)
         timed('stapleValidate', 'xcrun', 'stapler', 'validate', APP)
         timed('gatekeeper', 'spctl', '--assess', '--type', 'execute', '--verbose=2', APP)
-        if variant in ('full', 'few-small'):
+        if variant in ('full', 'few-small', 'container'):
             timed('dmg', 'hdiutil', 'create', '-srcfolder', APP, '-volname',
                   'Notary-' + variant, '-format', 'UDZO', ROOT / 'sample.dmg')
             result['dmgBytes'] = (ROOT / 'sample.dmg').stat().st_size
@@ -254,6 +286,6 @@ def measure(variant):
 if __name__ == '__main__':
     guard()
     operation, variant = sys.argv[1:]
-    assert variant in {'full', *FACTORS}
+    assert variant in {'full', 'container', *FACTORS}
     assert operation in ('prepare', 'measure')
     {'prepare': prepare, 'measure': measure}[operation](variant)

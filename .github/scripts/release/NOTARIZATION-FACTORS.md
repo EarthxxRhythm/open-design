@@ -69,3 +69,13 @@ Stop expanding probes when the evidence resolves priority, or explicitly report
 that service variation prevents the requested inference. Formal startup/update,
 reliability and implementation cost are separate design work, not prerequisites
 for this payload-size experiment.
+
+## Necessary alternative after first screen
+
+First screen Apple wait: 36/83/43/181s across the factorial, real full 179s.
+Add one `container` sample: retain all original real Resources bytes in an
+uncompressed ASAR; keep every detected Mach-O loose and verify its unchanged
+SHA256 before signing. Same Electron base; hidden fixture actually reads the
+real archived package metadata. This is not full application compatibility
+acceptance. It distinguishes in-bundle aggregation from external blob distribution
+before attributing the lower file-count benefit to a larger architecture change.

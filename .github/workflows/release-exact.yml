@@ -7,7 +7,7 @@ on:
         description: First factorial screen or focused repeat
         type: choice
         default: screen
-        options: [screen, count-small, count-large, bytes-few, bytes-many, endpoints]
+        options: [screen, count-small, count-large, bytes-few, bytes-many, endpoints, container]
 permissions:
   contents: read
 concurrency:
@@ -34,6 +34,7 @@ jobs:
             "bytes-few": ["few-small", "few-large"],
             "bytes-many": ["many-small", "many-large"],
             "endpoints": ["full", "few-small"],
+            "container": ["container"],
           }
           with open(os.environ["GITHUB_OUTPUT"], "a") as out:
               out.write("matrix=" + json.dumps(groups[os.environ["GROUP"]]) + "\n")
