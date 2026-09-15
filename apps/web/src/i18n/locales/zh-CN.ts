@@ -806,6 +806,8 @@ export const zhCN: Dict = {
   "entry.billingTierTeam": "团队版",
   "entry.billingTierFree": "免费",
   "entry.billingTierPro": "专业版",
+  "entry.billingTierPlus": "Plus",
+  "entry.billingTierMax": "Max",
   "entry.billingFamilyCreator": "创作会员",
   "entry.creditsAria": "{tier} · 可用额度",
   "entry.creditsAriaWithBalance": "{tier} · 可用额度 {balance}",

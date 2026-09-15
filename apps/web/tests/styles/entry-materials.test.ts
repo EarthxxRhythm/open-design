@@ -127,9 +127,10 @@ describe('app scrim material (styles/material.css)', () => {
 });
 
 describe('entry layout materials (styles/home/entry-layout.css)', () => {
-  it('flattens the rail column: 12px gutters, no padding, no surface / rim / shadow', () => {
+  it('flattens the rail column: 12px side gutters (8px bottom), no padding, no surface / rim / shadow', () => {
     const panel = declarations(entryLayoutCss, '.entry-nav-rail__panel');
-    expect(panel).toMatch(/margin:\s*0 12px 12px/);
+    // Bottom is 8 since OPEND-3116 (design spec); the sides keep the 12px gutter.
+    expect(panel).toMatch(/margin:\s*0 12px 8px/);
     expect(panel).toMatch(/padding:\s*0/);
     expect(panel).not.toMatch(/--rail-surface/);
     expect(panel).not.toMatch(/backdrop-filter/);

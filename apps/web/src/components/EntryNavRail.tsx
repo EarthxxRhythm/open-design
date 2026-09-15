@@ -65,6 +65,7 @@ import { notifyAmrLoginStatusChanged } from './amrLoginPolling';
 import { Icon } from './Icon';
 import { GITHUB_STARS_FALLBACK_LABEL, formatStars, useGithubStars } from './useGithubStars';
 import { PlanWordmark, planBadgeTierForWorkspace } from './PlanWordmark';
+import { MarqueeLabel } from './MarqueeLabel';
 import { RemixIcon } from './RemixIcon';
 import { InviteDialog } from './InviteDialog';
 import {
@@ -920,9 +921,11 @@ export function resolveWorkspaceInviteTarget(
  *
  * B's ids are namespaced by workspace kind and tier (`team_plus`, `team_max`,
  * `pro`, …). The card pairs this label with a PlanWordmark badge that already
- * carries the tier, so the label names the PLAN FAMILY (团队版 / 免费版 / …)
- * and never leaks a raw snake_case id — `team_plus` used to render verbatim
- * because only three exact ids were mapped.
+ * carries the tier: a TEAM subscription names the family (团队版) because its
+ * badge is the one `team` wordmark at every tier, while the personal ladder
+ * names the tier itself (Plus / Pro / Max) because its badge does too — the
+ * two must agree (OPEND-3119). It never leaks a raw snake_case id —
+ * `team_plus` used to render verbatim because only three exact ids were mapped.
  *
  * NOTE (parked 2026-07-20): membership is per workspace, so one account can
  * hold a personal 创作会员 tier AND a team tier at once. How the card should
@@ -937,9 +940,14 @@ function formatBillingTier(tier: string, t: ReturnType<typeof useI18n>['t']): st
     return t('entry.billingTierTeam');
   }
   if (normalized === 'free') return t('entry.billingTierFree');
-  if (normalized === 'pro' || normalized === 'plus' || normalized === 'max') {
-    return t('entry.billingTierPro');
-  }
+  // The personal ladder names its OWN tier. Folding plus / max into the Pro
+  // label read 「Pro Max」 beside the max wordmark (OPEND-3119): the card pairs
+  // this label with the tier's wordmark, and the top-right pill draws that
+  // wordmark alone, so the label must never name a different tier than the
+  // badge next to it.
+  if (normalized === 'pro') return t('entry.billingTierPro');
+  if (normalized === 'plus') return t('entry.billingTierPlus');
+  if (normalized === 'max') return t('entry.billingTierMax');
   // Unknown id: title-case the segments rather than showing `some_new_tier`.
   return normalized
     .split(/[_-]+/)
@@ -1514,7 +1522,7 @@ export function EntryTopRightCluster({
               <RailSocialRow page={page} dimensions={workspaceDimensions} variant="dock" />
               <div
                 ref={accountContainerRef}
-                className="entry-nav-rail__account"
+                className={`entry-nav-rail__account${accountOpen ? ' is-menu-open' : ''}`}
                 onMouseEnter={cancelAccountClose}
                 onMouseLeave={scheduleAccountClose}
               >
@@ -2280,7 +2288,10 @@ export function EntryNavRail({
               data-testid="workspace-switcher"
             >
               <span className="entry-nav-rail__team-avatar" aria-hidden>{workspaceInitial}</span>
-              <span className="entry-nav-rail__team-name">{workspaceName}</span>
+              {/* Long names slide their tail into view while the row is hovered
+                  (OPEND-3112) instead of staying behind the ellipsis; the slot
+                  keeps the layout class, the motion lives in `.od-marquee`. */}
+              <MarqueeLabel className="entry-nav-rail__team-name" text={workspaceName} />
               {/* The 最近浏览过 head's disclosure, exactly (per product: 展开和
                   收起和最近浏览过的一样): the glyph SWAPS rather than rotating —
                   › closed, ⌄ open — at the same 14px, in a fixed 14px slot so a
@@ -2328,7 +2339,10 @@ export function EntryNavRail({
                           {/* #5517's switcher rows are avatar + full name + ✓ only.
                               The raw role word ate the name's width and truncated
                               it; the role is already on 设置·工作区. */}
-                          <span className="entry-nav-rail__workspace-menu-name">{itemName}</span>
+                          <MarqueeLabel
+                            className="entry-nav-rail__workspace-menu-name"
+                            text={itemName}
+                          />
                           {active ? <Icon name="check" size={14} /> : null}
                         </button>
                       );

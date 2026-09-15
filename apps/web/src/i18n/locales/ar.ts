@@ -801,6 +801,8 @@ export const ar: Dict = {
   "entry.billingTierTeam": "Teams",
   "entry.billingTierFree": "Free",
   "entry.billingTierPro": "Pro",
+  "entry.billingTierPlus": "Plus",
+  "entry.billingTierMax": "Max",
   "entry.billingFamilyCreator": "Creator",
   "entry.creditsAria": "{tier} · credits remaining",
   "entry.creditsAriaWithBalance": "{tier} · {balance} credits remaining",

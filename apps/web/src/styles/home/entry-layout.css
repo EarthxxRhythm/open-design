@@ -130,18 +130,20 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  /* 12px gutters (per product): to the window's left edge, to the bottom, and
-     — through the right margin — to the content card beside it, so every
-     outer gap on this screen is the same number. Top margin 0: the tab bar
-     already contributes a 10px gap below the tabs (its bottom padding), so
-     the single visible gap between the tabs and this column stays 10px
+  /* 12px side gutters (per product): to the window's left edge and — through
+     the right margin — to the content card beside it. The bottom gutter is 8
+     (OPEND-3116, design spec): the OpenDesign / account row at the foot of
+     the column sits 8px off the window's bottom edge. Top margin 0: the tab
+     bar already contributes a 10px gap below the tabs (its bottom padding),
+     so the single visible gap between the tabs and this column stays 10px
      instead of adding the rail's own inset on top of it. */
-  margin: 0 12px 12px;
-  /* No padding at all. Bottom: the account row has to land on the same
-     baseline as the content card's bottom edge beside it (per product:
-     账号行要和下边的边框对齐) — both boxes carry the same 12px bottom margin, so
-     the row's own bottom edge is flush with the card's only when nothing pads
-     it further up. Top: the workspace switcher leads the column flush with the
+  margin: 0 12px 8px;
+  /* No padding at all. Bottom: the account row's bottom edge is set by the
+     margin above alone — nothing pads it further up. (It used to sit flush
+     with the content card's bottom edge, both boxes carrying 12px; the rail's
+     8px gutter per OPEND-3116 now lands the row 4px below the card's edge —
+     the card's own margin is the design's call, not this rule's.) Top: the
+     workspace switcher leads the column flush with the
      panel's top edge (per product) — the 10px that used to sit here was the
      tab bar's own 10px bottom gap added a second time, exactly what the margin
      note above says this box does not do. */
@@ -6823,8 +6825,13 @@
    below, top: 100%); the floating menu opens DOWNWARD, so the 6px gap to
    cover sits ABOVE the menu. */
 .entry-nav-rail__account.entry-nav-rail__account--floating .entry-nav-rail__account-menu::before {
+  content: '';
+  position: absolute;
   top: auto;
   bottom: 100%;
+  left: 0;
+  right: 0;
+  height: 8px;
 }
 .entry-nav-rail__team-menu {
   left: 0;
@@ -6877,11 +6884,20 @@
   scrollbar-gutter: stable;
 }
 /* Invisible hover bridge over the 4px float gap, so moving the pointer from
-   the avatar row up into the menu never leaves the hover region. */
-.entry-nav-rail__account .entry-nav-rail__account-menu::before {
+   the avatar row up into the menu never leaves the hover region.
+
+   It hangs off the CONTAINER, not the menu (OPEND-3153): the menu is an
+   `overflow-y: auto` box, and an absolutely positioned child sitting below its
+   bottom edge extends the scrollable area by exactly its own height — 8px of
+   overflow, so a scrollbar appeared at every window height even though the
+   menu never needed one. Rising from the container's top edge (`bottom:
+   100%`) it covers the same gap plus 4px of the menu, contributes to nobody's
+   overflow, and — gated on the open state — never sits over the social row
+   above the identity row while the menu is closed. */
+.entry-nav-rail__account.is-menu-open::before {
   content: '';
   position: absolute;
-  top: 100%;
+  bottom: 100%;
   left: 0;
   right: 0;
   height: 8px;
@@ -6931,9 +6947,12 @@
      identity block centres. */
   text-align: center;
   gap: 2px;
-  /* Roomy, like the reference: the fill needs air around the stack or it reads
-     as a highlight bar rather than a card. */
-  padding: 16px 12px 18px;
+  /* Enough air around the stack that the fill reads as a card rather than a
+     highlight bar, no more: 16/18 was the tallest thing in the menu, and the
+     menu is bounded by the rail's height (OPEND-3153 — every row has to stay
+     on screen without scrolling in a regular window; OPEND-3141 owns the
+     larger redesign of this block). */
+  padding: 12px 12px 14px;
   /* No dashed rule any more — the card's own fill is what separates the block
      from the rows, and a hairline along the bottom edge of a filled card reads
      as a seam in it. */
@@ -7213,7 +7232,14 @@ button.entry-nav-rail__menu-credits-row:active:not(:disabled) {
   width: 100%;
   text-align: left;
 }
-.entry-nav-rail__team:hover { background: var(--bg-subtle); border-radius: var(--radius); }
+/* Same fill 首页 wears as the selected destination (OPEND-3113): the ink at
+   10%, not --bg-subtle — see `.entry-nav-rail__btn.is-active`. The switcher
+   sits directly above that row, and a flat grey next to the ink veil read as
+   two different controls in one column. */
+.entry-nav-rail__team:hover {
+  background: color-mix(in srgb, var(--text-strong) 10%, transparent);
+  border-radius: var(--radius);
+}
 .entry-nav-rail__team-avatar--alt { background: #6c3aa6; }
 .entry-nav-rail__team-plan {
   margin-left: auto;

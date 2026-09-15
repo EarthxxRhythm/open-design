@@ -801,6 +801,8 @@ export const fr: Dict = {
   "entry.billingTierTeam": "Teams",
   "entry.billingTierFree": "Gratuit",
   "entry.billingTierPro": "Pro",
+  "entry.billingTierPlus": "Plus",
+  "entry.billingTierMax": "Max",
   "entry.billingFamilyCreator": "Créateur",
   "entry.creditsAria": "{tier} · allocation restante",
   "entry.creditsAriaWithBalance": "{tier} · allocation restante : {balance}",

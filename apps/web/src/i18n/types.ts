@@ -1167,6 +1167,8 @@ export interface Dict {
   'entry.billingTierTeam': string;
   'entry.billingTierFree': string;
   'entry.billingTierPro': string;
+  'entry.billingTierPlus': string;
+  'entry.billingTierMax': string;
   'entry.billingFamilyCreator': string;
   'entry.creditsAria': string;
   'entry.creditsAriaWithBalance': string;

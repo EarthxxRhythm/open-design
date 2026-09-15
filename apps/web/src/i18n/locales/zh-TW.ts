@@ -808,6 +808,8 @@ export const zhTW: Dict = {
   "entry.billingTierTeam": "Teams",
   "entry.billingTierFree": "Free",
   "entry.billingTierPro": "Pro",
+  "entry.billingTierPlus": "Plus",
+  "entry.billingTierMax": "Max",
   "entry.billingFamilyCreator": "創作會員",
   "entry.creditsAria": "{tier} · 可用額度",
   "entry.creditsAriaWithBalance": "{tier} · 可用額度 {balance}",
