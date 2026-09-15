@@ -1,6 +1,6 @@
 {
-  "distributionVersion": "0.0.1-test.claude-upstream-error.gd23bd26",
-  "velaBinaryVersion": "0.0.1-test.claude-upstream-error.gd23bd26",
+  "distributionVersion": "0.0.1-test.opencode-baseline.gd23bd26",
+  "velaBinaryVersion": "0.0.1-test.opencode-baseline.gd23bd26",
   "velaSourceCommit": "d23bd26d0f3d00e29584079c236b60a5ef469e57",
   "openDesignBaselineCommit": "be6701205bc8590873e805ba580424e1c6f85147",
   "platforms": [
@@ -15,23 +15,23 @@
     "none"
   ],
   "harnessVersions": {
-    "opencode": "1.18.30-powerformer.g92ba6a3b82b5",
+    "opencode": "0.0.0--202609020336 (vela-cli 0.0.35 companion, same as main)",
     "pi": "0.85.1",
     "codex": "0.154.0",
     "claude": "2.1.267",
     "dsh": "0.1.5-rc.1",
     "none": "0.0.1-test.claude-bg-task.g2b20105"
   },
-  "openCodeSourceCommit": "92ba6a3b82b575cdf1c90f811935ebb6fe256d4a",
-  "openCodeBinarySHA256": "b7aeb12c9e8c46a1a97fb33d5b28cee2b0f26f9cc460dd1eb70d17cc7a2cac14",
-  "openCodeUpstreamVersion": "1.18.30",
+  "openCodeBinarySHA256": "c1dec4a2f722191c0e5c31c0414c348e3ef4d9a68e844194a549ca536d148f9e",
+  "openCodeUpstreamVersion": "0.0.0--202609020336",
   "npmPublished": false,
   "artifacts": [
     {
-      "file": "powerformer-vela-cli-0.0.1-test.claude-upstream-error.gd23bd26.tgz"
+      "file": "powerformer-vela-cli-0.0.1-test.opencode-baseline.gd23bd26.tgz"
     },
     {
-      "file": "powerformer-vela-cli-darwin-arm64-0.0.1-test.claude-upstream-error.gd23bd26.tgz"
+      "file": "powerformer-vela-cli-darwin-arm64-0.0.1-test.opencode-baseline.gd23bd26.tgz"
     }
-  ]
+  ],
+  "openCodeSource": "@powerformer/vela-cli-darwin-arm64@0.0.35 (the build main ships)"
 }

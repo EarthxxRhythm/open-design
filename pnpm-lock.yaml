@@ -18,7 +18,7 @@ overrides:
   undici@^6: 6.28.0
   undici@^7: 7.29.0
   yaml: 2.9.0
-  '@powerformer/vela-cli-darwin-arm64': file:vendor/vela/powerformer-vela-cli-darwin-arm64-0.0.1-test.claude-upstream-error.gd23bd26.tgz
+  '@powerformer/vela-cli-darwin-arm64': file:vendor/vela/powerformer-vela-cli-darwin-arm64-0.0.1-test.opencode-baseline.gd23bd26.tgz
   '@deepseek-ai/dsh-llm-pi-ai>@earendil-works/pi-ai': 0.85.1
   '@deepseek-ai/dsh-subprocess-local>koffi': 3.2.1
 
@@ -912,8 +912,8 @@ importers:
         version: 4.1.6(@opentelemetry/api@1.9.1)(@types/node@24.12.2)(jsdom@29.1.1)(vite@7.3.3(@types/node@24.12.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.3)(yaml@2.9.0))
     optionalDependencies:
       '@powerformer/vela-cli':
-        specifier: file:../../vendor/vela/powerformer-vela-cli-0.0.1-test.claude-upstream-error.gd23bd26.tgz
-        version: file:vendor/vela/powerformer-vela-cli-0.0.1-test.claude-upstream-error.gd23bd26.tgz(0f46f8ea29f2294a3b32c6575ee9a8cd)
+        specifier: file:../../vendor/vela/powerformer-vela-cli-0.0.1-test.opencode-baseline.gd23bd26.tgz
+        version: file:vendor/vela/powerformer-vela-cli-0.0.1-test.opencode-baseline.gd23bd26.tgz(0f46f8ea29f2294a3b32c6575ee9a8cd)
 
   tools/release:
     dependencies:
@@ -5119,15 +5119,15 @@ packages:
   '@posthog/types@1.374.2':
     resolution: {integrity: sha512-ZghQSFMi+HFJNPvPjBoyY/jWQ+q6mSQVtWQxOHMSbBidUZjsyYbxYxBFbHy2qWLNe4mEpX+Wqir2Q4I/4AVvJQ==}
 
-  '@powerformer/vela-cli-darwin-arm64@file:vendor/vela/powerformer-vela-cli-darwin-arm64-0.0.1-test.claude-upstream-error.gd23bd26.tgz':
-    resolution: {integrity: sha512-J+16mcTqSlnpFKoXZWKFdCr7t2Hf65PmxD5LvrI5+ar/oCw2YGfdE0z81eLB7eUWMOAsX5I03WGNUbq336h3aw==, tarball: file:vendor/vela/powerformer-vela-cli-darwin-arm64-0.0.1-test.claude-upstream-error.gd23bd26.tgz}
-    version: 0.0.1-test.claude-upstream-error.gd23bd26
+  '@powerformer/vela-cli-darwin-arm64@file:vendor/vela/powerformer-vela-cli-darwin-arm64-0.0.1-test.opencode-baseline.gd23bd26.tgz':
+    resolution: {integrity: sha512-KW23HnxMuY2Odw8BoHpdXlm354tZksi6gxAyLcFmwZi2RmAid7V05gUFDt2biNq+eT3uDcM/G1FwmUeVMemsfw==, tarball: file:vendor/vela/powerformer-vela-cli-darwin-arm64-0.0.1-test.opencode-baseline.gd23bd26.tgz}
+    version: 0.0.1-test.opencode-baseline.gd23bd26
     cpu: [arm64]
     os: [darwin]
 
-  '@powerformer/vela-cli@file:vendor/vela/powerformer-vela-cli-0.0.1-test.claude-upstream-error.gd23bd26.tgz':
-    resolution: {integrity: sha512-AAn+gAKGrub0nLv5PEySC6i2bYIvKtF8ahcnraibJrFV8JkkrtY87so80BExQQkROwq/d01bH3zJkm37lMPrhw==, tarball: file:vendor/vela/powerformer-vela-cli-0.0.1-test.claude-upstream-error.gd23bd26.tgz}
-    version: 0.0.1-test.claude-upstream-error.gd23bd26
+  '@powerformer/vela-cli@file:vendor/vela/powerformer-vela-cli-0.0.1-test.opencode-baseline.gd23bd26.tgz':
+    resolution: {integrity: sha512-NmElQORDYgKXcyhUwpXMFAcvTNdRjQsZN2bvole0SYITyrEKcmaxOA/vkrFMGZsINBNtMtaQ21Kpqn5UTty5zg==, tarball: file:vendor/vela/powerformer-vela-cli-0.0.1-test.opencode-baseline.gd23bd26.tgz}
+    version: 0.0.1-test.opencode-baseline.gd23bd26
     hasBin: true
 
   '@preact/signals-core@1.14.2':
@@ -14435,10 +14435,10 @@ snapshots:
 
   '@posthog/types@1.374.2': {}
 
-  '@powerformer/vela-cli-darwin-arm64@file:vendor/vela/powerformer-vela-cli-darwin-arm64-0.0.1-test.claude-upstream-error.gd23bd26.tgz':
+  '@powerformer/vela-cli-darwin-arm64@file:vendor/vela/powerformer-vela-cli-darwin-arm64-0.0.1-test.opencode-baseline.gd23bd26.tgz':
     optional: true
 
-  '@powerformer/vela-cli@file:vendor/vela/powerformer-vela-cli-0.0.1-test.claude-upstream-error.gd23bd26.tgz(0f46f8ea29f2294a3b32c6575ee9a8cd)':
+  '@powerformer/vela-cli@file:vendor/vela/powerformer-vela-cli-0.0.1-test.opencode-baseline.gd23bd26.tgz(0f46f8ea29f2294a3b32c6575ee9a8cd)':
     dependencies:
       '@anthropic-ai/claude-code': 2.1.267
       '@deepseek-ai/cordis': 4.0.2(@deepseek-ai/cordis-plugin-include@1.0.7)(@deepseek-ai/cordis-plugin-loader@1.0.3)
@@ -14480,7 +14480,7 @@ snapshots:
       '@modelcontextprotocol/sdk': 1.30.0(zod@4.5.4)
       '@openai/codex': 0.154.0
     optionalDependencies:
-      '@powerformer/vela-cli-darwin-arm64': file:vendor/vela/powerformer-vela-cli-darwin-arm64-0.0.1-test.claude-upstream-error.gd23bd26.tgz
+      '@powerformer/vela-cli-darwin-arm64': file:vendor/vela/powerformer-vela-cli-darwin-arm64-0.0.1-test.opencode-baseline.gd23bd26.tgz
     transitivePeerDependencies:
       - '@cfworker/json-schema'
       - '@deepseek-ai/cordis-plugin-group'
