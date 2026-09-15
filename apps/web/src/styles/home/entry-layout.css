@@ -1186,11 +1186,11 @@
   overflow: hidden;
   transition: background-color 120ms var(--ease-out), color 120ms var(--ease-out);
 }
-/* The leading glyph's slot: the chat mark, or this project's run status when it
-   has one (RailRecentRow). Same 18px box the destinations' icons occupy
+/* The leading glyph's slot: the folder, or this project's live run status when
+   it has one (RailRecentRow). Same 18px box the destinations' icons occupy
    (`.entry-nav-rail__btn-icon`) — that is what puts both columns of glyphs, and
    therefore both columns of text, on one edge. Fixed width so a 14px status orb
-   and a 16px chat mark never shift the name sideways as a run starts. */
+   and a 16px folder never shift the name sideways as a run starts. */
 .entry-nav-rail__recent-icon {
   flex: 0 0 18px;
   display: inline-flex;
@@ -1205,6 +1205,20 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* A completed, unread project keeps its folder and adds this notice at the
+   row's end (OPEND-3133): a 6px disc in the design's blue, pushed to the right
+   edge by `margin-left: auto` whatever the name's length. The row's hover
+   padding (see `.entry-nav-rail__recent-row:hover .entry-nav-rail__recent-item`)
+   moves it left of the ⋮ so the two never overlap. A literal blue rather than
+   `--accent`: this is the design's notice colour, the same in both themes. */
+.entry-nav-rail__recent-unread {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: #1F68FE;
 }
 .entry-nav-rail__recent-item:hover:not(:disabled) {
   /* Same fill as the section heading above it and as 首页 when it is the

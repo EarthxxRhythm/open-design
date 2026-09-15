@@ -1,23 +1,33 @@
 /**
- * The one place a `ProjectDisplayStatus` becomes a glyph.
+ * The one place a `ProjectDisplayStatus` becomes a glyph — and the one place
+ * the two surfaces that list projects (the rail's 最近项目 rows and the project
+ * switcher above the chat) get their shared marks from, so they can never tell
+ * different stories about the same project.
  *
- * A run that has stopped is a static badge; a run still moving — or paused on a
- * question the user has to answer — is the same rotating orb in a different
- * colour, so the row reads as one object changing state rather than a handful
- * of unrelated icons. The split is "is it still going", not "did it go well":
- * spinning a stopped run's orb is the one thing this component must never do,
- * because the rotation itself is what says "working".
+ * A run that was interrupted is a static badge; a run still moving — or paused
+ * on a question the user has to answer — is the same rotating orb in a
+ * different colour, so the row reads as one object changing state rather than
+ * a handful of unrelated icons. The split is "is it still going", not "did it
+ * go well": spinning a stopped run's orb is the one thing this component must
+ * never do, because the rotation itself is what says "working".
  *
  * Speed carries only one distinction, and it is not urgency: `queued` turns
  * slowly because it has not started. Everything else that is live — running
  * and awaiting a reply alike — turns at the same rate, so a colour change
  * never reads as a change of pace.
  *
- * Returns `null` only for `not_started`, which has nothing to say. Callers must
- * still reserve the slot so names stay aligned; that is the caller's layout
- * concern, not this component's.
+ * A FINISHED run is not a glyph in the lead slot at all (OPEND-3133): the row
+ * keeps the folder every idle project leads with (`ProjectFolderGlyph`) and
+ * says "done, unread" with a small dot at its END (`ProjectCompletionDot`),
+ * which opening the project spends. `hasRunStatusGlyph` / `hasCompletionNotice`
+ * are the two questions a caller asks to pick between the three.
+ *
+ * Returns `null` for `not_started` and `succeeded`, which draw nothing here.
+ * Callers must still reserve the slot so names stay aligned; that is the
+ * caller's layout concern, not this component's.
  */
 import type { ProjectDisplayStatus } from '@open-design/contracts';
+import { Icon } from './Icon';
 import { SiriOrb } from './SiriOrb';
 
 /**
@@ -42,14 +52,29 @@ import { SiriOrb } from './SiriOrb';
 const ATTENTION = { c1: '#FF8D02', c2: '#EDC337', c5: '#FFC400' };
 
 /**
- * Whether this status draws anything at all.
+ * Whether this status puts a glyph in the row's LEAD slot.
  *
- * Callers need to know BEFORE rendering: the dropdown only reserves its icon
- * column when at least one row will fill it, so an all-quiet list is not left
- * indented past an empty gutter.
+ * Callers need to know BEFORE rendering: when this says no, the slot holds the
+ * folder (`ProjectFolderGlyph`) instead, so the column is never empty and
+ * names stay on one edge. `succeeded` answers no on purpose — a finished run
+ * keeps the folder and reports through {@link hasCompletionNotice} instead.
  */
 export function hasRunStatusGlyph(status: ProjectDisplayStatus | undefined): boolean {
-  return status !== undefined && status !== 'not_started';
+  return status !== undefined && status !== 'not_started' && status !== 'succeeded';
+}
+
+/**
+ * Whether this status is a finished run the user has not looked at yet: the
+ * one case that draws the unread dot at the row's END (`ProjectCompletionDot`)
+ * rather than a glyph in its lead slot.
+ *
+ * The "not looked at yet" half is the store's, not this function's: the shared
+ * run-status feed (`useProjectRunStatuses`) drops a `succeeded` the user has
+ * acknowledged by opening the project, so a caller never sees it here. One
+ * store, one rule, both surfaces.
+ */
+export function hasCompletionNotice(status: ProjectDisplayStatus | undefined): boolean {
+  return status === 'succeeded';
 }
 
 interface Props {
@@ -60,52 +85,25 @@ interface Props {
 }
 
 /**
- * Completed: a dark disc with the checkmark knocked out of it. Two hardcoded
- * fills, so it cannot go through `Icon` — that component emits a single
- * `currentColor` path. Standalone two-colour marks are the repo's convention
- * here (see PlanWordmark, EditorIcon).
- *
- * The viewBox is the disc's own bounds (a circle of r=10 centred at 12,12),
- * NOT the artwork's 24-unit frame: at `size` 14 that frame left the disc
- * drawing 11.7px while the running orb — which fills its box edge to edge —
- * drew the full 14, so "running" and "done" were visibly different sizes in
- * the same column (per product: 运行中和完成的 icon 大小一样 14px). Cropping to
- * the ink makes `size` mean the same thing for both.
- */
-function SucceededBadge({ size, label }: { size: number; label?: string }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="2 2 20 20"
-      fill="none"
-      focusable="false"
-      {...(label ? { role: 'img', 'aria-label': label } : { 'aria-hidden': true })}
-    >
-      <path
-        d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z"
-        fill="#202020"
-      />
-      <path
-        d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22ZM17.4571 9.45711L11 15.9142L6.79289 11.7071L8.20711 10.2929L11 13.0858L16.0429 8.04289L17.4571 9.45711Z"
-        fill="#00FF08"
-      />
-    </svg>
-  );
-}
-
-/**
  * Interrupted: the run stopped before it delivered — it failed, it was
  * canceled, or it ended with declared work still undone. One mark for all
  * three, because the row only has to say "this did not finish"; the reason
  * belongs to the status text next to it, not to a colour the user has to
  * decode.
  *
- * Built as the succeeded badge's twin — same disc, same knocked-out glyph, same
- * cropped viewBox so `size` means the same drawn pixels in a mixed column —
- * with the mark itself carried by the counter rather than the disc. The rect
- * backs ONLY that counter; the disc paints everything else, so its bounds never
- * need to match the artwork.
+ * A disc with the glyph knocked out of it, the mark carried by the counter
+ * rather than the disc. The rect backs ONLY that counter; the disc paints
+ * everything else, so its bounds never need to match the artwork. Two
+ * hardcoded fills, so it cannot go through `Icon` — that component emits a
+ * single `currentColor` path; standalone two-colour marks are the repo's
+ * convention here (see PlanWordmark, EditorIcon).
+ *
+ * The viewBox is the disc's own bounds (a circle of r=10 centred at 12,12),
+ * NOT the artwork's 24-unit frame: at `size` 14 that frame left the disc
+ * drawing 11.7px while the running orb — which fills its box edge to edge —
+ * drew the full 14, so "running" and "failed" were visibly different sizes in
+ * the same column (per product: 运行中和完成的 icon 大小一样 14px). Cropping to
+ * the ink makes `size` mean the same thing for both.
  */
 function InterruptedBadge({ size, label }: { size: number; label?: string }) {
   return (
@@ -127,45 +125,68 @@ function InterruptedBadge({ size, label }: { size: number; label?: string }) {
 }
 
 /**
- * The glyph a project leads with when it has nothing to report (OPEND-3129):
- * a chat bubble with a spark, i.e. "a conversation with the agent lives in
- * here" — which is what a project is from either list's point of view.
+ * The glyph a project leads with when it has nothing live to report
+ * (OPEND-3129): the folder — the same mark the workspace tab strip and the
+ * switcher trigger already draw for a project tab.
  *
  * ONE component for both surfaces that list projects — the rail's 最近项目
  * rows and the project switcher above the chat — for the same reason those two
- * share `ProjectRunStatusIcon` above: an idle project must look like one and
- * the same thing wherever the user finds it, and the rail drawing this mark
- * while the switcher drew a folder read as two different projects. Pairs with
- * `hasRunStatusGlyph`: callers draw this exactly when that says there is no
- * status to draw.
+ * share `ProjectRunStatusIcon`: an idle project must look like one and the same
+ * thing wherever the user finds it. The first pass at this unified the two on
+ * a chat-bubble mark; product and design settled on the folder instead, so
+ * both slots now draw this. Pairs with `hasRunStatusGlyph`: callers draw this
+ * exactly when that says there is no live status to draw — a finished, unread
+ * run included, which keeps the folder and adds `ProjectCompletionDot`.
  *
- * Inlined rather than added to the shared icon set: no `IconName` maps to this
- * artwork, and these two slots are the only places it appears. `currentColor`
- * lets it take each slot's own ink — the rail row's, hover included, and the
- * switcher's muted text — so colour stays the caller's decision, as it is for
- * the status glyphs. `size` likewise: each slot keeps the box it always had.
+ * `currentColor` through `Icon`, so each slot keeps its own ink — the rail
+ * row's, hover included, and the switcher's muted text. `size` likewise: each
+ * slot keeps the box it always had.
  */
-export function ProjectIdleGlyph({ size = 14 }: { size?: number }) {
+export function ProjectFolderGlyph({ size = 14 }: { size?: number }) {
+  return <Icon name="folder" size={size} data-testid="project-folder-glyph" />;
+}
+
+/**
+ * "Finished, and you have not looked yet" (OPEND-3133): a 6px disc in the
+ * design's blue at the END of the row — `margin-left: auto` in the caller's
+ * stylesheet, so it sits on the row's right edge whatever the name's length.
+ * The folder stays in the lead slot; this is a notice beside the name, not a
+ * replacement for the glyph, which is why it is not a `ProjectRunStatusIcon`
+ * case.
+ *
+ * Announced as the finished status it stands for (`role="img"` + the
+ * localized label), the way the lead-slot glyphs are, so a screen reader
+ * hears "Completed" here exactly as it did when this was a ✓. The caller
+ * names the class and test id because each surface's stylesheet and specs
+ * address it by their own convention; the shape and the semantics are shared.
+ */
+export function ProjectCompletionDot({
+  className,
+  label,
+  testId,
+}: {
+  className: string;
+  /** Localized status name, announced to assistive tech. */
+  label: string;
+  testId: string;
+}) {
   return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      width={size}
-      height={size}
-      fill="currentColor"
-      aria-hidden
-      focusable="false"
-      data-testid="project-idle-glyph"
-    >
-      <path d="M7.0009 4.00001C3.6869 4.00001 1 6.69522 1 9.99416V22.0001H14.999C18.3131 22.0001 21 19.3049 21 16.0059V12.0001H19V16.0059C19 18.2043 17.2045 20.0001 14.999 20.0001H3V9.99416C3 7.79582 4.7954 6.00001 7.0009 6.00001H13V4.00001H7.0009ZM13 14.0001H15V12.0001H13V14.0001ZM7 14.0001H9V12.0001H7V14.0001ZM19.4707 2.31934C19.2942 1.89355 18.7058 1.89355 18.5293 2.31934L18.2764 2.93067C17.8445 3.97346 17.0385 4.80618 16.0254 5.25685L15.3076 5.57618C14.8973 5.759 14.8974 6.35621 15.3076 6.53908L16.0674 6.87697C17.055 7.31625 17.8466 8.11947 18.2861 9.12795L18.5332 9.69338C18.7136 10.1075 19.2863 10.1075 19.4668 9.69338L19.7139 9.12795C20.1534 8.11948 20.9449 7.31625 21.9326 6.87697L22.6924 6.53908C23.1025 6.35621 23.1026 5.759 22.6924 5.57618L21.9746 5.25685C20.9615 4.80619 20.1555 3.97349 19.7236 2.93067L19.4707 2.31934Z" />
-    </svg>
+    <span
+      className={className}
+      role="img"
+      aria-label={label}
+      title={label}
+      data-testid={testId}
+    />
   );
 }
 
 export function ProjectRunStatusIcon({ status, size = 14, label }: Props) {
   switch (status) {
     case 'succeeded':
-      return <SucceededBadge size={size} label={label} />;
+      // Not a lead-slot glyph: the row keeps its folder and reports through
+      // `ProjectCompletionDot` at its end (see `hasCompletionNotice`).
+      return null;
     case 'failed':
     case 'canceled':
     case 'incomplete':

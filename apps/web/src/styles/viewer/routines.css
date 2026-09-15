@@ -1131,6 +1131,19 @@
   flex: 0 0 auto;
   color: var(--accent);
 }
+/* A completed, unread project's notice at the row's end (OPEND-3133) — the
+   same 6px #1F68FE disc the rail's 最近项目 rows carry
+   (`.entry-nav-rail__recent-unread`), so the two surfaces read alike. Sits
+   between the label and the active ✓, on the right edge via `margin-left:
+   auto`; the row's 8px gap keeps it clear of both. */
+.workspace-tabs-dropdown__row-unread {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: #1F68FE;
+}
 .workspace-tabs-dropdown__row-label {
   flex: 1 1 auto;
   min-width: 0;

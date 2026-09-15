@@ -4,7 +4,13 @@ import { cleanup, render } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ProjectDisplayStatus } from '@open-design/contracts';
 
-import { ProjectRunStatusIcon } from '../../src/components/ProjectRunStatusIcon';
+import {
+  hasCompletionNotice,
+  hasRunStatusGlyph,
+  ProjectCompletionDot,
+  ProjectFolderGlyph,
+  ProjectRunStatusIcon,
+} from '../../src/components/ProjectRunStatusIcon';
 
 afterEach(cleanup);
 
@@ -18,12 +24,37 @@ function shapeOf(status: ProjectDisplayStatus) {
 }
 
 describe('ProjectRunStatusIcon', () => {
-  it('draws finished work as the static badge, not the orb', () => {
-    const result = shapeOf('succeeded');
-    expect(result.kind).toBe('badge');
-    // The two hardcoded fills are the whole point of it not going through Icon.
-    const fills = [...result.root!.querySelectorAll('path')].map((p) => p.getAttribute('fill'));
-    expect(fills).toEqual(['#202020', '#00FF08']);
+  it('draws nothing in the lead slot for finished work', () => {
+    // OPEND-3133: a finished run keeps the folder and reports through the
+    // unread dot at the row's end (ProjectCompletionDot), never a ✓ here.
+    expect(shapeOf('succeeded').kind).toBe('none');
+    expect(hasRunStatusGlyph('succeeded')).toBe(false);
+    expect(hasCompletionNotice('succeeded')).toBe(true);
+  });
+
+  it('reports a completion notice for finished work only', () => {
+    const others: ProjectDisplayStatus[] = [
+      'not_started', 'queued', 'running', 'awaiting_input', 'incomplete', 'failed', 'canceled',
+    ];
+    for (const status of others) expect(hasCompletionNotice(status), status).toBe(false);
+    expect(hasCompletionNotice(undefined)).toBe(false);
+  });
+
+  it('draws the folder for a project with nothing live to report', () => {
+    const { container } = render(<ProjectFolderGlyph size={16} />);
+    const glyph = container.firstElementChild;
+    expect(glyph?.getAttribute('data-testid')).toBe('project-folder-glyph');
+    expect(glyph?.getAttribute('width')).toBe('16');
+  });
+
+  it('announces the completion dot as the finished status', () => {
+    const { container } = render(
+      <ProjectCompletionDot className="dot" label="Completed" testId="dot" />,
+    );
+    const dot = container.firstElementChild;
+    expect(dot?.getAttribute('role')).toBe('img');
+    expect(dot?.getAttribute('aria-label')).toBe('Completed');
+    expect(dot?.className).toBe('dot');
   });
 
   it.each<[ProjectDisplayStatus]>([['running'], ['queued'], ['awaiting_input']])(
@@ -112,6 +143,8 @@ describe('ProjectRunStatusIcon', () => {
   it('renders nothing for the status with nothing to say', () => {
     // The caller reserves the slot; this must not fill it with a placeholder.
     expect(shapeOf('not_started').kind).toBe('none');
+    expect(hasRunStatusGlyph('not_started')).toBe(false);
+    expect(hasRunStatusGlyph(undefined)).toBe(false);
   });
 
   it('is decorative unless given a label', () => {
@@ -132,7 +165,7 @@ describe('ProjectRunStatusIcon', () => {
     expect(orb.style.getPropertyValue('--size')).toBe('14px');
     cleanup();
 
-    const badge = render(<ProjectRunStatusIcon status="succeeded" size={14} />)
+    const badge = render(<ProjectRunStatusIcon status="failed" size={14} />)
       .container.firstElementChild;
     expect(badge?.getAttribute('width')).toBe('14');
     expect(badge?.getAttribute('height')).toBe('14');

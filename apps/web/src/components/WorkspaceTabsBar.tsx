@@ -18,7 +18,13 @@ import { buildPath, navigate, type EntryHomeView, type Route } from '../router';
 import type { Project } from '../types';
 import type { ProjectDisplayStatus, WorkspaceCollabContext } from '@open-design/contracts';
 import { Icon, type IconName } from './Icon';
-import { hasRunStatusGlyph, ProjectIdleGlyph, ProjectRunStatusIcon } from './ProjectRunStatusIcon';
+import {
+  hasCompletionNotice,
+  hasRunStatusGlyph,
+  ProjectCompletionDot,
+  ProjectFolderGlyph,
+  ProjectRunStatusIcon,
+} from './ProjectRunStatusIcon';
 import {
   ProjectHoverPreviewCard,
   useProjectHoverCover,
@@ -693,16 +699,17 @@ function ChromeHomeGlyph() {
 /**
  * The glyph leading one dropdown row.
  *
- * A project row with something to report shows its run status; a project row
- * with nothing to report — nothing running, a status that draws nothing
- * (not_started), a status that has not arrived yet — leads with the idle
- * project glyph. Both are the very components the rail's 最近项目 rows lead
- * with (RailRecentRow), so the two can never tell different stories about the
- * same project: not for its status (OPEND-2694) and not for its resting state
- * either (OPEND-3129 — this slot used to draw the tab's folder while the rail
- * drew the chat mark, and one project read as two). A non-project tab such as
- * the plugin marketplace keeps its own icon. The slot is therefore never
- * empty, and the column never has to decide whether to exist.
+ * A project row with a LIVE run to report shows its run status; a project row
+ * with nothing live to report — nothing running, a status that draws nothing
+ * (not_started), a finished run (which reports through `completionNoticeFor`
+ * instead), a status that has not arrived yet — leads with the folder. Both
+ * are the very components the rail's 最近项目 rows lead with (RailRecentRow),
+ * so the two can never tell different stories about the same project: not for
+ * its status (OPEND-2694) and not for its resting state either (OPEND-3129 —
+ * this slot and the rail used to draw different resting marks, and one project
+ * read as two). A non-project tab such as the plugin marketplace keeps its own
+ * icon. The slot is therefore never empty, and the column never has to decide
+ * whether to exist.
  *
  * Unknown is deliberately treated as "nothing to report" rather than guessed
  * at: a guess would flash the wrong status glyph on every open.
@@ -718,10 +725,33 @@ function leadGlyphFor(
   }
   const status = runStatusByProjectId.get(tab.projectId);
   if (!status || !hasRunStatusGlyph(status)) {
-    return <ProjectIdleGlyph size={14} />;
+    return <ProjectFolderGlyph size={14} />;
   }
   return (
     <ProjectRunStatusIcon status={status} size={14} label={t(STATUS_LABEL_KEYS[status])} />
+  );
+}
+
+/**
+ * The unread dot at the END of one dropdown row (OPEND-3133): a project whose
+ * run finished and has not been opened since. `openTab` spends it through the
+ * same shared store the rail's rows read, so the rail drops its dot in the
+ * same moment. Nothing for every other tab and status.
+ */
+function completionNoticeFor(
+  tab: WorkspaceChromeTab,
+  runStatusByProjectId: ReadonlyMap<string, ProjectDisplayStatus>,
+  t: ReturnType<typeof useT>,
+): ReactNode {
+  if (tab.kind !== 'project') return null;
+  const status = runStatusByProjectId.get(tab.projectId);
+  if (!status || !hasCompletionNotice(status)) return null;
+  return (
+    <ProjectCompletionDot
+      className="workspace-tabs-dropdown__row-unread"
+      label={t(STATUS_LABEL_KEYS[status])}
+      testId="workspace-tabs-dropdown-unread"
+    />
   );
 }
 
@@ -1869,14 +1899,15 @@ export function WorkspaceTabsBar({
                       onMouseEnter={(event) => queuePreview(tab.id, event.currentTarget)}
                       onFocus={(event) => showPreviewNow(tab.id, event.currentTarget)}
                     >
-                      {/* Always up: every row fills the slot now — a run
-                          status when there is one, the idle project glyph
-                          otherwise — so the column can't half-exist and names
-                          stay on one shared left edge. */}
+                      {/* Always up: every row fills the slot now — a live run
+                          status when there is one, the folder otherwise — so
+                          the column can't half-exist and names stay on one
+                          shared left edge. */}
                       <span className="workspace-tabs-dropdown__row-lead">
                         {leadGlyphFor(tab, display, runStatusByProjectId, t)}
                       </span>
                       <span className="workspace-tabs-dropdown__row-label">{display.title}</span>
+                      {completionNoticeFor(tab, runStatusByProjectId, t)}
                       {active ? (
                         <Icon name="check" size={14} className="workspace-tabs-dropdown__row-check" />
                       ) : null}

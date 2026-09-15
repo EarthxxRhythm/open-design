@@ -12,7 +12,13 @@ import type { ProjectDisplayStatus, WorkspaceCollabContext } from '@open-design/
 
 import { useT } from '../../i18n';
 import { Icon } from '../Icon';
-import { hasRunStatusGlyph, ProjectIdleGlyph, ProjectRunStatusIcon } from '../ProjectRunStatusIcon';
+import {
+  hasCompletionNotice,
+  hasRunStatusGlyph,
+  ProjectCompletionDot,
+  ProjectFolderGlyph,
+  ProjectRunStatusIcon,
+} from '../ProjectRunStatusIcon';
 import { STATUS_LABEL_KEYS } from '../../state/projectRunStatus';
 import type { Project } from '../../types';
 import type { ProjectMoveErrorKind } from '../project-actions/useWorkspaceProjectMove';
@@ -141,8 +147,10 @@ export function RailRecentRow({
 }: {
   project: Project;
   workspaceContext?: WorkspaceCollabContext | null;
-  /** This project's live run status, when it has one (per product: 如果有项目在
-   *  进行，这个 icon 换成状态). Drives the leading glyph and nothing else. */
+  /** This project's run status, when it has one (per product: 如果有项目在
+   *  进行，这个 icon 换成状态). Drives the leading glyph — and, for a finished
+   *  run the user has not opened since, the unread dot at the row's end
+   *  (OPEND-3133) — and nothing else. */
   runStatus?: ProjectDisplayStatus;
   /** The daemon's canMutate is privileged-or-self-created and 403s the rest,
    *  so a row someone else shared keeps its mutations disabled with the same
@@ -311,13 +319,14 @@ export function RailRecentRow({
         >
           {/* The row's leading glyph, in the SAME column the destinations put
               their icons in, so the rail stays one left edge. A project with a
-              run to report shows that run's status instead of the chat mark
+              LIVE run to report shows that run's status instead of the folder
               (per product: 和项目切换器里的状态对齐) — the very same components
               the workspace tab dropdown leads its rows with
-              (`leadGlyphFor` in WorkspaceTabsBar), status and idle mark alike
+              (`leadGlyphFor` in WorkspaceTabsBar), status and folder alike
               (OPEND-3129), so the two can never tell different stories about
-              the same project. 16 in an 18px slot: the box this row always
-              gave the mark. */}
+              the same project. A FINISHED run is not a lead glyph: the folder
+              stays and the unread dot below says it (OPEND-3133). 16 in an
+              18px slot: the box this row always gave the mark. */}
           <span className="entry-nav-rail__recent-icon">
             {runStatus && hasRunStatusGlyph(runStatus) ? (
               <ProjectRunStatusIcon
@@ -326,10 +335,21 @@ export function RailRecentRow({
                 label={t(STATUS_LABEL_KEYS[runStatus])}
               />
             ) : (
-              <ProjectIdleGlyph size={16} />
+              <ProjectFolderGlyph size={16} />
             )}
           </span>
           <span className="entry-nav-rail__recent-name">{project.name}</span>
+          {/* Completed, unread: the dot at the row's end. The section spends
+              it when the row opens the project (`acknowledgeProjectCompletion`
+              in the shared run-status store), which is also what drops it from
+              the switcher. */}
+          {runStatus && hasCompletionNotice(runStatus) ? (
+            <ProjectCompletionDot
+              className="entry-nav-rail__recent-unread"
+              label={t(STATUS_LABEL_KEYS[runStatus])}
+              testId="entry-nav-recent-unread"
+            />
+          ) : null}
         </button>
       )}
       {hasMenu ? (

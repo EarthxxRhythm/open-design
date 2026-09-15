@@ -89,8 +89,14 @@ function projectRow(project: (typeof PROJECTS)[number]) {
   };
 }
 
-async function wireSignedInWorkspace(page: Page): Promise<{ runsRequests: string[] }> {
+async function wireSignedInWorkspace(page: Page): Promise<{
+  runsRequests: string[];
+  /** A NEW run finished in this project: the feed starts naming a fresh run
+   *  id, which is what makes a spent ✓ come back. */
+  finishAnotherRun: (projectId: string) => void;
+}> {
   const runsRequests: string[] = [];
+  const runGeneration = new Map<string, number>();
 
   await page.route('**/api/integrations/vela/status', async (route) => {
     await route.fulfill({
@@ -208,11 +214,12 @@ async function wireSignedInWorkspace(page: Page): Promise<{ runsRequests: string
     }
     runsRequests.push(projectId);
     await new Promise((resolve) => setTimeout(resolve, RUNS_LATENCY_MS));
+    const generation = runGeneration.get(projectId) ?? 0;
     await route.fulfill({
       json: {
         runs: project.run
           ? [{
-              id: `run-${project.id}`,
+              id: generation === 0 ? `run-${project.id}` : `run-${project.id}-${generation}`,
               projectId: project.id,
               conversationId: null,
               assistantMessageId: null,
@@ -227,7 +234,12 @@ async function wireSignedInWorkspace(page: Page): Promise<{ runsRequests: string
     });
   });
 
-  return { runsRequests };
+  return {
+    runsRequests,
+    finishAnotherRun: (projectId) => {
+      runGeneration.set(projectId, (runGeneration.get(projectId) ?? 0) + 1);
+    },
+  };
 }
 
 type PaintLog = {
@@ -402,4 +414,66 @@ test('[P1] the project switcher and the rail tell one story about a finished pro
   await expect(recentRow(page, 'Campaign landing').getByRole('img', { name: /Running|运行中/ })).toBeVisible();
   await expect(recentRow(page, 'Brand deck').getByRole('img', { name: /Needs input|等待输入/ })).toBeVisible();
   await expect(recentRow(page, 'Onboarding flow').getByRole('img', { name: /Failed|失败/ })).toBeVisible();
+});
+
+// OPEND-3129 / OPEND-3133 — a finished project is not a ✓ in the glyph column:
+// it keeps the folder every idle project leads with and carries a small blue
+// dot at the row's end until it is opened. Both surfaces read that from the
+// one shared store, so the dot leaves the rail and the switcher together.
+test('[P1] a finished project keeps its folder and carries an unread dot until it is opened, in the rail and the switcher', async ({ page }) => {
+  const { finishAnotherRun } = await wireSignedInWorkspace(page);
+  await gotoHome(page);
+  await expectRailStatuses(page);
+
+  const folderIn = (row: ReturnType<typeof recentRow>) => row.getByTestId('project-folder-glyph');
+  // Finished: folder + dot. Quiet: folder alone. Running: the orb, no dot.
+  await expect(folderIn(recentRow(page, 'Pricing page'))).toBeVisible();
+  await expect(recentRow(page, 'Pricing page').getByTestId('entry-nav-recent-unread')).toBeVisible();
+  await expect(folderIn(recentRow(page, 'Untouched notes'))).toBeVisible();
+  await expect(recentRow(page, 'Untouched notes').getByTestId('entry-nav-recent-unread')).toHaveCount(0);
+  await expect(folderIn(recentRow(page, 'Campaign landing'))).toHaveCount(0);
+  await expect(recentRow(page, 'Campaign landing').getByTestId('entry-nav-recent-unread')).toHaveCount(0);
+
+  // Opening the finished project spends its dot …
+  await recentRow(page, 'Pricing page').click();
+  await expect(page).toHaveURL(/\/projects\/ui-rs-done/, { timeout: T.medium });
+  await projectHomeTab(page).click();
+  await expect(page.getByTestId('home-hero')).toBeVisible({ timeout: T.medium });
+  await ensureRailOpen(page);
+  await expect(folderIn(recentRow(page, 'Pricing page'))).toBeVisible();
+  await expect(recentRow(page, 'Pricing page').getByTestId('entry-nav-recent-unread')).toHaveCount(0);
+
+  // … and a NEW finished run brings it back. Watch it from inside another
+  // project, where the switcher lists both tabs: the finished one leads with
+  // the folder and ends with the dot, the running one keeps its orb. The
+  // switcher reads the feed only while its menu is open, so open it first and
+  // let the next poll carry the new run in.
+  await recentRow(page, 'Campaign landing').click();
+  await expect(page).toHaveURL(/\/projects\/ui-rs-running/, { timeout: T.medium });
+  await page.getByTestId('workspace-tabs-dropdown-trigger').click();
+  const listbox = page.getByRole('listbox');
+  await expect(listbox.getByRole('option', { name: /Pricing page/ })).toBeVisible();
+  finishAnotherRun('ui-rs-done');
+  await page.waitForResponse((response) =>
+    response.request().method() === 'GET'
+    && response.url().includes('/api/runs?projectId=ui-rs-done'), { timeout: T.long });
+  const doneOption = listbox.getByRole('option', { name: /Pricing page/ });
+  const runningOption = listbox.getByRole('option', { name: /Campaign landing/ });
+  await expect(doneOption.getByTestId('project-folder-glyph')).toBeVisible();
+  await expect(doneOption.getByTestId('workspace-tabs-dropdown-unread')).toBeVisible({ timeout: T.medium });
+  await expect(runningOption.getByRole('img', { name: /Running|运行中/ })).toBeVisible();
+  await expect(runningOption.getByTestId('workspace-tabs-dropdown-unread')).toHaveCount(0);
+
+  // Opening it from the switcher spends the dot there and in the rail alike.
+  await doneOption.click();
+  await expect(page).toHaveURL(/\/projects\/ui-rs-done/, { timeout: T.medium });
+  await page.getByTestId('workspace-tabs-dropdown-trigger').click();
+  await expect(page.getByRole('listbox').getByRole('option', { name: /Pricing page/ })
+    .getByTestId('workspace-tabs-dropdown-unread')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await projectHomeTab(page).click();
+  await expect(page.getByTestId('home-hero')).toBeVisible({ timeout: T.medium });
+  await ensureRailOpen(page);
+  await expect(folderIn(recentRow(page, 'Pricing page'))).toBeVisible();
+  await expect(recentRow(page, 'Pricing page').getByTestId('entry-nav-recent-unread')).toHaveCount(0);
 });

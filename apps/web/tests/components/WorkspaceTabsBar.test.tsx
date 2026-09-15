@@ -1949,13 +1949,18 @@ describe('WorkspaceTabsBar dock dropdown run status', () => {
     dock.remove();
   });
 
-  it('leads a finished project with the ✓ and spends it when the row opens it', async () => {
+  it('marks a finished project with the unread dot and spends it when the row opens it', async () => {
+    // OPEND-3133: the notice is the dot at the row's end, announced as the
+    // finished status; the lead slot keeps the folder.
     render(<WorkspaceTabsBar route={{ ...projectRoute }} projects={[project]} />);
     fireEvent.click(await screen.findByTestId('workspace-tabs-dropdown-trigger'));
     const listbox = screen.getByRole('listbox');
     await waitFor(() => {
       expect(within(listbox).getByRole('img', { name: 'designs.status.succeeded' })).toBeTruthy();
     });
+    expect(within(listbox).getByRole('img', { name: 'designs.status.succeeded' }).getAttribute('data-testid'))
+      .toBe('workspace-tabs-dropdown-unread');
+    expect(within(listbox).getByTestId('project-folder-glyph')).toBeTruthy();
 
     fireEvent.click(within(listbox).getByRole('option', { name: /Project Alpha/ }));
     // Same acknowledgement record the rail keeps, keyed on THIS finished run.
