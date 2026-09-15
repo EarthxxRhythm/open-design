@@ -859,6 +859,7 @@ export const ptBR: Dict = {
   'home.createFailed': 'Failed to start the run. Try again.',
   'home.daemonRecovering': 'Local service connection interrupted. Recovering automatically…',
   'home.createTimedOut': 'A preparação do projeto expirou antes de começar. Tente enviar novamente.',
+  'home.amrGateUnavailable': 'Não foi possível confirmar seu saldo do OpenDesign Cloud. Tente enviar novamente.',
   'home.bundledScenarioMissing': 'Bundled scenario "{scenarioId}" is not installed. Reinstall the daemon to restore the default plugin set.',
   "entry.cloudCalloutBody": "Entre para usar o OpenDesign Cloud e colaborar na nuvem",
   "entry.localAccountName": "Modo local",

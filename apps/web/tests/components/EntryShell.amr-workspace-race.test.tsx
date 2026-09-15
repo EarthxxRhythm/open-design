@@ -8,7 +8,7 @@ import {
 } from '@open-design/contracts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { EntryShell } from '../../src/components/EntryShell';
+import { EntryShellWithGateHost } from '../helpers/entry-shell-gate-host';
 import {
   notifyWorkspaceContextRefresh,
   resetTeamProjectsCache,
@@ -189,7 +189,7 @@ describe('EntryShell AMR workspace precheck race', () => {
 
       render(
         <I18nProvider initial="en">
-          <EntryShell
+          <EntryShellWithGateHost
             skills={[]}
             designTemplates={[]}
             designSystems={[]}
@@ -271,7 +271,7 @@ describe('EntryShell AMR workspace precheck race', () => {
 
     render(
       <I18nProvider initial="en">
-        <EntryShell
+        <EntryShellWithGateHost
           skills={[]}
           designTemplates={[]}
           designSystems={[]}
@@ -353,7 +353,7 @@ describe('EntryShell AMR workspace precheck race', () => {
 
     render(
       <I18nProvider initial="en">
-        <EntryShell
+        <EntryShellWithGateHost
           skills={[]}
           designTemplates={[]}
           designSystems={[]}
@@ -426,7 +426,7 @@ describe('EntryShell AMR workspace precheck race', () => {
 
     render(
       <I18nProvider initial="en">
-        <EntryShell
+        <EntryShellWithGateHost
           skills={[]}
           designTemplates={[]}
           designSystems={[]}
@@ -514,7 +514,7 @@ describe('EntryShell AMR workspace precheck race', () => {
 
     render(
       <I18nProvider initial="en">
-        <EntryShell
+        <EntryShellWithGateHost
           skills={[]}
           designTemplates={[]}
           designSystems={[]}
@@ -601,7 +601,7 @@ describe('EntryShell AMR workspace precheck race', () => {
 
     render(
       <I18nProvider initial="en">
-        <EntryShell
+        <EntryShellWithGateHost
           skills={[]}
           designTemplates={[]}
           designSystems={[]}
@@ -669,7 +669,7 @@ describe('EntryShell AMR workspace precheck race', () => {
 
     render(
       <I18nProvider initial="en">
-        <EntryShell
+        <EntryShellWithGateHost
           skills={[]}
           designTemplates={[]}
           designSystems={[]}
@@ -753,7 +753,7 @@ describe('EntryShell AMR workspace precheck race', () => {
 
     render(
       <I18nProvider initial="en">
-        <EntryShell
+        <EntryShellWithGateHost
           skills={[]}
           designTemplates={[]}
           designSystems={[]}
@@ -852,7 +852,7 @@ describe('EntryShell AMR workspace precheck race', () => {
 
     render(
       <I18nProvider initial="en">
-        <EntryShell
+        <EntryShellWithGateHost
           skills={[]}
           designTemplates={[]}
           designSystems={[]}

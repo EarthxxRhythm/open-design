@@ -855,6 +855,7 @@ export const fr: Dict = {
   'entry.teamSlotNote': "Cet espace est fourni par le service d'équipe. L'intégration est en cours.",
   "entry.cloudCalloutTitle": "OpenDesign Cloud",
   'home.createTimedOut': 'La préparation du projet a expiré avant de démarrer. Réessayez d’envoyer.',
+  'home.amrGateUnavailable': 'Impossible de confirmer votre solde OpenDesign Cloud. Réessayez d\'envoyer.',
   'entry.cloudRecovering': 'Connexion au compte interrompue. Reconnexion automatique en cours…',
   'entry.authExpiredBody': 'Votre session a expiré. Connectez-vous pour continuer à utiliser OpenDesign Cloud.',
   'home.createFailed': 'Impossible de démarrer la tâche. Réessayez.',

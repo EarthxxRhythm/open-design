@@ -859,6 +859,7 @@ export const uk: Dict = {
   'home.createFailed': 'Failed to start the run. Try again.',
   'home.daemonRecovering': 'Local service connection interrupted. Recovering automatically…',
   'home.createTimedOut': 'Підготовка проєкту перевищила ліміт часу й не розпочалася. Надішліть ще раз.',
+  'home.amrGateUnavailable': 'Не вдалося підтвердити баланс OpenDesign Cloud. Надішліть ще раз.',
   'home.bundledScenarioMissing': 'Bundled scenario "{scenarioId}" is not installed. Reinstall the daemon to restore the default plugin set.',
   "entry.cloudCalloutBody": "Увійдіть, щоб використовувати OpenDesign Cloud і співпрацювати в хмарі",
   "entry.localAccountName": "Локальний режим",

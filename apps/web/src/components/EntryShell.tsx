@@ -25,7 +25,6 @@ import {
 import {
   automaticStrategyTaskProfileForProjectMetadata,
   defaultScenarioPluginIdForProjectMetadata,
-  type AmrWalletSnapshot,
   type ChatSessionMode,
   type ConnectorDetail,
   type CreateProjectExampleReference,
@@ -113,8 +112,7 @@ import { LibrarySection } from './LibrarySection';
 import { UpdaterPopup } from './UpdaterPopup';
 import { WhatsNewPopup } from './WhatsNewPopup';
 import { DeepSeekHarnessSetupDialog } from './DeepSeekHarnessSetupDialog';
-import { AmrBalanceDialog } from './AmrBalanceDialog';
-import { AmrOwnerTopUpDialog } from './chat/AmrOwnerTopUpDialog';
+import type { HomeAmrBalanceGateBlock } from './HomeAmrBalanceGateDialogs';
 import {
   amrBalanceBlockedDialog,
   amrBalanceDialogUpgradeIntent,
@@ -348,12 +346,30 @@ type EntryCreateProjectInput = Omit<CreateInput, 'metadata'> & {
   autoSendFirstMessage?: boolean;
   /** Exact workspace/member authority checked by the Home AMR preflight. */
   amrGatePrecheckWitness?: AmrBalanceGateScope;
+  /**
+   * The optimistic project already flushed by `onBeginProjectCreation`. The
+   * create reuses this id (the daemon accepts a caller-minted id) instead of
+   * starting a second hand-off.
+   */
+  optimisticProjectId?: string;
   requestId?: string;
   pendingFiles?: File[];
   userWorkingDirToken?: string;
   linkedDirs?: string[] | null;
   onboardingEntry?: OnboardingEntry;
 };
+
+/**
+ * What App hands back once a Home send has entered the project frame
+ * optimistically: the client-minted project id the create must reuse, and the
+ * way to undo the hand-off (drop the optimistic row, return to Home with the
+ * draft and staged files intact) when no project is going to be created —
+ * a dismissed balance dialog, or a gate that could not answer.
+ */
+export interface OptimisticProjectCreationHandoff {
+  projectId: string;
+  rollback: (options?: { notice?: string }) => void;
+}
 
 function defaultPluginIdForMetadata(metadata: ProjectMetadata): string | null {
   return defaultScenarioPluginIdForProjectMetadata(metadata);
@@ -503,6 +519,19 @@ interface Props {
   onSkillsChanged?: (affectedSkillId?: string) => void;
   onRefreshAgents: () => Promise<AgentInfo[]> | AgentInfo[];
   onCreateProject: (input: EntryCreateProjectInput) => Promise<boolean> | boolean | void;
+  /**
+   * Flush the optimistic project frame for a Home send on the click tick,
+   * before any admission check. Owned by App because the hand-off leaves the
+   * Home route (and unmounts this shell).
+   */
+  onBeginProjectCreation: (input: EntryCreateProjectInput) => OptimisticProjectCreationHandoff;
+  /**
+   * Publish (or clear) the AMR balance-gate hard block for App to render. The
+   * dialog cannot live here: by the time the gate answers, the send is already
+   * on the project route and this shell is unmounted (see
+   * `HomeAmrBalanceGateDialogs`).
+   */
+  onAmrBalanceGateBlockChange: (block: HomeAmrBalanceGateBlock | null) => void;
   onCreatePluginShareProject: (
     pluginId: string,
     action: PluginShareAction,
@@ -626,6 +655,8 @@ export function EntryShell({
   onSkillsChanged,
   onRefreshAgents,
   onCreateProject,
+  onBeginProjectCreation,
+  onAmrBalanceGateBlockChange,
   onImportClaudeDesign,
   onImportFolder,
   onImportFolderResponse,
@@ -1102,30 +1133,6 @@ export function EntryShell({
     }
   }, [workspaceLoading, isWorkspaceOnlyView, hasWorkspaceContext]);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
-  // Hard block from the pre-run balance gate on a home submit (empty wallet
-  // or signed out); non-null renders the AmrBalanceDialog on the home page —
-  // the project is never created, so the composer draft stays put. The dialog
-  // resolves the promise the submit handler is awaiting: 'retry' (sign-in
-  // completed / recharge landed) re-runs the gate and continues the very same
-  // create-and-run; 'dismiss' hands the composer back to the user.
-  const [amrBalanceGateBlock, setAmrBalanceGateBlock] = useState<
-    {
-      reason: 'insufficient' | 'signed_out';
-      /**
-       * 哪一张弹窗 —— 身份的分支(规格 §6.V)。
-       *
-       * 这里曾经还挂着一条 `?? 'upgrade'` 的兜底,理由是「首页没有那张升级卡,
-       * 『Max · owner 不弹窗』那一支落到首页会变成一片空白」。T58 之后那一支
-       * 不存在了(owner 两格共用同一张会员转化弹窗),兜底随之删除 —— 它当时把
-       * Max 所有者兜成了**转化弹窗 + 套餐页链接**,等于让他买一个已经在用的套餐。
-       */
-      dialog: 'upgrade' | 'ask_owner';
-      /** 那张弹窗的主按钮去哪(T58);和 `dialog` 同一个 branch 快照算出来。 */
-      upgradeIntent: 'pricing' | 'auto_recharge';
-      snapshot: AmrWalletSnapshot;
-      resolve: (decision: 'retry' | 'dismiss') => void;
-    } | null
-  >(null);
   // Home has NO low-balance surface, and since T66 (product 2026-09-07) neither
   // does anywhere else: a positive balance produces nothing at all and the run
   // just starts. Home reached that end state first — ruling 2026-09-06 (T53),
@@ -1403,11 +1410,18 @@ export function EntryShell({
       navigate({ kind: 'home', view: 'onboarding' }, { replace: true });
       return 'blocked' as const;
     }
+    const createInput = pluginLoopCreateInput(payload);
+    // OPEND-2614: the project frame opens on the click tick for EVERY agent,
+    // before any admission check. Everything below runs behind that frame —
+    // this shell is unmounted the moment the hand-off navigates, so nothing
+    // after this line may rely on this instance's state or DOM. App owns the
+    // hand-off and the way back.
+    const handoff = onBeginProjectCreation(createInput);
     // OpenDesign Cloud pre-run balance gate: hard blocks (empty wallet or
-    // signed out) and the soft low-balance reminder both fire BEFORE the
-    // project is created, so the dialog appears right here on the home page
-    // and the composer keeps its draft. In-project sends are gated separately
-    // in ProjectView.handleSend.
+    // signed out) fire BEFORE the project is created — the dialog now sits over
+    // the pending frame, and a dismiss rolls the hand-off back to Home with the
+    // composer draft intact. In-project sends are gated separately in
+    // ProjectView.handleSend.
     let amrGatePrecheckWitness: AmrBalanceGateScope | undefined;
     let amrGatePrecheckPassed = false;
     if (config.mode === 'daemon' && config.agentId === 'amr') {
@@ -1447,7 +1461,7 @@ export function EntryShell({
             billing: workspaceBilling,
           });
           const decision = await new Promise<'retry' | 'dismiss'>((resolve) => {
-            setAmrBalanceGateBlock({
+            onAmrBalanceGateBlockChange({
               reason: blocked.reason,
               // 被登出说的是登录不是钱,无条件走原来那张(主按钮是应用内登录,
               // 落点那一位那时用不上)。余额耗尽才按身份 × 订阅分支。
@@ -1463,13 +1477,21 @@ export function EntryShell({
               resolve,
             });
           });
-          setAmrBalanceGateBlock(null);
-          if (decision === 'dismiss') return 'blocked' as const;
+          onAmrBalanceGateBlockChange(null);
+          if (decision === 'dismiss') {
+            // The dialog was the feedback; the composer gets its draft back
+            // without a second error on top.
+            handoff.rollback();
+            return 'blocked' as const;
+          }
           gate = await retryUnavailableAmrBalanceGate(
             () => checkAmrBalanceGate(gateScope, amrModelId),
           );
         }
-        if (gate.kind === 'unavailable') return false;
+        if (gate.kind === 'unavailable') {
+          handoff.rollback({ notice: t('home.amrGateUnavailable') });
+          return false;
+        }
         // Everything else falls through and the run starts. Home used to hold
         // the submit open behind a centered reminder dialog ("额度不多了" + 仍要
         // 发起任务 / 去充值). Product ruled it away on 2026-09-06 — "软提醒弹窗
@@ -1493,8 +1515,36 @@ export function EntryShell({
         amrGatePrecheckPassed = true;
         break;
       }
-      if (!amrGatePrecheckPassed) return false;
+      if (!amrGatePrecheckPassed) {
+        handoff.rollback({ notice: t('home.createFailed') });
+        return false;
+      }
     }
+    const create = () => Promise.resolve(onCreateProject({
+      ...createInput,
+      optimisticProjectId: handoff.projectId,
+      ...(amrGatePrecheckWitness ? { amrGatePrecheckWitness } : {}),
+    }));
+    try {
+      return await create();
+    } catch (error) {
+      if (
+        error instanceof ProjectCreateError
+        && error.code === 'AMR_AUTH_REQUIRED'
+      ) {
+        navigate({ kind: 'home', view: 'onboarding' }, { replace: true });
+        return 'blocked' as const;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * The create request a Home composer send turns into. Pure: it reads only
+   * the payload, so it can be computed before the optimistic hand-off and
+   * reused by the create that follows the admission check.
+   */
+  function pluginLoopCreateInput(payload: PluginLoopSubmit): EntryCreateProjectInput {
     const summarizedName = summarizeProjectNameFromPrompt(payload.prompt);
     const head = payload.prompt.trim().split(/\s+/).slice(0, 8).join(' ');
     const firstAttachmentName = payload.attachments?.[0]?.name ?? '';
@@ -1539,7 +1589,7 @@ export function EntryShell({
       } : {}),
     };
     const strategyRoutingFields = entryStrategyRoutingFields(payload, metadata);
-    const createInput: EntryCreateProjectInput = {
+    return {
       name,
       ...strategyRoutingFields,
       ...(strategyRoutingFields.skillId && payload.skillCatalogScope
@@ -1573,21 +1623,7 @@ export function EntryShell({
       // not need the desktop main-process trust token that baseDir imports
       // require for write access.
       autoSendFirstMessage: true,
-      ...(amrGatePrecheckWitness ? { amrGatePrecheckWitness } : {}),
     };
-    const create = () => Promise.resolve(onCreateProject(createInput));
-    try {
-      return await create();
-    } catch (error) {
-      if (
-        error instanceof ProjectCreateError
-        && error.code === 'AMR_AUTH_REQUIRED'
-      ) {
-        navigate({ kind: 'home', view: 'onboarding' }, { replace: true });
-        return 'blocked' as const;
-      }
-      throw error;
-    }
   }
 
   /**
@@ -1779,11 +1815,7 @@ export function EntryShell({
           recentProjectOwnerMemberIds={teamProjectOwnerMemberIds}
           onRecentProjectShared={markProjectShared}
           onRecentProjectShareFailed={markProjectShareFailed}
-          priorityAnnouncementActive={
-            view === 'home'
-            && goPlanSunsetMessagePending
-            && amrBalanceGateBlock == null
-          }
+          priorityAnnouncementActive={view === 'home' && goPlanSunsetMessagePending}
           onPriorityAnnouncementPendingChange={setGoPlanSunsetMessagePending}
           priorityAnnouncementCurrentPlanId={deepSeekCampaignPlan}
           priorityAnnouncementMetricsConsent={config.telemetry?.metrics === true}
@@ -1806,28 +1838,6 @@ export function EntryShell({
           <WhatsNewPopup active={view === 'home' && !goPlanSunsetMessagePending} />
           {/* The campaign badge lives in EntryNavRail's top-right cluster so it
               stays beside the account module across every entry tab. */}
-          {amrBalanceGateBlock?.dialog === 'ask_owner' ? (
-            /*
-             * 没有账单权限的成员。原来这一档给的是 `AmrBalanceDialog`,而它的
-             * 主按钮取自 `workspaceUpgradeUrl` —— 对这类成员返回 `null`,于是
-             * 弹窗上只剩一颗「暂不需要」(§6.Y)。这张弹窗至少给得出一条路。
-             */
-            <AmrOwnerTopUpDialog
-              onClose={() => amrBalanceGateBlock.resolve('dismiss')}
-            />
-          ) : amrBalanceGateBlock ? (
-            <AmrBalanceDialog
-              reason={amrBalanceGateBlock.reason}
-              balanceUsd={amrBalanceGateBlock.snapshot.balanceUsd}
-              profile={amrBalanceGateBlock.snapshot.profile}
-              entrySource="home_balance_gate_upgrade"
-              upgradeIntent={amrBalanceGateBlock.upgradeIntent}
-              metricsConsent={config.telemetry?.metrics === true}
-              installationId={config.installationId}
-              onClose={() => amrBalanceGateBlock.resolve('dismiss')}
-              onResolved={() => amrBalanceGateBlock.resolve('retry')}
-            />
-          ) : null}
           <div
             className={[
               'entry-main__inner',

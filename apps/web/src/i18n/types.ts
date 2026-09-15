@@ -1232,6 +1232,7 @@ export interface Dict {
   'home.daemonRecovering': string;
   /** Toast after POST /api/projects answered PROJECT_CREATE_PREPARATION_TIMEOUT. */
   'home.createTimedOut': string;
+  'home.amrGateUnavailable': string;
   'home.bundledScenarioMissing': string;
   'entry.cloudCalloutBody': string;
   /** Name of the identity row on the local (signed-out) account dock. */

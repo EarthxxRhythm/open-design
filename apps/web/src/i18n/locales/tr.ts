@@ -859,6 +859,7 @@ export const tr: Dict = {
   'home.createFailed': 'Failed to start the run. Try again.',
   'home.daemonRecovering': 'Local service connection interrupted. Recovering automatically…',
   'home.createTimedOut': 'Proje hazırlığı zaman aşımına uğradı ve başlatılamadı. Lütfen yeniden gönderin.',
+  'home.amrGateUnavailable': 'OpenDesign Cloud bakiyeniz doğrulanamadı. Tekrar göndermeyi deneyin.',
   'home.bundledScenarioMissing': 'Bundled scenario "{scenarioId}" is not installed. Reinstall the daemon to restore the default plugin set.',
   "entry.cloudCalloutBody": "OpenDesign Cloud'u kullanmak ve bulutta iş birliği yapmak için oturum açın",
   "entry.localAccountName": "Yerel mod",

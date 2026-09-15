@@ -38,7 +38,14 @@ import type {
 } from '@open-design/contracts';
 import { DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID } from '@open-design/contracts';
 import { EntryView } from './components/EntryView';
-import type { ProjectTitleHint } from './components/EntryShell';
+import type {
+  OptimisticProjectCreationHandoff,
+  ProjectTitleHint,
+} from './components/EntryShell';
+import {
+  HomeAmrBalanceGateDialogs,
+  type HomeAmrBalanceGateBlock,
+} from './components/HomeAmrBalanceGateDialogs';
 import type { IntegrationTab } from './components/IntegrationsView';
 import { MarketplaceView } from './components/MarketplaceView';
 import { PluginDetailView } from './components/PluginDetailView';
@@ -278,6 +285,12 @@ type AppCreateProjectInput = Omit<CreateInput, 'metadata'> & {
   autoSendFirstMessage?: boolean;
   /** Exact workspace/member authority checked by the Home AMR preflight. */
   amrGatePrecheckWitness?: AmrBalanceGateScope;
+  /**
+   * The optimistic project `beginOptimisticProjectCreation` already flushed
+   * for this send (Home hands off before its admission check). The create
+   * reuses the id instead of opening a second frame.
+   */
+  optimisticProjectId?: string;
   requestId?: string;
   pendingFiles?: File[];
   userWorkingDirToken?: string;
@@ -1108,6 +1121,11 @@ function AppInner() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [pendingProjectCreation, setPendingProjectCreation] =
     useState<PendingProjectCreation | null>(null);
+  // Hard block from the Home pre-run balance gate. Hosted here, not in
+  // EntryShell: the gate answers behind the optimistic pending frame, where
+  // EntryShell is already unmounted (OPEND-2614).
+  const [homeAmrBalanceGateBlock, setHomeAmrBalanceGateBlock] =
+    useState<HomeAmrBalanceGateBlock | null>(null);
   const [appliedProjectListWitness, setAppliedProjectListWitness] = useState<{
     scopeKey: string;
     generation: number;
@@ -2953,6 +2971,116 @@ function AppInner() {
     return () => window.removeEventListener(APP_CONFIG_CHANGED_EVENT, handleAppConfigChanged);
   }, [refreshAgents, restartAmrPolling]);
 
+  /**
+   * Undo an optimistic hand-off that will not become a project: drop the
+   * optimistic row and pending frame, return to Home if the user is still on
+   * that route, and hand the staged files back so the retry sends the same
+   * payload. Home remounts on the way back and restores its prompt draft on
+   * its own. `notice` surfaces as the create-error toast; a caller whose own
+   * UI already explained the outcome (the balance dialog) passes none.
+   */
+  const rollbackOptimisticProjectCreation = useCallback(
+    (projectId: string, stagedFiles: readonly File[], notice: string | null) => {
+      clearLocalProject(projectId);
+      removeWorkspaceProjectTabs(projectId);
+      setProjects((current) => current.filter((project) => project.id !== projectId));
+      setPendingProjectCreation((current) =>
+        current?.projectId === projectId ? null : current);
+      stashHomeComposerAttachments(stagedFiles);
+      if (
+        routeRef.current.kind === 'project'
+        && routeRef.current.projectId === projectId
+      ) {
+        navigate({ kind: 'home', view: 'home' });
+      }
+      if (notice) setProjectCreateError(notice);
+    },
+    [clearLocalProject],
+  );
+
+  /**
+   * Enter the project frame for a Home send NOW, before anything is awaited.
+   * The id is client-owned and the daemon accepts that exact id for
+   * idempotent retries. Keep the real ProjectView unmounted until the response
+   * settles; the pending surface is deliberately read-free so an unpersisted
+   * project cannot fan out unauthorized conversation/file/presence requests.
+   *
+   * Home calls this on the click tick and only then runs its admission check
+   * (the AMR balance gate), so the user never waits on that round trip in a
+   * frozen composer (OPEND-2614). `handleCreateProject` calls it itself for
+   * auto-send creates that did not come through Home's composer.
+   */
+  const beginOptimisticProjectCreation = useCallback(
+    (input: AppCreateProjectInput): OptimisticProjectCreationHandoff => {
+      const derivedPendingPrompt =
+        input.pendingPrompt ??
+        (input.metadata?.promptTemplate?.prompt?.trim() || undefined);
+      const metadata = mergeLinkedDirsIntoMetadata(input.metadata, input.linkedDirs);
+      const stagedFiles = Array.isArray(input.pendingFiles)
+        ? input.pendingFiles.filter((file): file is File => file instanceof File)
+        : [];
+      // PRODUCT INVARIANT: ordinary project creation is local. Reuse a
+      // current in-memory Workspace snapshot for `personal` + `local_only`
+      // attribution when available, but never start identity discovery or
+      // block creation on Workspace availability.
+      const createWorkspaceState = workspaceContextStateRef.current;
+      const createWorkspaceContext = createWorkspaceState.failure === 'unsupported'
+        ? null
+        : workspaceResourceReadContext(createWorkspaceState);
+      const optimisticProjectId = randomUUID();
+      const now = Date.now();
+      const optimisticProject: Project = {
+        id: optimisticProjectId,
+        name: input.name.trim(),
+        skillId: input.skillId,
+        designSystemId: input.designSystemId,
+        createdAt: now,
+        updatedAt: now,
+        ...(derivedPendingPrompt ? { pendingPrompt: derivedPendingPrompt } : {}),
+        ...(metadata ? { metadata } : {}),
+        ...(input.appliedPluginSnapshotId
+          ? { appliedPluginSnapshotId: input.appliedPluginSnapshotId }
+          : {}),
+        ...(createWorkspaceContext?.workspaceId
+          ? { workspaceId: createWorkspaceContext.workspaceId }
+          : {}),
+      };
+      rememberLocalProject(optimisticProjectId);
+      // A previous rollback's snapshot must not outlive the retry that
+      // carries the same files; the new attempt owns them from here.
+      clearHomeComposerAttachments();
+      flushSync(() => {
+        setPendingProjectCreation({
+          projectId: optimisticProjectId,
+          name: optimisticProject.name,
+          prompt: derivedPendingPrompt ?? '',
+          files: stagedFiles,
+        });
+        setProjects((current) => [
+          optimisticProject,
+          ...current.filter((project) => project.id !== optimisticProjectId),
+        ]);
+      });
+      const optimisticRoute = {
+        kind: 'project',
+        projectId: optimisticProjectId,
+        fileName: null,
+      } as const;
+      openWorkspaceTab(optimisticRoute);
+      navigate(optimisticRoute);
+      return {
+        projectId: optimisticProjectId,
+        rollback: (options) =>
+          rollbackOptimisticProjectCreation(
+            optimisticProjectId,
+            stagedFiles,
+            options?.notice ?? null,
+          ),
+      };
+    },
+    [rememberLocalProject, rollbackOptimisticProjectCreation],
+  );
+
   const handleCreateProject = useCallback(
     async (
       input: AppCreateProjectInput,
@@ -2971,7 +3099,7 @@ function AppInner() {
       const creationSource: 'blank' | 'template' | 'zip' | 'folder' =
         kind === 'template' ? 'template' : 'blank';
       let createWorkspaceContext: WorkspaceCollabContext | null = null;
-      let optimisticProjectId: string | null = null;
+      let optimisticProjectId: string | null = input.optimisticProjectId ?? null;
       let result;
       const stagedFiles = Array.isArray(input.pendingFiles)
         ? input.pendingFiles.filter((file): file is File => file instanceof File)
@@ -2995,54 +3123,10 @@ function AppInner() {
         ) {
           throw new Error('AMR_WORKSPACE_GATE_STALE');
         }
-        // Home already accepted the run (including its balance gate), so move
-        // into the project frame immediately. The id is client-owned and the
-        // daemon already accepts that exact id for idempotent retries. Keep the
-        // real ProjectView unmounted until the response settles; the pending
-        // surface is deliberately read-free so an unpersisted project cannot
-        // fan out unauthorized conversation/file/presence requests.
-        if (input.autoSendFirstMessage) {
-          optimisticProjectId = randomUUID();
-          const now = Date.now();
-          const optimisticProject: Project = {
-            id: optimisticProjectId,
-            name: input.name.trim(),
-            skillId: input.skillId,
-            designSystemId: input.designSystemId,
-            createdAt: now,
-            updatedAt: now,
-            ...(derivedPendingPrompt ? { pendingPrompt: derivedPendingPrompt } : {}),
-            ...(metadata ? { metadata } : {}),
-            ...(input.appliedPluginSnapshotId
-              ? { appliedPluginSnapshotId: input.appliedPluginSnapshotId }
-              : {}),
-            ...(createWorkspaceContext?.workspaceId
-              ? { workspaceId: createWorkspaceContext.workspaceId }
-              : {}),
-          };
-          rememberLocalProject(optimisticProjectId);
-          // A previous rollback's snapshot must not outlive the retry that
-          // carries the same files; the new attempt owns them from here.
-          clearHomeComposerAttachments();
-          flushSync(() => {
-            setPendingProjectCreation({
-              projectId: optimisticProjectId!,
-              name: optimisticProject.name,
-              prompt: derivedPendingPrompt ?? '',
-              files: stagedFiles,
-            });
-            setProjects((current) => [
-              optimisticProject,
-              ...current.filter((project) => project.id !== optimisticProjectId),
-            ]);
-          });
-          const optimisticRoute = {
-            kind: 'project',
-            projectId: optimisticProjectId,
-            fileName: null,
-          } as const;
-          openWorkspaceTab(optimisticRoute);
-          navigate(optimisticRoute);
+        // An auto-send create that did not come through Home's composer opens
+        // its frame here; Home's own sends arrive with the frame already up.
+        if (input.autoSendFirstMessage && !optimisticProjectId) {
+          optimisticProjectId = beginOptimisticProjectCreation(input).projectId;
         }
         result = await createProject({
           ...(optimisticProjectId ? { id: optimisticProjectId } : {}),
@@ -3092,22 +3176,9 @@ function AppInner() {
           { requestId: input.requestId },
         );
         if (optimisticProjectId) {
-          clearLocalProject(optimisticProjectId);
-          removeWorkspaceProjectTabs(optimisticProjectId);
-          setProjects((current) => current.filter((project) => project.id !== optimisticProjectId));
-          setPendingProjectCreation((current) =>
-            current?.projectId === optimisticProjectId ? null : current);
-          // Home remounts on the way back and restores its prompt draft on its
-          // own; the staged File objects have no persisted draft, so hand them
-          // back explicitly and the retry sends the same payload.
-          stashHomeComposerAttachments(stagedFiles);
-          if (
-            routeRef.current.kind === 'project'
-            && routeRef.current.projectId === optimisticProjectId
-          ) {
-            navigate({ kind: 'home', view: 'home' });
-          }
-          setProjectCreateError(
+          rollbackOptimisticProjectCreation(
+            optimisticProjectId,
+            stagedFiles,
             err instanceof ProjectCreateError
             && err.code === 'PROJECT_CREATE_PREPARATION_TIMEOUT'
               ? t('home.createTimedOut')
@@ -3393,7 +3464,13 @@ function AppInner() {
       }
       return true;
     },
-    [analytics.track, clearLocalProject, rememberLocalProject, t],
+    [
+      analytics.track,
+      beginOptimisticProjectCreation,
+      rememberLocalProject,
+      rollbackOptimisticProjectCreation,
+      t,
+    ],
   );
 
   const handleCreateProjectFromDesignSystem = useCallback(
@@ -5421,6 +5498,8 @@ function AppInner() {
   } else {
     appMain = (
       <EntryView
+        onBeginProjectCreation={beginOptimisticProjectCreation}
+        onAmrBalanceGateBlockChange={setHomeAmrBalanceGateBlock}
         skills={enabledSkills}
         designTemplates={enabledDesignTemplates}
         designSystems={enabledDS}
@@ -5672,6 +5751,11 @@ function AppInner() {
           onDismiss={() => setProjectCreateError(null)}
         />
       ) : null}
+      <HomeAmrBalanceGateDialogs
+        block={homeAmrBalanceGateBlock}
+        metricsConsent={config.telemetry?.metrics === true}
+        installationId={config.installationId}
+      />
       {projectOpenError ? (
         <Toast
           message={projectOpenError}

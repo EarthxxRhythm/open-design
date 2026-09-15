@@ -295,6 +295,8 @@ async function mountHomeShell(initial: WorkspaceCollabContext): Promise<Harness>
         onConfigPersist={vi.fn()}
         onRefreshAgents={vi.fn(() => [agent()])}
         onCreateProject={vi.fn(async () => true)}
+        onBeginProjectCreation={() => ({ projectId: 'optimistic-project', rollback: () => undefined })}
+        onAmrBalanceGateBlockChange={() => undefined}
         onCreatePluginShareProject={vi.fn()}
         onImportClaudeDesign={vi.fn()}
         onOpenProject={vi.fn()}

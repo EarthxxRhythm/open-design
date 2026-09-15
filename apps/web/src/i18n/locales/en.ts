@@ -859,6 +859,7 @@ export const en: Dict = {
   'home.createFailed': 'Failed to start the run. Try again.',
   'home.daemonRecovering': 'Local service connection interrupted. Recovering automatically…',
   'home.createTimedOut': 'Project setup timed out before it could start. Try sending again.',
+  'home.amrGateUnavailable': 'Couldn\'t confirm your OpenDesign Cloud balance. Try sending again.',
   'home.bundledScenarioMissing': 'Bundled scenario "{scenarioId}" is not installed. Reinstall the daemon to restore the default plugin set.',
   "entry.cloudCalloutBody": "Sign in to use OpenDesign Cloud and collaborate in the cloud",
   "entry.localAccountName": "Local mode",

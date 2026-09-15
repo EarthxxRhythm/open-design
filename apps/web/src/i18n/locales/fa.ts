@@ -859,6 +859,7 @@ export const fa: Dict = {
   'home.createFailed': 'Failed to start the run. Try again.',
   'home.daemonRecovering': 'Local service connection interrupted. Recovering automatically…',
   'home.createTimedOut': 'آماده‌سازی پروژه پیش از شروع به پایان مهلت رسید. دوباره ارسال کنید.',
+  'home.amrGateUnavailable': 'تأیید موجودی OpenDesign Cloud ممکن نشد. دوباره ارسال کنید.',
   'home.bundledScenarioMissing': 'Bundled scenario "{scenarioId}" is not installed. Reinstall the daemon to restore the default plugin set.',
   "entry.cloudCalloutBody": "برای استفاده از OpenDesign Cloud و همکاری در فضای ابری وارد شوید",
   "entry.localAccountName": "حالت محلی",
