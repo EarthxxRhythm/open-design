@@ -353,9 +353,11 @@ export function decideAgentFocusOpen(
   const file = matches[0]!;
 
   const preTurn = input.preTurnFileNames;
-  // No baseline means we cannot establish this turn's scope. An existing file
-  // needs positive write evidence; a declaration alone cannot promote it.
-  if (!preTurn || (preTurn.has(file.name) && !input.agentTouchedFileNames?.has(file.name))) {
+  // Recovery may lack the file baseline. A successful write from this run
+  // still proves ownership; without either proof a declaration cannot promote
+  // an untouched file, even when it appears in the terminal inventory.
+  const writtenThisTurn = input.agentTouchedFileNames?.has(file.name);
+  if (!writtenThisTurn && (!preTurn || preTurn.has(file.name))) {
     return declined;
   }
 
