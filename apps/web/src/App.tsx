@@ -299,6 +299,14 @@ type AppCreateProjectInput = Omit<CreateInput, 'metadata'> & {
 };
 
 /**
+ * How long the hand-off card may stay over a mounted ProjectView before App
+ * drops it on its own (OPEND-2170). ProjectView releases it as soon as the
+ * first transcript settles; this only covers a first send that is parked
+ * behind a dialog or a read that never answers.
+ */
+const CREATION_HANDOFF_SETTLE_DEADLINE_MS = 8_000;
+
+/**
  * Everything the optimistic project surface shows while POST /api/projects is
  * in flight. It is self-contained on purpose: the pending frame must render on
  * the tick the request is sent and keep rendering even if a project-list
@@ -308,6 +316,14 @@ interface PendingProjectCreation {
   projectId: string;
   name: string;
   prompt: string;
+  /**
+   * `POST /api/projects` has answered and the row is persisted. Until then
+   * the standalone pending frame is the whole surface and the real
+   * ProjectView stays unmounted (an unpersisted id must not fan out reads);
+   * from then on ProjectView mounts and keeps drawing this record's chat
+   * card until its first transcript settles (OPEND-2170).
+   */
+  created?: boolean;
   /**
    * The files the user staged on Home, still as local `File` objects. The
    * preparing surface draws them from these bytes, so the first project frame
@@ -1287,6 +1303,11 @@ function AppInner() {
     },
     [],
   );
+  const handleCreationHandoffSettled = useCallback((projectId: string) => {
+    setPendingProjectCreation((current) =>
+      current?.projectId === projectId ? null : current,
+    );
+  }, []);
   const pendingLocalProjectIdsRef = useRef<Set<string>>(new Set());
   const currentProjectListScope = projectListScopeKey(workspaceContext);
   const currentPendingLocalProjectScope = [
@@ -3268,11 +3289,17 @@ function AppInner() {
         // ProjectView's very first render already has cards to draw for them,
         // then drop the gate. Everything below this line happens behind an
         // interactive project instead of behind a frozen hand-off screen.
+        //
+        // "Drop the gate" marks the record persisted rather than clearing it
+        // (OPEND-2170): ProjectView mounts now, but keeps drawing this
+        // record's chat card until its first transcript settles
+        // (`handleCreationHandoffSettled`), so the column never flips through
+        // the view's own loaders in between.
         if (!workingDirHandoffFailed) {
           beginHomeAttachmentUploads(result.project.id, pendingFiles);
         }
         setPendingProjectCreation((current) =>
-          current?.projectId === optimisticProjectId ? null : current,
+          current?.projectId === optimisticProjectId ? { ...current, created: true } : current,
         );
         let firstMessageAttachments: ChatAttachment[] = [];
         if (!workingDirHandoffFailed && pendingFiles.length > 0) {
@@ -3445,9 +3472,10 @@ function AppInner() {
         // rest of the session, and no card may sit in the tray for a file that
         // is never coming.
         endHomeAttachmentUploads(project.id);
-        setPendingProjectCreation((current) =>
-          current?.projectId === optimisticProjectId ? null : current,
-        );
+        // The creation record outlives the request on purpose (OPEND-2170):
+        // ProjectView keeps drawing the hand-off's chat card from it until
+        // its first transcript settles (`handleCreationHandoffSettled`), so
+        // the column never flips through the view's own loaders in between.
       }
       const projectRoute = {
         kind: 'project',
@@ -5178,6 +5206,23 @@ function AppInner() {
   // /marketplace and /marketplace/:id routes render outside the
   // EntryView / ProjectView split so the discovery surface stays
   // independent of any active project.
+  // Once the row is persisted the record gets a deadline: ProjectView
+  // normally releases it within a few hundred ms, but a first send parked
+  // behind a gate dialog or a read that never answers must not pin the card
+  // forever. (The record is keyed on the route, so leaving the project hides
+  // it without clearing; the deadline retires it either way.)
+  const pendingCreationProjectId = pendingProjectCreation?.created
+    ? pendingProjectCreation.projectId
+    : null;
+  useEffect(() => {
+    if (!pendingCreationProjectId) return;
+    const timer = window.setTimeout(() => {
+      setPendingProjectCreation((current) =>
+        current?.projectId === pendingCreationProjectId ? null : current,
+      );
+    }, CREATION_HANDOFF_SETTLE_DEADLINE_MS);
+    return () => window.clearTimeout(timer);
+  }, [pendingCreationProjectId]);
   let appMain: ReactNode;
   const pendingFirstRunOnboardingRoute =
     route.kind === 'home' &&
@@ -5333,23 +5378,28 @@ function AppInner() {
           ? deepLinkResolutionFailure.failure
           : undefined,
     });
-    if (pendingCreation) {
-      // Same `div.app` element as the ProjectView branch below, deliberately.
-      // React reconciles one element across the pending -> real hand-off, so
-      // the `.app` entrance animation plays once for the whole transition
-      // instead of restarting when ProjectView takes over (the pending surface
-      // lives ~150ms, shorter than the 180ms animation, so a second mount read
-      // as the project frame flashing twice).
-      appMain = (
-        <div className="app">
-          <ProjectCreationPendingView
-            projectName={activeProject?.name ?? pendingCreation.name}
-            prompt={pendingCreation.prompt}
-            files={pendingCreation.files}
-            agentId={config.agentId}
-          />
-        </div>
-      );
+    // Same `div.app` element as the ProjectView branch below, deliberately.
+    // React reconciles one element across the pending -> real hand-off, so
+    // the `.app` entrance animation plays once for the whole transition
+    // instead of restarting when ProjectView takes over.
+    //
+    // The frame stands in for EVERY surface the route would otherwise show
+    // before ProjectView can mount (project list loading, workspace context
+    // resolving, a materialisation failure); once ProjectView mounts, the
+    // same record hands its chat card to the view (`creationHandoff`), which
+    // keeps it up until the first transcript settles (OPEND-2170).
+    const pendingFrame = pendingCreation ? (
+      <div className="app">
+        <ProjectCreationPendingView
+          projectName={activeProject?.name ?? pendingCreation.name}
+          prompt={pendingCreation.prompt}
+          files={pendingCreation.files}
+          agentId={config.agentId}
+        />
+      </div>
+    ) : null;
+    if (pendingFrame && !pendingCreation?.created) {
+      appMain = pendingFrame;
     } else if (
       routeSurfaceState === 'loading-projects'
       || routeSurfaceState === 'resolving-deep-link'
@@ -5362,14 +5412,14 @@ function AppInner() {
         && projectRouteWorkspaceContext.loading
       )
     ) {
-      appMain = (
+      appMain = pendingFrame ?? (
         <div className="entry-shell entry-shell--no-header">
           <CenteredLoader label={t('entry.loadingWorkspace')} />
         </div>
       );
     } else if (routeSurfaceState !== 'ready') {
       const canRetry = routeSurfaceState === 'materialization-failed';
-      appMain = (
+      appMain = pendingFrame ?? (
         <div className="entry-shell entry-shell--no-header">
           <div className="centered-loader">
             <span role="alert">
@@ -5399,7 +5449,7 @@ function AppInner() {
         || activeProjectWorkspaceContext === null
       )
     ) {
-      appMain = (
+      appMain = pendingFrame ?? (
         <div className="entry-shell entry-shell--no-header">
           <div className="centered-loader">
             <span role="alert">
@@ -5491,6 +5541,12 @@ function AppInner() {
           onCreateDesignSystemFromProject={handleCreateDesignSystemFromProject}
           onDuplicateProject={handleDuplicateProject}
           onRunActivityChange={handleProjectRunActivityChange}
+          creationHandoff={
+            pendingCreation
+              ? { prompt: pendingCreation.prompt, files: pendingCreation.files }
+              : null
+          }
+          onCreationHandoffSettled={handleCreationHandoffSettled}
         />
         </div>
       );

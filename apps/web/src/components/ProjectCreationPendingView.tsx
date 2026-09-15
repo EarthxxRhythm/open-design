@@ -55,42 +55,34 @@ function revokePreviewUrl(url: string): void {
   }
 }
 
+interface ChatProps {
+  projectName: string;
+  prompt: string;
+  /** The files the user staged on Home. Still local `File` objects here. */
+  files?: readonly File[];
+  agentId?: string | null;
+}
+
 /**
- * Immediate, read-free handoff shown while POST /api/projects is still
- * settling. It deliberately mirrors the first ProjectView frame without
- * mounting ProjectView itself: an optimistic project has not been authorized
- * or persisted yet, so no project-owned API, SSE, file, or presence reads may
- * start from this surface.
+ * The hand-off's chat card: the project title, the prompt the user just
+ * typed (with its staged files), an assistant row that says "Preparing…", and
+ * the real ChatComposer made inert. `ProjectCreationPendingView` draws it as
+ * the chat column of the whole pending frame; ProjectView draws the very same
+ * card on top of its chat column while the first transcript settles
+ * (`creationHandoff`, OPEND-2170), so the column never switches to another
+ * loading form between the create answering and the auto-sent turn painting.
  *
- * "Read-free" is about the network, not about the screen. Everything this
- * frame draws is already in this tab: the project name and prompt the user
- * just typed, the workspace tab strip App already renders, and the staged
- * files — which are `File` objects the picker handed us, so their thumbnails
- * come from `URL.createObjectURL`, not from `/api/projects/:id/raw`.
- *
- * The layout is copied from the frame that replaces it (ProjectView's split,
- * ChatPane's header and user message, DesignFilesPanel's empty state) so the
- * hand-off does not re-flow the page. Where a control cannot work yet it is
- * rendered disabled rather than omitted — an omitted control moves everything
- * next to it, which is exactly the jump this frame is here to avoid.
- *
- * The composer at the bottom is the real ChatComposer made inert: the frame
- * already looks like the project the user is about to land in, and
- * ProjectView's own composer takes over in place once the id is confirmed.
+ * Read-free like the frame around it: everything here is already in this tab.
  */
-export function ProjectCreationPendingView({
+export function ProjectCreationPendingChat({
   projectName,
   prompt,
   files,
   agentId,
-}: Props) {
+}: ChatProps) {
   const { t } = useI18n();
   const agentName = agentDisplayName(agentId) ?? t('assistant.role');
   const iconId = agentIconId(agentId);
-  // Same registry ProjectView uses, so WorkspaceTabsBar portals the real strip
-  // above the chat card here too and the chrome row stays collapsed across the
-  // hand-off instead of rising for one frame.
-  const tabsDockRef = useWorkspaceTabsDockRef();
 
   const cards = useMemo<PendingAttachmentCard[]>(() => {
     const staged = files ?? [];
@@ -123,6 +115,153 @@ export function ProjectCreationPendingView({
     };
   }, [files]);
 
+  return (
+    <div
+      className={`pane ${styles.chatPane}`}
+      data-testid="project-creation-pending-chat"
+      data-creation-handoff=""
+    >
+      <div className="chat-project-header">
+        <span className="chat-project-header-title">
+          <span className="chat-project-title-line">
+            <span className="title" data-testid="pending-project-title">
+              {projectName}
+            </span>
+          </span>
+        </span>
+        <div className="chat-history-wrap chat-session-switcher">
+          <button
+            type="button"
+            className="chat-session-trigger icon-only"
+            disabled
+            tabIndex={-1}
+            aria-hidden="true"
+          >
+            <Icon name="comment" size={16} />
+          </button>
+        </div>
+      </div>
+      <div className="chat-log-wrap">
+        <div className="chat-log" aria-busy="true">
+          {prompt || cards.length > 0 ? (
+            <div className="msg user">
+              {/* Attachments above, bubble below, right edges aligned —
+                  the same `.msg-stack` the transcript uses. */}
+              <div className="msg-stack">
+                {cards.length > 0 ? (
+                  <div className="msg-att-wrap">
+                    <div
+                      className="user-attachments msg-att"
+                      data-testid="pending-attachment-row"
+                    >
+                      {cards.map((card, index) => (card.kind === 'image' && previewUrls[index] ? (
+                        <span key={card.key} className="msg-att-img">
+                          <span className="msg-att-ph">
+                            <img className="msg-att-mini" src={previewUrls[index] ?? undefined} alt="" />
+                          </span>
+                        </span>
+                      ) : (
+                        <span key={card.key} className="msg-att-doc">
+                          <Icon name="file" size={15} className="msg-att-fi" />
+                          <span className="msg-att-tx">
+                            <span className="msg-att-nm">
+                              <span className="msg-att-base">{card.base}</span>
+                              {card.ext ? (
+                                <span className="msg-att-ext">{card.ext}</span>
+                              ) : null}
+                            </span>
+                            <span className="msg-att-meta">{card.size ?? ''}</span>
+                          </span>
+                        </span>
+                      )))}
+                    </div>
+                  </div>
+                ) : null}
+                {prompt ? (
+                  <div className="user-text-wrap">
+                    <div className="user-text user-bubble">{prompt}</div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+          <div className="msg assistant">
+            <div className="role">
+              <AgentIcon id={iconId} size={20} className="role-agent-icon" />
+              <span className="role-name">{agentName}</span>
+            </div>
+            <div className="assistant-flow">
+              <div
+                className="assistant-footer"
+                data-streaming="true"
+                data-last="true"
+              >
+                <span className="dot" data-active="true" />
+                <span className="assistant-label shimmer-text shimmer-prepare">
+                  {t('assistant.statusPreparing')}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div
+        className={`chat-composer-slot ${styles.pendingComposer}`}
+        data-testid="pending-chat-composer-shell"
+        ref={makePendingComposerInert}
+        aria-disabled="true"
+      >
+        <ChatComposer
+          projectId={null}
+          projectFiles={[]}
+          streaming={false}
+          sendDisabled
+          inputDisabled
+          composerPlaceholder={t('chat.composerPlaceholder')}
+          onEnsureProject={ensureNoPendingProject}
+          onSend={ignorePendingComposerAction}
+          onStop={ignorePendingComposerAction}
+        />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Immediate, read-free handoff shown while POST /api/projects is still
+ * settling. It deliberately mirrors the first ProjectView frame without
+ * mounting ProjectView itself: an optimistic project has not been authorized
+ * or persisted yet, so no project-owned API, SSE, file, or presence reads may
+ * start from this surface.
+ *
+ * "Read-free" is about the network, not about the screen. Everything this
+ * frame draws is already in this tab: the project name and prompt the user
+ * just typed, the workspace tab strip App already renders, and the staged
+ * files — which are `File` objects the picker handed us, so their thumbnails
+ * come from `URL.createObjectURL`, not from `/api/projects/:id/raw`.
+ *
+ * The layout is copied from the frame that replaces it (ProjectView's split,
+ * ChatPane's header and user message, DesignFilesPanel's empty state) so the
+ * hand-off does not re-flow the page. Where a control cannot work yet it is
+ * rendered disabled rather than omitted — an omitted control moves everything
+ * next to it, which is exactly the jump this frame is here to avoid.
+ *
+ * The composer at the bottom is the real ChatComposer made inert: the frame
+ * already looks like the project the user is about to land in, and
+ * ProjectView's own composer takes over in place once the id is confirmed.
+ */
+export function ProjectCreationPendingView({
+  projectName,
+  prompt,
+  files,
+  agentId,
+}: Props) {
+  const { t } = useI18n();
+  // Same registry ProjectView uses, so WorkspaceTabsBar portals the real strip
+  // above the chat card here too and the chrome row stays collapsed across the
+  // hand-off instead of rising for one frame.
+  const tabsDockRef = useWorkspaceTabsDockRef();
+
   // The `.app` shell belongs to App.tsx, which wraps this view and ProjectView
   // in the same element so React reconciles one `div.app` across the hand-off
   // instead of mounting a second one and replaying its entrance animation.
@@ -146,110 +285,12 @@ export function ProjectCreationPendingView({
               <Icon name="panel-left" size={16} />
             </button>
           </div>
-          <div className={`pane ${styles.chatPane}`}>
-            <div className="chat-project-header">
-              <span className="chat-project-header-title">
-                <span className="chat-project-title-line">
-                  <span className="title" data-testid="pending-project-title">
-                    {projectName}
-                  </span>
-                </span>
-              </span>
-              <div className="chat-history-wrap chat-session-switcher">
-                <button
-                  type="button"
-                  className="chat-session-trigger icon-only"
-                  disabled
-                  tabIndex={-1}
-                  aria-hidden="true"
-                >
-                  <Icon name="comment" size={16} />
-                </button>
-              </div>
-            </div>
-            <div className="chat-log-wrap">
-              <div className="chat-log" aria-busy="true">
-                {prompt || cards.length > 0 ? (
-                  <div className="msg user">
-                    {/* Attachments above, bubble below, right edges aligned —
-                        the same `.msg-stack` the transcript uses. */}
-                    <div className="msg-stack">
-                      {cards.length > 0 ? (
-                        <div className="msg-att-wrap">
-                          <div
-                            className="user-attachments msg-att"
-                            data-testid="pending-attachment-row"
-                          >
-                            {cards.map((card, index) => (card.kind === 'image' && previewUrls[index] ? (
-                              <span key={card.key} className="msg-att-img">
-                                <span className="msg-att-ph">
-                                  <img className="msg-att-mini" src={previewUrls[index] ?? undefined} alt="" />
-                                </span>
-                              </span>
-                            ) : (
-                              <span key={card.key} className="msg-att-doc">
-                                <Icon name="file" size={15} className="msg-att-fi" />
-                                <span className="msg-att-tx">
-                                  <span className="msg-att-nm">
-                                    <span className="msg-att-base">{card.base}</span>
-                                    {card.ext ? (
-                                      <span className="msg-att-ext">{card.ext}</span>
-                                    ) : null}
-                                  </span>
-                                  <span className="msg-att-meta">{card.size ?? ''}</span>
-                                </span>
-                              </span>
-                            )))}
-                          </div>
-                        </div>
-                      ) : null}
-                      {prompt ? (
-                        <div className="user-text-wrap">
-                          <div className="user-text user-bubble">{prompt}</div>
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                ) : null}
-                <div className="msg assistant">
-                  <div className="role">
-                    <AgentIcon id={iconId} size={20} className="role-agent-icon" />
-                    <span className="role-name">{agentName}</span>
-                  </div>
-                  <div className="assistant-flow">
-                    <div
-                      className="assistant-footer"
-                      data-streaming="true"
-                      data-last="true"
-                    >
-                      <span className="dot" data-active="true" />
-                      <span className="assistant-label shimmer-text shimmer-prepare">
-                        {t('assistant.statusPreparing')}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div
-              className={`chat-composer-slot ${styles.pendingComposer}`}
-              data-testid="pending-chat-composer-shell"
-              ref={makePendingComposerInert}
-              aria-disabled="true"
-            >
-              <ChatComposer
-                projectId={null}
-                projectFiles={[]}
-                streaming={false}
-                sendDisabled
-                inputDisabled
-                composerPlaceholder={t('chat.composerPlaceholder')}
-                onEnsureProject={ensureNoPendingProject}
-                onSend={ignorePendingComposerAction}
-                onStop={ignorePendingComposerAction}
-              />
-            </div>
-          </div>
+          <ProjectCreationPendingChat
+            projectName={projectName}
+            prompt={prompt}
+            files={files}
+            agentId={agentId}
+          />
         </div>
         <div className="split-resize-handle" aria-hidden="true" />
         <section className={`workspace ${styles.workspace}`} aria-label={t('designFiles.title')}>

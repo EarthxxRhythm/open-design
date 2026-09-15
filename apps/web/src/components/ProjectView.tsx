@@ -357,6 +357,7 @@ import {
 } from './design-files/pluginFolderActions';
 import { SHARE_TO_COMMUNITY_PROMPT } from './share-to-community/shareToCommunityPrompt';
 import { CenteredLoader } from './Loading';
+import { ProjectCreationPendingChat } from './ProjectCreationPendingView';
 import type { SettingsSection } from './SettingsDialog';
 import { Toast } from './Toast';
 import { FirstArtifactHint } from './FirstArtifactHint';
@@ -886,6 +887,18 @@ interface Props {
   /** Lets the shell spend the optional memory-notification SSE slot only while
    * this project can produce a post-run extraction. */
   onRunActivityChange?: (projectId: string, active: boolean) => void;
+  /**
+   * The Home send this project was just created from, while its first
+   * transcript is still settling (OPEND-2170). Non-null keeps the hand-off's
+   * chat card on top of the chat column — the same prompt bubble and
+   * preparing row the pending frame already drew — so the column never shows
+   * the whole-pane spinner, the transcript skeleton, or an empty log between
+   * the create answering and the auto-sent turn painting. App clears it on
+   * `onCreationHandoffSettled`.
+   */
+  creationHandoff?: { prompt: string; files?: readonly File[] } | null;
+  /** The first transcript is on screen (or failed to load): drop the card. */
+  onCreationHandoffSettled?: (projectId: string) => void;
 }
 
 export type ProjectRenameFenceToken = Readonly<{
@@ -2168,6 +2181,8 @@ export function ProjectView({
   onCreateDesignSystemFromProject,
   onDuplicateProject,
   onRunActivityChange,
+  creationHandoff = null,
+  onCreationHandoffSettled,
 }: Props) {
   const { locale, t } = useI18n();
   const amrAuthRetryMountIdRef = useRef<string | null>(null);
@@ -13240,6 +13255,49 @@ export function ProjectView({
     return () => window.removeEventListener('keydown', onKeyDown, { capture: true });
   }, [designMdState.exists, handleContinueInCli]);
 
+  // OPEND-2170: the hand-off card App keeps over this column comes down only
+  // once the column has something real to show — the auto-sent turn painted,
+  // or a transcript that is loaded and has nothing to send, or a load that
+  // failed (the error surface is the real thing then). Fired once per mount;
+  // App owns the fallback deadline, so a send parked behind a gate dialog
+  // cannot pin the card forever.
+  const creationHandoffActive = creationHandoff !== null;
+  const creationHandoffSettledRef = useRef(false);
+  useEffect(() => {
+    if (!creationHandoffActive || creationHandoffSettledRef.current) return;
+    const transcriptLoaded =
+      Boolean(activeConversationId)
+      && messagesConversationId === activeConversationId
+      && messagesInitialized;
+    const transcriptFailed =
+      Boolean(conversationLoadError)
+      || (Boolean(activeConversationId) && failedMessagesConversationId === activeConversationId);
+    const firstTurnPainted = messages.length > 0;
+    const nothingToSend =
+      !autoSendFirstMessageRef.current
+      || projectIsProgrammaticBrandExtraction
+      || (
+        !(autoSendSeedRef.current ?? '').trim()
+        && (autoSendAttachmentsRef.current?.length ?? 0) === 0
+        && homeAttachmentUploads.length === 0
+      );
+    if (!(transcriptFailed || (transcriptLoaded && (firstTurnPainted || nothingToSend)))) return;
+    creationHandoffSettledRef.current = true;
+    onCreationHandoffSettled?.(project.id);
+  }, [
+    activeConversationId,
+    conversationLoadError,
+    creationHandoffActive,
+    failedMessagesConversationId,
+    homeAttachmentUploads.length,
+    messages.length,
+    messagesConversationId,
+    messagesInitialized,
+    onCreationHandoffSettled,
+    project.id,
+    projectIsProgrammaticBrandExtraction,
+  ]);
+
   // PluginLoopHome auto-send: when the user submits on Home, app.tsx
   // sets `sessionStorage['od:auto-send-first:<projectId>']` and routes
   // through createProject. Once the conversation id resolves and the
@@ -13474,6 +13532,7 @@ export function ProjectView({
           className={[
             'split-chat-slot',
             chatSlotHidden ? 'split-chat-slot-hidden' : '',
+            creationHandoffActive ? 'split-chat-slot--creation-handoff' : '',
           ].filter(Boolean).join(' ')}
           aria-hidden={chatSlotHidden || undefined}
         >
@@ -13511,6 +13570,7 @@ export function ProjectView({
           {activeConversationId || conversationLoadError || emptyConversationReadOnlySettled ? (
             <ChatPane
               historyPortalTarget={historyPortalTarget}
+              composerLayerHidden={creationHandoffActive}
               // The conversation id is part of the key so switching conversations
               // resets internal scroll/draft state inside ChatPane and ChatComposer.
               key={`${project.id}:${activeConversationId ?? 'conversation-unavailable'}:${chatSeed?.id ?? 'ready'}`}
@@ -13823,11 +13883,22 @@ export function ProjectView({
                 />
               )}
             />
-          ) : (
+          ) : creationHandoffActive ? null : (
             <div className="pane" data-testid="chat-pane-loading">
               <CenteredLoader />
             </div>
           )}
+          {creationHandoff ? (
+            /* The hand-off card stays the column's visible pane until the
+               first transcript settles; ChatPane above keeps its layout
+               hidden underneath (see `.split-chat-slot--creation-handoff`). */
+            <ProjectCreationPendingChat
+              projectName={project.name}
+              prompt={creationHandoff.prompt}
+              files={creationHandoff.files}
+              agentId={config.agentId}
+            />
+          ) : null}
         </div>
         {/* The comment panel is a floating card over the workspace in EVERY
             state (per product: 任何状态下评论卡片都在这个位置). It used to dock

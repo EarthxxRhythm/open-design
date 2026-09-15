@@ -984,6 +984,13 @@ interface Props {
   // route's toolbar dock) the trigger + dropdown portal there; otherwise they
   // render in place at the end of the card header.
   historyPortalTarget?: HTMLElement | null;
+  /**
+   * The pane is laid out but parked out of sight under the creation hand-off
+   * card (ProjectView `creationHandoff`, OPEND-2170). The composer normally
+   * portals into a body-level fixed layer that `visibility: hidden` on the
+   * pane cannot reach, so the layer hides itself on this flag.
+   */
+  composerLayerHidden?: boolean;
   designSystemPicker?: ReactNode;
   config?: AppConfig;
 }
@@ -1445,6 +1452,7 @@ export function ChatPane({
   backLabel,
   projectHeader,
   historyPortalTarget,
+  composerLayerHidden = false,
   designSystemPicker,
   config,
 }: Props) {
@@ -5149,6 +5157,7 @@ export function ChatPane({
                    */
                   <div
                     {...chatSeam('chat-composer-fixed-layer')}
+                    data-composer-layer-hidden={composerLayerHidden ? '' : undefined}
                     ref={composerLayerRef}
                     data-chat-panel-top={composerPortalRect.top}
                     style={{

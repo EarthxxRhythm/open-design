@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { useEffect } from 'react';
 
 import { navigate } from '../../src/router';
 import {
@@ -406,6 +407,7 @@ vi.mock('../../src/components/ProjectView', () => ({
     onOpenAmrSettings,
     onOpenSettings,
     workspaceContextOverride,
+    onCreationHandoffSettled,
   }: {
     onBack: () => void;
     onCreateProjectFromDesignSystem?: (designSystemId: string, title: string) => Promise<void> | void;
@@ -442,7 +444,13 @@ vi.mock('../../src/components/ProjectView', () => ({
     onOpenAmrSettings?: () => void;
     onOpenSettings?: () => void;
     workspaceContextOverride?: WorkspaceCollabContext | null;
+    onCreationHandoffSettled?: (projectId: string) => void;
   }) => {
+    // The real view releases the hand-off card once its first transcript
+    // settles; the stand-in has no transcript, so it settles on mount.
+    useEffect(() => {
+      onCreationHandoffSettled?.(project.id);
+    }, [onCreationHandoffSettled, project.id]);
     projectViewRetryScopeHarness.latest = {
       context: workspaceContextOverride ?? null,
       continuation: amrAuthRetryContinuation ?? null,
