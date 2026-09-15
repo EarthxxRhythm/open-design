@@ -14241,6 +14241,9 @@ export async function startServer({
       if (def.id === 'opencode' || def.id === 'byok-opencode') {
         try {
           const versions = await ensureDetectedRuntimeVersions('opencode', configuredAgentEnv);
+          if (!versions?.agentCliVersion) {
+            console.info('[opencode] optional tool previews disabled: CLI version unavailable; later launches retry detection after the short cache expires');
+          }
           await applyOpenCodeEventPlugin(env, RUNTIME_DATA_DIR, versions?.agentCliVersion, agentSpawnEnv.OPENCODE_CONFIG_CONTENT);
         } catch (error) {
           console.warn('[opencode] optional tool previews unavailable:', error instanceof Error ? error.message : String(error));

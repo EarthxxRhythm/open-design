@@ -26,6 +26,26 @@ streaming; see [Codex acceptance](codex-patch-streaming.md).
 
 ## OpenCode event integration and compatibility
 
+### Recovery after a temporary version probe failure (2026-09-15)
+
+`e2e/tests/dialog/opencode-preview-recovery.test.ts` uses an ordinary installed
+OpenCode with a wrapper that delays only `--version` beyond the daemon's
+three-second deadline. Its first real write completes without early previews.
+After removing the injected delay, the same daemon and OD conversation execute
+a second write without a scan or restart. Assertions cover native `-s` session
+continuation, preview arrival before arguments are released, exact file bytes,
+and one final tool/result pair per turn.
+
+On OpenCode 1.17.18 and 1.18.30, both 130,290-byte files were correct. The first
+turn held arguments for 10 seconds with no preview; the recovered turn received
+a preview after 350 ms and 153 ms respectively, then released them. This is a controlled-provider
+daemon/SSE acceptance run, not a new GUI or live-provider latency measurement.
+
+Run with `OD_E2E_OPENCODE_BIN=/absolute/path/to/opencode pnpm --filter
+@open-design/e2e test tests/dialog/opencode-preview-recovery.test.ts`.
+
+### Plugin boundary
+
 The native
 [JSON CLI](https://github.com/anomalyco/opencode/blob/v1.17.18/packages/opencode/src/cli/cmd/run.ts)
 emits final tool records only. OD retains that transport and native session
@@ -49,7 +69,10 @@ stream settles outstanding rows as errors instead of leaving a spinner.
   behavior. `OPENCODE_PURE` also retains its explicit plugin-disable semantics.
 - A failed/unknown version probe does not block execution. A browser run
   exercised this fallback: the file was correct but no early tool row appeared.
-  A later successful detection enabled previews on the next run.
+  Missing-version results expire after five seconds. The next launch retries
+  through the bounded version probe, with concurrent launches sharing a probe;
+  known versions remain cached. No manual scan or daemon restart is required.
+  The daemon log records when a missing version disables previews.
 - Existing inline and daemon overlay plugin lists are preserved. No user-global
   configuration is written; the child-only overlay refers to an atomically
   staged module under the daemon-owned root. Path ownership follows the root
