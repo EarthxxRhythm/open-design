@@ -719,14 +719,24 @@
   /* 稿子 `.card` 不带外距也不带投影 —— 上下间距由 `.assistant-flow` 的 gap:12px 给
      (稿子 `scene-shell.css` 的 `.flow { gap: 12px }`,轮次**内部**那一档)。
      自己再加 margin 就是 12+8,比稿子松一档。 */
-  border: 1px solid var(--border);
+  /* OPEND-3177: the chat pane paints nothing of its own (OPEND-3090), so the
+     card no longer inherits a white ground to sit on. It carries the Regular
+     material itself (styles/material.css) and the material separator, and
+     flattens back to a solid surface where transparency is reduced or
+     backdrop-filter is unsupported (the tokens degrade together). The tint
+     level is a design call and lives on the token, not here. */
+  border: 1px solid var(--material-separator);
   border-radius: var(--radius-lg);
-  background: var(--bg-panel);
+  background: var(--material-regular);
+  -webkit-backdrop-filter: var(--material-regular-backdrop);
+  backdrop-filter: var(--material-regular-backdrop);
   overflow: hidden;
 }
-/* 稿子 `.card:has(.foot):has(.opts)`:带底栏又带选项的卡换一层确认底色 */
+/* 稿子 `.card:has(.foot):has(.opts)`:带底栏又带选项的卡换一层确认底色 ——
+   the confirm surface was an opaque #fafafa; under the transparent pane the
+   card keeps the one Regular material instead. */
 .question-form:has(.question-form-foot):has(.qf-options) {
-  background: var(--chat-confirm-surface, var(--bg-panel));
+  background: var(--material-regular);
 }
 /* 稿子 `.card:has(.foot) > .h`:有底栏的卡,头不再有分隔线和底色 */
 .question-form:has(.question-form-foot) > .question-form-head {
@@ -756,7 +766,8 @@
   gap: 7px;
   padding: 9px 11px;
   border-bottom: 1px solid var(--border-soft, var(--border));
-  background: var(--bg-panel);
+  /* The shell's material is the only surface; the head paints nothing over it. */
+  background: transparent;
   font-size: var(--font-size-14);
   font-weight: 600;
   line-height: 1.5;
@@ -828,7 +839,7 @@
   text-transform: uppercase;
   padding: 3px 8px;
   border-radius: var(--radius-pill);
-  background: var(--bg-panel);
+  background: transparent;
   border: 1px solid var(--border);
   color: var(--text-muted);
 }
@@ -841,7 +852,9 @@
   flex-direction: column;
   border: 0;
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-  background: var(--bg);
+  /* Was the white block from the question down to the footer; on the
+     transparent pane the shell's material is the only surface (OPEND-3177). */
+  background: transparent;
 }
 /* 稿子 `.card > .h .n { margin-left: auto; font-variant-numeric: tabular-nums }`
    + PR #7170 把计数拆成两档字色:
@@ -4134,13 +4147,14 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
   max-height: min(360px, calc(100vh - 160px));
   display: flex;
   flex-direction: column;
-  /* Solid panel, not glass: this menu lives inside .chat-project-header,
-     whose own backdrop-filter makes it a backdrop root — a descendant's
-     backdrop-filter cannot sample the chat content behind the header, so a
-     translucent fill just lets un-blurred text bleed through. Solid matches
-     the app's other anchored menus (working-dir picker, plus menu). */
-  background: var(--bg-panel);
-  border: 1px solid var(--border-soft, var(--border));
+  /* Liquid glass (OPEND-3175): the sticky .chat-project-header paints no
+     glass of its own any more (chat.css), so it is no longer a backdrop root
+     and this menu can sample the transcript and the app wash behind it. The
+     glass tokens flatten to a solid panel under reduced transparency. */
+  background: var(--glass-regular);
+  -webkit-backdrop-filter: var(--glass-backdrop);
+  backdrop-filter: var(--glass-backdrop);
+  border: 1px solid var(--material-separator);
   border-radius: var(--radius-lg);
   box-shadow:
     0 1px 2px color-mix(in srgb, #000 4%, transparent),
@@ -4160,9 +4174,10 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
   height: 36px;
   margin: 6px 8px 3px;
   padding: 0 9px;
-  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  /* A vibrancy fill on the glass menu, not a second opaque field. */
+  border: 1px solid var(--material-separator);
   border-radius: var(--radius);
-  background: color-mix(in srgb, var(--bg) 88%, var(--bg-panel));
+  background: var(--vibrancy-fill-tertiary);
   color: var(--text-faint);
   transition:
     border-color 160ms cubic-bezier(0.23, 1, 0.32, 1),
@@ -4171,7 +4186,7 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
 }
 .chat-history-search:hover {
   border-color: color-mix(in srgb, var(--text-faint) 34%, var(--border));
-  background: color-mix(in srgb, var(--bg) 94%, var(--bg-panel));
+  background: var(--vibrancy-fill-secondary);
 }
 .chat-history-search:focus-within {
   border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
@@ -4563,7 +4578,11 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
   width: fit-content;
   max-width: 100%;
   padding: var(--answered-padding);
-  background: var(--bg-panel);
+  /* OPEND-3177: same Regular material as the question card it answers, so the
+     Confirmed block does not read as a white slab on the transparent pane. */
+  background: var(--material-regular);
+  -webkit-backdrop-filter: var(--material-regular-backdrop);
+  backdrop-filter: var(--material-regular-backdrop);
   border-radius: var(--answered-radius);
   font-size: var(--font-size-12);
   line-height: 1.5;

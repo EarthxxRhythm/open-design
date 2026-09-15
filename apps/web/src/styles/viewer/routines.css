@@ -1016,7 +1016,8 @@
 .split-chat-tabs-dock .workspace-tabs-strip {
   display: none;
 }
-/* ── Docked tab dropdown: one pure-white select spanning the chat column ── */
+/* ── Docked tab dropdown: one select spanning the chat column; its menu is
+   liquid glass over the transparent pane (OPEND-3175) ── */
 .workspace-tabs-dropdown {
   position: relative;
   flex: 1 1 auto;
@@ -1074,7 +1075,12 @@
   padding: 6px;
   border: 1px solid var(--material-separator);
   border-radius: 12px;
-  background: #fff;
+  /* Liquid glass, not pure white (OPEND-3175): the menu floats over the
+     transparent chat pane and the app wash, like the app's other popovers.
+     Flattens to a solid panel under reduced transparency (material.css). */
+  background: var(--glass-regular);
+  -webkit-backdrop-filter: var(--glass-backdrop);
+  backdrop-filter: var(--glass-backdrop);
   box-shadow: var(--shadow-lg);
   /* Six 32px rows plus vertical padding and borders. Global border-box sizing
      means the border must be included or the sixth row is slightly clipped. */
@@ -1089,7 +1095,8 @@
   border-radius: 8px;
 }
 .workspace-tabs-dropdown__row:hover {
-  background: var(--bg-subtle);
+  /* A vibrancy fill on glass, not an opaque patch. */
+  background: var(--vibrancy-fill-tertiary);
 }
 .workspace-tabs-dropdown__row-main {
   appearance: none;
@@ -2449,23 +2456,37 @@
   gap: 8px;
   border-color: var(--border-soft);
   border-radius: var(--radius-xl);
-  background: color-mix(in srgb, var(--bg-subtle) 45%, var(--bg-panel));
+  /* OPEND-3173 (container material only — the left/right pane grounds are
+     untouched, pending design): the shell used to be an opaque grey mix that
+     read as a slab once the chat pane went transparent (OPEND-3090). It now
+     carries the same Regular material as the chat's content cards; chat.css
+     already gives it a glass backdrop, and the pair here keeps tint and blur
+     on the same token tier. */
+  background: var(--material-regular);
+  -webkit-backdrop-filter: var(--material-regular-backdrop);
+  backdrop-filter: var(--material-regular-backdrop);
   box-shadow: none;
 }
 
 [data-theme="dark"] .app .chat-log,
 [data-theme="dark"] .chat-skin .chat-log,
-[data-theme="dark"] .chat-composer-fixed-layer .composer,
-[data-theme="dark"] .chat-composer-fixed-layer .composer-shell {
+[data-theme="dark"] .chat-composer-fixed-layer .composer {
   background: var(--bg-panel);
+}
+/* Dark keeps the composer on the material too (the token carries its own
+   dark value) instead of an opaque panel over the frosted pane. */
+[data-theme="dark"] .chat-composer-fixed-layer .composer-shell {
+  background: var(--material-regular);
 }
 
 @media (prefers-color-scheme: dark) {
   html:not([data-theme]) .app .chat-log,
   html:not([data-theme]) .chat-skin .chat-log,
-  html:not([data-theme]) .chat-composer-fixed-layer .composer,
-  html:not([data-theme]) .chat-composer-fixed-layer .composer-shell {
+  html:not([data-theme]) .chat-composer-fixed-layer .composer {
     background: var(--bg-panel);
+  }
+  html:not([data-theme]) .chat-composer-fixed-layer .composer-shell {
+    background: var(--material-regular);
   }
 }
 .chat-composer-fixed-layer .composer-shell > * {

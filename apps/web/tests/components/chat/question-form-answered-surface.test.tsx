@@ -75,7 +75,7 @@ function answered(
 describe('「已确认」陈述块的底', () => {
   it('有浅灰底、有 16px 圆角', () => {
     const cs = getComputedStyle(answered());
-    expect(cs.background || cs.backgroundColor, '那块还是纯白无底').toBe('var(--bg-panel)');
+    expect(cs.background || cs.backgroundColor, '那块还是纯白无底').toBe('var(--material-regular)');
     expect(cs.borderRadius).toBe('var(--answered-radius)');
   });
 
