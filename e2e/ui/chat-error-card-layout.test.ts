@@ -21,7 +21,9 @@ const AMR_AGENT = {
   models: [{ id: 'default', label: 'Default' }],
 };
 
-async function seedBalanceFailure(page: Page, locale: 'en' | 'zh-CN') {
+async function seedCloudRunFailure(page: Page, locale: 'en' | 'zh-CN') {
+  // Use an ordinary run error: insufficient balance belongs to the separate
+  // quota-card workflow covered by amr-run-failure-recovery.test.ts.
   await page.addInitScript((nextLocale) => {
     window.localStorage.setItem('open-design:locale', nextLocale);
     window.localStorage.setItem('open-design:locale-source', 'manual');
@@ -100,8 +102,8 @@ async function seedBalanceFailure(page: Page, locale: 'en' | 'zh-CN') {
           {
             kind: 'status',
             label: 'error',
-            detail: 'AMR Cloud reported insufficient balance.',
-            code: 'AMR_INSUFFICIENT_BALANCE',
+            detail: 'The model provider is temporarily unavailable.',
+            code: 'UPSTREAM_UNAVAILABLE',
           },
         ],
       },
@@ -193,15 +195,15 @@ async function expectActionsContained(
   }
 }
 
-test('[P1] zh-CN balance recovery actions stay inside a narrow ChatPane', async ({ page }) => {
-  await seedBalanceFailure(page, 'zh-CN');
+test('[P1] zh-CN Cloud run recovery actions stay inside a narrow ChatPane', async ({ page }) => {
+  await seedCloudRunFailure(page, 'zh-CN');
 
   const card = runErrorCard(page);
   await expectActionsContained(card, ['联系我们', '导出日志', '重试']);
 });
 
-test('[P1] English balance recovery actions stay inside a narrow ChatPane', async ({ page }) => {
-  await seedBalanceFailure(page, 'en');
+test('[P1] English Cloud run recovery actions stay inside a narrow ChatPane', async ({ page }) => {
+  await seedCloudRunFailure(page, 'en');
 
   const card = runErrorCard(page);
   await expectActionsContained(card, ['Contact us', 'Export logs', 'Retry']);
