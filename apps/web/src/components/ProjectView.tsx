@@ -4690,6 +4690,9 @@ export function ProjectView({
     );
     if (!primaryFile) return;
     hasAppliedInitialPrimaryOpenRef.current = true;
+    // This default is a host selection, just like requestOpenFile. Persisting
+    // it must not turn an automatically opened search image into a user veto.
+    lastHostRequestedOpenRef.current = primaryFile.name;
     persistTabsState({ tabs: [primaryFile.name], active: primaryFile.name });
   }, [
     openTabsState.active,
@@ -4795,7 +4798,11 @@ export function ProjectView({
       art: Artifact,
       projectFilesSnapshot?: ProjectFile[],
       sourceText?: string,
-      options: { pointerMinMtime?: number; isCurrent?: () => boolean } = {},
+      options: {
+        pointerMinMtime?: number;
+        isCurrent?: () => boolean;
+        shouldOpen?: () => boolean;
+      } = {},
     ) => {
       if (options.isCurrent && !options.isCurrent()) {
         return { ok: false as const, cancelled: true as const, error: undefined };
@@ -4842,7 +4849,7 @@ export function ProjectView({
             return { ok: true as const, fileName: pointerTarget };
           }
           savedArtifactRef.current = pointerTarget;
-          requestOpenFile(pointerTarget);
+          if (options.shouldOpen?.() !== false) requestOpenFile(pointerTarget);
           return { ok: true as const, fileName: pointerTarget };
         }
       }
@@ -4912,7 +4919,8 @@ export function ProjectView({
         // Auto-open the freshly-persisted artifact as a tab so the user
         // sees it without an extra click. The Write-tool path already does
         // this for tool-emitted files; this handles the artifact-tag path.
-        requestOpenFile(file.name);
+        // Evaluate at response time: a user can select another tab during POST.
+        if (options.shouldOpen?.() !== false) requestOpenFile(file.name);
         return { ok: true as const, fileName: file.name };
       } else {
         // writeProjectTextFile collapses all failure paths (non-OK HTTP
@@ -6785,7 +6793,9 @@ export function ProjectView({
               { telemetryFinalized: true },
             );
 
-            let nextFiles = await refreshProjectFiles();
+            // A terminal run's artifact paths must resolve against a post-run
+            // read, not a shared file-list result cached before its last write.
+            let nextFiles = await refreshProjectFiles({ fresh: true });
             const beforeFileNames = new Set(
               message.preTurnFileNames ?? nextFiles.map((f) => f.name),
             );
@@ -6867,7 +6877,7 @@ export function ProjectView({
                 projectDetail.resolvedDir,
               ),
             });
-            if (turnArtifacts.focused) {
+            if (turnArtifacts.focused && !userTookOverPreviewRef.current) {
               requestOpenTurnArtifacts(turnArtifacts.open, turnArtifacts.focused);
             }
             const deliveryOutcome = resolveDesignDeliveryOutcome({
@@ -7298,7 +7308,9 @@ export function ProjectView({
               if (latestReattachRunStatus === 'canceled') return;
               void (async () => {
                 const preTurn = message.preTurnFileNames;
-                let nextFiles = await refreshProjectFiles();
+                // Match live completion: the terminal artifact list can be
+                // newer than the GET coalescer's last successful file read.
+                let nextFiles = await refreshProjectFiles({ fresh: true });
                 let artifactPersistenceSucceeded = false;
                 let artifactPersistenceError: string | undefined;
                 // Use the turn-start snapshot when available so reload
@@ -7388,7 +7400,7 @@ export function ProjectView({
                     projectDetail.resolvedDir,
                   ),
                 });
-                if (turnArtifacts.focused) {
+                if (turnArtifacts.focused && !userTookOverPreviewRef.current) {
                   requestOpenTurnArtifacts(turnArtifacts.open, turnArtifacts.focused);
                 }
                 const deliveryContent = needsFullReplay ? replayedContent : message.content;
@@ -7957,6 +7969,9 @@ export function ProjectView({
             return undefined;
           };
           const latestAssistantAtStart = latestAssistantMessage();
+          // Match the terminal reattach policy: a deliberate user selection
+          // wins over automatic recovery, without canceling file persistence.
+          const shouldOpenRecoveredArtifact = () => !userTookOverPreviewRef.current;
           const recoveryTargetIsCurrent = () => {
             const latestAssistant = latestAssistantMessage();
             return mountedRef.current
@@ -8032,14 +8047,18 @@ export function ProjectView({
           if (!recoveryTargetIsCurrent()) return;
           if (recoveredExistingArtifact) {
             savedArtifactRef.current = recoveredExistingArtifact.name;
-            requestOpenFile(recoveredExistingArtifact.name);
+            if (shouldOpenRecoveredArtifact()) requestOpenFile(recoveredExistingArtifact.name);
           } else {
             savedArtifactRef.current = null;
             await persistArtifact(
               artifactToPersist,
               nextFiles,
               sourceText,
-              { pointerMinMtime: runStartedAt, isCurrent: recoveryTargetIsCurrent },
+              {
+                pointerMinMtime: runStartedAt,
+                isCurrent: recoveryTargetIsCurrent,
+                shouldOpen: shouldOpenRecoveredArtifact,
+              },
             );
             if (!recoveryTargetIsCurrent()) return;
             nextFiles = await refreshProjectFiles();
@@ -8074,7 +8093,9 @@ export function ProjectView({
             ...autoOpenArtifactOptions,
             preTurnFileNames: beforeFileNames,
           });
-          if (producedArtifactToOpen) requestOpenFile(producedArtifactToOpen);
+          if (producedArtifactToOpen && shouldOpenRecoveredArtifact()) {
+            requestOpenFile(producedArtifactToOpen);
+          }
           // This message's persisted runStatus was already terminal (a
           // precondition of hasRecoverableArtifactMessage); when it has no
           // stored endedAt, fall back to the daemon's authoritative terminal
@@ -9459,6 +9480,27 @@ export function ProjectView({
             };
           });
           const finalizingRunId = currentRunId;
+          // File persistence can finish after the user has selected another
+          // preview or moved on to a new run. Recheck focus ownership at each
+          // open boundary without interrupting this run's output persistence.
+          const shouldOpenCompletedArtifact = () => {
+            let latestRunMessage: ChatMessage | undefined;
+            for (let index = messagesRef.current.length - 1; index >= 0; index -= 1) {
+              const message = messagesRef.current[index];
+              if (message?.role === 'assistant' && !assistantMessageNeverHadARun(message)) {
+                latestRunMessage = message;
+                break;
+              }
+            }
+            return mountedRef.current
+              && !userTookOverPreviewRef.current
+              && !supersededRunsRef.current.has(controller)
+              && projectIdRef.current === project.id
+              && activeConversationIdRef.current === runConversationId
+              && canonicalProjectRunWorkspaceContextRef.current.authorityKey === projectRunAuthorityKey
+              && projectResourceAuthorityRef.current !== 'denied'
+              && latestRunMessage?.id === assistantId;
+          };
           if (finalizingRunId) finalizingLocalRunIdsRef.current.add(finalizingRunId);
           if (runCommentAttachments.length > 0) {
             void patchAttachedStatuses(runCommentAttachments, 'needs_review');
@@ -9510,9 +9552,11 @@ export function ProjectView({
                   artifactPersistenceSucceeded = true;
                   savedArtifactRef.current = sameTurnWrite.name;
                   completionSelectedAutoOpen = true;
-                  requestOpenFile(sameTurnWrite.name);
+                  if (shouldOpenCompletedArtifact()) requestOpenFile(sameTurnWrite.name);
                 } else {
-                  const persistence = await persistArtifact(artifactToPersist, nextFiles, finalText);
+                  const persistence = await persistArtifact(artifactToPersist, nextFiles, finalText, {
+                    shouldOpen: shouldOpenCompletedArtifact,
+                  });
                   if (persistence.ok) artifactPersistenceSucceeded = true;
                   else artifactPersistenceError = persistence.error;
                   nextFiles = await refreshProjectFiles({ fresh: true });
@@ -9598,7 +9642,9 @@ export function ProjectView({
               );
               if (producedArtifactToOpen) {
                 completionSelectedAutoOpen = true;
-                requestOpenTurnArtifacts(turnArtifacts.open, producedArtifactToOpen);
+                if (shouldOpenCompletedArtifact()) {
+                  requestOpenTurnArtifacts(turnArtifacts.open, producedArtifactToOpen);
+                }
               }
               const deliveryCandidate: ChatMessage = {
                 ...latestAssistantMsg,

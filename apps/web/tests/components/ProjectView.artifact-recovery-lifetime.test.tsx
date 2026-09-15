@@ -156,6 +156,8 @@ let runCount: number;
 let htmlResponseReturned: ReturnType<typeof deferredGate>;
 let delayedMdPutResponse: ReturnType<typeof deferredGate>;
 let reverseHttpCompletion: boolean;
+let successfulTerminal: boolean;
+let htmlPostCount: number;
 
 let firstTerminalReadGate: ReturnType<typeof deferredGate>;
 let htmlResponseGate: ReturnType<typeof deferredGate>;
@@ -194,6 +196,11 @@ function context(role: 'owner' | 'member'): WorkspaceCollabContext {
   };
 }
 function strategyTask() {
+  if (successfulTerminal) return {
+    activeRunId: `run-${project.id}`, executionMode: 'simple', inputStage: 'production', route: 'full_plan',
+    outcome: 'completed', terminal: true, taskExecutionId: `task-${project.id}`,
+    strategy: { id: 'od-next-strategy', version: '2.0.4', packageHash: 'fixture', snapshotId: 'fixture' },
+  };
   return {
     activeRunId: `run-${project.id}`, executionMode: null, inputStage: 'request', route: 'full_plan',
     outcome: 'blocked', terminal: true, taskExecutionId: `task-${project.id}`,
@@ -234,7 +241,7 @@ beforeEach(() => {
   controllersByRun = new Map();
   observationPhase = 'initial run'; committedOpenRequests = []; openBoundaries = [];
   navigationProject = null; accessDenied = false; runCount = 0;
-  reverseHttpCompletion = false;
+  reverseHttpCompletion = false; successfulTerminal = false; htmlPostCount = 0;
   htmlResponseReturned = deferredGate(); delayedMdPutResponse = deferredGate();
   firstTerminalReadGate = deferredGate(); htmlResponseGate = deferredGate();
   firstTerminalReadArrived = false; htmlPostStored = false;
@@ -314,12 +321,20 @@ beforeEach(() => {
         fileContents.set(name, content); request.names = [name];
         if (name === 'agent-output.html') {
           htmlPostStored = true;
+          htmlPostCount += 1;
+          const currentHtmlPost = htmlPostCount;
           causalOrder.push('html-post-stored');
+          causalOrder.push(`html-post-${currentHtmlPost}-stored`);
           // The server has committed the file; the response body may arrive later.
           // Keep the real registry mutation/invalidation waiting on this HTTP response.
-          if (!reverseHttpCompletion) await htmlResponseGate.promise;
+          // Match the browser proxy for the successful-terminal variant: hold
+          // only the first HTML response. Any competing writer stays live.
+          if (!reverseHttpCompletion && (!successfulTerminal || currentHtmlPost === 1)) {
+            await htmlResponseGate.promise;
+          }
           causalOrder.push('html-post-response-released');
-          htmlResponseReturned.release();
+          causalOrder.push(`html-post-${currentHtmlPost}-response-released`);
+          if (currentHtmlPost === 1) htmlResponseReturned.release();
         }
         return Response.json({ file });
       }
@@ -407,7 +422,7 @@ afterEach(async () => {
   vi.useRealTimers(); vi.unstubAllGlobals();
 });
 
-async function reachPendingArtifactRecovery() {
+async function reachPendingArtifactRecovery({ createManualDocument = true } = {}) {
   const created = await createProject({ id: project.id, name: project.name, skillId: null,
     designSystemId: null, pendingPrompt: project.pendingPrompt, workspaceContext: ambient });
   expect(created.project.id).toBe(project.id);
@@ -427,20 +442,22 @@ async function reachPendingArtifactRecovery() {
     expect(requests.some((r) => r.path.endsWith('/files') && r.method === 'GET' && r.role === 'member')).toBe(true);
   });
   await act(async () => { frame('start', { bin: 'opencode' }); textFrame('Owner QA is active.\n'); });
-  // A fresh Home project has the actual Design Files empty-state action.
-  // Opening the plus menu as well would create a second New document button.
-  const newDocument = await screen.findByTestId('design-files-empty-new-document');
-  expect(newDocument).toHaveAccessibleName('New document');
-  fireEvent.click(newDocument);
-  const editor = await screen.findByRole('textbox', { name: /markdown editor/i });
-  await waitFor(() => expect(editor).toHaveValue(fileContents.get('document.md')));
-  vi.useFakeTimers();
-  try {
-    fireEvent.change(editor, { target: { value: manualText } });
-    await act(async () => { await vi.advanceTimersByTimeAsync(700); });
-  } finally { vi.useRealTimers(); }
-  await waitFor(() => expect(fileContents.get('document.md')).toBe(manualText));
-  expect(files.map((file) => file.name)).toEqual(['document.md']);
+  if (createManualDocument) {
+    // A fresh Home project has the actual Design Files empty-state action.
+    // Opening the plus menu as well would create a second New document button.
+    const newDocument = await screen.findByTestId('design-files-empty-new-document');
+    expect(newDocument).toHaveAccessibleName('New document');
+    fireEvent.click(newDocument);
+    const editor = await screen.findByRole('textbox', { name: /markdown editor/i });
+    await waitFor(() => expect(editor).toHaveValue(fileContents.get('document.md')));
+    vi.useFakeTimers();
+    try {
+      fireEvent.change(editor, { target: { value: manualText } });
+      await act(async () => { await vi.advanceTimersByTimeAsync(700); });
+    } finally { vi.useRealTimers(); }
+    await waitFor(() => expect(fileContents.get('document.md')).toBe(manualText));
+    expect(files.map((file) => file.name)).toEqual(['document.md']);
+  }
   expect(physicalStatus).toBe('running');
   // Freeze the real cache TTL clock while timers are advanced explicitly;
   // wall-clock CI/React slowness cannot turn this into an accidental cache miss.
@@ -452,7 +469,7 @@ async function reachPendingArtifactRecovery() {
   });
   // The inline HTML is still text only. A different output is now written
   // by the simulated daemon-side Agent, after the real run and manual save.
-  expect(files.map((file) => file.name)).toEqual(['document.md']);
+  expect(files.map((file) => file.name)).toEqual(createManualDocument ? ['document.md'] : []);
   await act(async () => {
     frame('agent', { type: 'tool_use', id: 'agent-notes-write', name: 'Write',
       input: { file_path: '/workspace/owner-test/agent-notes.md', content: agentNotes } });
@@ -474,10 +491,14 @@ async function reachPendingArtifactRecovery() {
   // before waiting for HTML persistence; reversing that order would deadlock.
   await act(async () => { firstTerminalReadGate.release(); await Promise.resolve(); });
   await vi.waitFor(() => expect(htmlPostStored, JSON.stringify({ phase: 'recovery POST reachability', causalOrder })).toBe(true));
-  await vi.waitFor(() => expect(messageWrites.some((message) => message.id === runRequest?.assistantMessageId
-    && message.producedFiles?.some((file) => file.name === 'agent-notes.md')
-    && !message.producedFiles.some((file) => file.name === 'agent-output.html')),
-  JSON.stringify({ phase: 'error finalizer accepted existing Agent file', causalOrder })).toBe(true));
+  if (!successfulTerminal) {
+    await vi.waitFor(() => expect(messageWrites.some((message) => message.id === runRequest?.assistantMessageId
+      && message.producedFiles?.some((file) => file.name === 'agent-notes.md')
+      && !message.producedFiles.some((file) => file.name === 'agent-output.html')),
+    JSON.stringify({ phase: 'error finalizer accepted existing Agent file', causalOrder })).toBe(true));
+  }
+  // The browser success-path failure had no verified MD-only persisted
+  // intermediate row. Do not force that error-path ordering onto this case.
   expect(fileContents.get('agent-output.html')).toBe(html);
   expect(fileContents.get('agent-notes.md')).toBe(agentNotes);
   return { oldAssistantId: runRequest!.assistantMessageId, oldUserId: runRequest!.userMessageId,
@@ -525,6 +546,128 @@ describe('In-flight artifact recovery lifetime and HTTP completion order', () =>
       .toEqual(expect.arrayContaining(['agent-notes.md', 'agent-output.html']));
     expect(fileContents.get('agent-notes.md')).toBe(agentNotes);
     expect(fileContents.get('agent-output.html')).toBe(html);
+  });
+
+  it('keeps a user-selected manual document active while same-run inline HTML recovery finishes', async () => {
+    const { oldAssistantId } = await reachPendingArtifactRecovery();
+    expect(causalOrder).toContain('html-post-stored');
+    expect(causalOrder).not.toContain('html-post-response-released');
+
+    // Use the actual workspace tabs, not its callback or a fabricated focus
+    // flag. Switching away and back records a deliberate user selection even
+    // when the manual document was already open before the run ended.
+    fireEvent.click(screen.getByRole('tab', { name: /design files/i }));
+    fireEvent.click(screen.getByRole('tab', { name: /document\.md/i }));
+    expect(screen.getByRole('tab', { name: /document\.md/i })).toHaveAttribute('aria-selected', 'true');
+    const beforeResponse = committedOpenRequests.length;
+    markOpenBoundary('manual document deliberately selected during pending inline recovery');
+
+    await releaseOldArtifactResponse();
+    await vi.waitFor(() => expect(persisted.get(oldAssistantId)?.producedFiles?.map((file) => file.name))
+      .toEqual(expect.arrayContaining(['agent-notes.md', 'agent-output.html'])));
+    expect(persisted.get(oldAssistantId)?.producedFiles?.map((file) => file.name)).not.toContain('document.md');
+    expect(fileContents.get('document.md')).toBe(manualText);
+    expect(fileContents.get('agent-output.html')).toBe(html);
+    expect(screen.getByRole('tab', { name: /document\.md/i })).toHaveAttribute('aria-selected', 'true');
+    expect(committedOpenRequests.slice(beforeResponse).filter((request) => request.name === 'agent-output.html'),
+      JSON.stringify({ openBoundaries, committedOpenRequests, causalOrder })).toEqual([]);
+  });
+
+  it('keeps the manually selected and autosaved document active when a successful live completion releases its first HTML response', async () => {
+    // This must reach the real provider's success/onDone path. The older
+    // blocked-strategy cases above exercise onError plus recovery instead.
+    successfulTerminal = true;
+    const { oldAssistantId } = await reachPendingArtifactRecovery();
+    expect(causalOrder).toContain('html-post-1-stored');
+    expect(causalOrder).not.toContain('html-post-1-response-released');
+    expect(physicalStatus).toBe('succeeded');
+
+    fireEvent.click(screen.getByRole('tab', { name: /design files/i }));
+    fireEvent.click(screen.getByRole('tab', { name: /document\.md/i }));
+    expect(screen.getByRole('tab', { name: /document\.md/i })).toHaveAttribute('aria-selected', 'true');
+    // Returning from Design Files mounts Markdown again. Its real text read
+    // and Markdown rendering settle asynchronously; tab selection alone does
+    // not mean the textarea is ready (the toolbar can precede its body).
+    await vi.waitFor(() => expect(screen.getByRole('textbox', { name: /markdown editor/i }))
+      .toHaveValue(manualText));
+    const editor = screen.getByRole('textbox', { name: /markdown editor/i });
+    const secondManualText = '# Manual v2 while successful HTML completion is pending';
+    const previousManualPosts = requests.filter((request) => request.method === 'POST'
+      && request.path.endsWith('/files') && request.names.includes('document.md')).length;
+    await act(async () => {
+      fireEvent.change(editor, { target: { value: secondManualText } });
+      await vi.advanceTimersByTimeAsync(700);
+    });
+    await vi.waitFor(() => {
+      expect(fileContents.get('document.md')).toBe(secondManualText);
+      expect(requests.filter((request) => request.method === 'POST'
+        && request.path.endsWith('/files') && request.names.includes('document.md')))
+        .toHaveLength(previousManualPosts + 1);
+    });
+    expect(causalOrder).not.toContain('html-post-1-response-released');
+    const beforeResponse = committedOpenRequests.length;
+    markOpenBoundary('manual v2 saved during successful live completion');
+
+    await releaseOldArtifactResponse();
+    await vi.waitFor(() => expect(persisted.get(oldAssistantId)?.producedFiles?.map((file) => file.name).sort(),
+      JSON.stringify({ causalOrder, htmlPostCount, committedOpenRequests }))
+      .toEqual(['agent-notes.md', 'agent-output.html']));
+    expect(fileContents.get('document.md')).toBe(secondManualText);
+    expect(fileContents.get('agent-output.html')).toBe(html);
+    expect(fileContents.get('agent-notes.md')).toBe(agentNotes);
+    expect(screen.getByRole('tab', { name: /document\.md/i }),
+      JSON.stringify({ causalOrder, htmlPostCount, openBoundaries, committedOpenRequests }))
+      .toHaveAttribute('aria-selected', 'true');
+    expect(committedOpenRequests.slice(beforeResponse).filter((request) => request.name === 'agent-output.html'),
+      JSON.stringify({ causalOrder, htmlPostCount, openBoundaries, committedOpenRequests })).toEqual([]);
+  });
+
+  it('automatically opens the HTML after successful live completion when the user never takes over the preview', async () => {
+    successfulTerminal = true;
+    const { oldAssistantId } = await reachPendingArtifactRecovery({ createManualDocument: false });
+    expect(fileContents.has('document.md')).toBe(false);
+    expect(causalOrder).not.toContain('html-post-1-response-released');
+
+    // No tabs, file cards, or focus callbacks are touched before completion.
+    // Persistence and its response are still real registry HTTP boundaries.
+    await releaseOldArtifactResponse();
+    await vi.waitFor(() => {
+      expect(persisted.get(oldAssistantId)?.producedFiles?.map((file) => file.name).sort())
+        .toEqual(['agent-notes.md', 'agent-output.html']);
+      expect(screen.getByRole('tab', { name: /agent-output\.html/i }))
+        .toHaveAttribute('aria-selected', 'true');
+    });
+    expect(committedOpenRequests.some((request) => request.name === 'agent-output.html')).toBe(true);
+    expect(fileContents.get('agent-output.html')).toBe(html);
+    expect(fileContents.get('agent-notes.md')).toBe(agentNotes);
+  });
+
+  it('opens the completed HTML when the user explicitly clicks its real file card after keeping the manual preview', async () => {
+    successfulTerminal = true;
+    const { oldAssistantId } = await reachPendingArtifactRecovery();
+    fireEvent.click(screen.getByRole('tab', { name: /design files/i }));
+    fireEvent.click(screen.getByRole('tab', { name: /document\.md/i }));
+    const beforeResponse = committedOpenRequests.length;
+
+    await releaseOldArtifactResponse();
+    await vi.waitFor(() => expect(persisted.get(oldAssistantId)?.producedFiles?.map((file) => file.name).sort())
+      .toEqual(['agent-notes.md', 'agent-output.html']));
+    expect(screen.getByRole('tab', { name: /document\.md/i })).toHaveAttribute('aria-selected', 'true');
+    expect(committedOpenRequests.slice(beforeResponse).filter((request) => request.name === 'agent-output.html'))
+      .toEqual([]);
+
+    // The actual Design Files card invokes FileWorkspace's user-open handler.
+    // Do not simulate this by calling ProjectView's callback or clearing its ref.
+    fireEvent.click(screen.getByRole('tab', { name: /design files/i }));
+    await vi.waitFor(() => expect(screen.getByTestId('design-file-row-agent-output.html')).toBeVisible());
+    const card = screen.getByTestId('design-file-row-agent-output.html');
+    fireEvent.click(within(card).getByRole('button', { name: 'Open agent-output.html' }));
+    await vi.waitFor(() => expect(screen.getByRole('tab', { name: /agent-output\.html/i }))
+      .toHaveAttribute('aria-selected', 'true'));
+    expect(fileContents.get('document.md')).toBe(manualText);
+    expect(fileContents.get('agent-output.html')).toBe(html);
+    expect(persisted.get(oldAssistantId)?.producedFiles?.map((file) => file.name).sort())
+      .toEqual(['agent-notes.md', 'agent-output.html']);
   });
 
   it('does not redirect the new physical run to an old artifact while staying in the same conversation', async () => {

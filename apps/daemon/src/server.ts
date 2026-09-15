@@ -504,6 +504,7 @@ import {
   codexResolvedSandboxMode,
 } from './runtimes/defs/codex.js';
 import { attachCodexAppServerSession } from './agent-protocol/codex-app-server/session.js';
+import { createCodexThreadCleanupOwner, type CodexCleanupInvocation } from './agent-protocol/codex-app-server/cleanup-owner.js';
 import {
   ensureDetectedRuntimeVersions,
   getDetectedRuntimeVersions,
@@ -587,6 +588,7 @@ import {
   deliverableSyntaxFinalizerEnabled,
   finalizeSuccessfulRunDeliverable,
 } from './artifacts/successful-run-deliverable-finalization.js';
+import { inferBaselineHtmlEntry } from './run-deliverable-validation.js';
 import { recordDeliverableSyntaxDelivery } from './artifacts/deliverable-syntax-metrics.js';
 import {
   POST_TOOL_RESUME_CONTINUATION_PROMPT,
@@ -7759,6 +7761,7 @@ export async function startServer({
       readRunTelemetrySinkConfig(process.env, configuredAmrEnv()),
     ),
   );
+  const codexThreadCleanupOwner = createCodexThreadCleanupOwner();
   const design = {
     runs: createChatRunService({
       createSseResponse,
@@ -11396,6 +11399,7 @@ export async function startServer({
     // for ANY agent (not just claude_code). Only for real project runs: a
     // null `cwd` means a no-project run rooted at PROJECT_ROOT, whose churn is
     // not the user's artifacts — those fall back to the tool-stream count.
+    let baselineEntryFile: string | undefined;
     if (run?.id && cwd) {
       try {
         const before = await snapshotProjectArtifactsAsync(cwd);
@@ -11404,6 +11408,7 @@ export async function startServer({
         // do not leave a stale baseline behind for a completed run.
         if (!run.artifactOutcome && !design.runs.isTerminal(run.status)) {
           runArtifactBaselines.remember(run.id, cwd, before);
+          baselineEntryFile = inferBaselineHtmlEntry(cwd, before.keys());
         }
       } catch {
         // Snapshotting is best-effort; finish falls back to the tool-stream count.
@@ -12013,9 +12018,20 @@ export async function startServer({
      * (emit one inline marker the host parses and strips), same "don't narrate
      * this to the user" clause.
      */
+    /*
+     * The run's UI locale rides along (OPEND-2765).
+     *
+     * `# UI locale override` states the same rule, but it lives in
+     * `daemonSystemPrompt` — the cache-stable head, which the payload below
+     * drops whenever `includeStableForPayload` is false. These three markers
+     * are re-sent every turn because of the nonce, so on a resume turn the
+     * marker contract was arriving with no locale attached and the follow-up
+     * suggestions came back in English on a zh-CN run.
+     */
     const hostProtocol = renderChatTurnHostProtocolInstructions(
       typeof run.doneKey === 'string' ? run.doneKey : '',
       'ordinary',
+      typeof locale === 'string' ? locale : undefined,
     );
     /*
      * This turn's follow-up suggestions.
@@ -12734,6 +12750,23 @@ export async function startServer({
       { allowRetry = true } = {},
     ) => {
       lifecycle.mark('finalize_start');
+      // A clean child exit does not complete a task rejected by the strategy
+      // gate. Reconcile before persisting the message or publishing the Run
+      // terminal event, while retaining the actual process exit code.
+      if (
+        status === 'succeeded'
+        && run.strategyTask?.outcome === 'blocked'
+        && run.strategyTask.activeRunId === run.id
+      ) {
+        status = 'failed';
+        allowRetry = false;
+        const reasonCodes = run.strategyTask.blockedContext?.reasonCodes ?? [];
+        send('error', createSseErrorPayload(
+          'OD_NEXT_TASK_BLOCKED',
+          `The task could not complete${reasonCodes.length ? `: ${reasonCodes.join(', ')}` : '.'}`,
+          { retryable: false, details: { reasonCodes } },
+        ));
+      }
       flushRunMessageEvents(run);
       // Persist the transport-level close mechanism before classifying this
       // attempt. Runtime fatal/stream signals are only known in the close
@@ -14090,6 +14123,11 @@ export async function startServer({
     let acpSession = null;
     let writePromptToChildStdin = false;
     let spawnedAgentEnv = null;
+    let codexCleanupInvocation: CodexCleanupInvocation | null = null;
+    let completeCodexEvidenceCollection = () => {};
+    const codexEvidenceCollected = def.id === 'codex'
+      ? new Promise<void>((resolve) => { completeCodexEvidenceCollection = resolve; })
+      : undefined;
     // The stream handler is block-scoped to its parser branch, but the OpenCode
     // post-run child export runs in the shared close handler below — after the
     // stream that produced the candidates is gone.
@@ -14205,6 +14243,13 @@ export async function startServer({
         args,
         env,
       });
+      if (def.streamFormat === CODEX_APP_SERVER_STREAM_FORMAT) {
+        codexCleanupInvocation = {
+          command: invocation.command, args: [...invocation.args], env: { ...env }, cwd: effectiveCwd,
+          ...(invocation.windowsVerbatimArguments !== undefined
+            ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments } : {}),
+        };
+      }
       lifecycle.mark('launch_preflight_end');
       lifecycle.mark('process_spawn_start');
       child = spawn(invocation.command, invocation.args, {
@@ -15516,7 +15561,7 @@ export async function startServer({
               errorCode: data?.error?.code,
               stdoutTail: agentStdoutTail,
               stderrTail: agentStderrTail,
-            });
+            }, configuredAgentEnv);
             if (failure) {
               sendAmrAccountFailure(failure);
               return;
@@ -15669,7 +15714,7 @@ export async function startServer({
       // always did. The transport's own additions are token-level text and
       // reasoning deltas.
       trackingSubstantiveOutput = true;
-      acpSession = attachCodexAppServerSession({
+      const codexSession = attachCodexAppServerSession({
         child,
         prompt: composed,
         cwd: effectiveCwd,
@@ -15677,6 +15722,10 @@ export async function startServer({
         reasoning: safeReasoning,
         serviceTier: safeServiceTier,
         sandboxMode: codexResolvedSandboxMode(),
+        manageThreadVisibility: true,
+        // This handle came from our captured agent_sessions record (or a
+        // same-run daemon continuation), never from the public chat payload.
+        resumeSessionOwned: agentResumeCtx.isResuming,
         imagePaths: def.supportsImagePaths ? amrStagedImages : [],
         clientVersion: design.getAppVersion?.() ?? '0.0.0',
         // Capture-style resume, same contract as `exec resume <thread_id>`:
@@ -15699,6 +15748,18 @@ export async function startServer({
         onPromptSendEnd: () => lifecycle.mark('stdin_write_end'),
         onTurnComplete: () => clearFirstOutputWatchdog(),
       });
+      acpSession = codexSession;
+      if (codexCleanupInvocation) {
+        const cleanupRunId = run.id;
+        // Attach installs the session's physical-close proof first. This
+        // listener is independent of the later retry-generation close guard.
+        codexThreadCleanupOwner.bind(child, codexSession, codexCleanupInvocation, (result) => {
+          const details = { runId: cleanupRunId, ...result };
+          if (result.status === 'archived' && result.treeVerified !== false) {
+            console.info('[codex] closed-thread cleanup completed', details);
+          } else console.warn('[codex] closed-thread cleanup incomplete', details);
+        }, codexEvidenceCollected);
+      }
     } else if (def.streamFormat === 'json-event-stream') {
       // Pipe through sendAgentEvent so the OpenCode `type:'error'` frame
       // (now emitted as a real error event by json-event-stream.ts after
@@ -15915,6 +15976,7 @@ export async function startServer({
           }
         }
       }
+      completeCodexEvidenceCollection();
       // Native OpenCode filters child-session events out of the root JSON
       // stream, so the live stream can only produce a terminal-only L1
       // candidate — which fails the evidence graph on `child_started_missing`
@@ -16037,7 +16099,7 @@ export async function startServer({
           const amrFailure = classifyAmrAccountFailureSignal({
             stdoutTail: agentStdoutTail,
             stderrTail: agentStderrTail,
-          });
+          }, configuredAgentEnv);
           if (amrFailure) {
             sendAmrAccountFailure(amrFailure);
             return finishWithRetryDecision('failed', code ?? 1, signal ?? null);
@@ -16549,6 +16611,7 @@ export async function startServer({
         }
         await resolveRunArtifactOutcomeBeforeFinishAsync();
         const deliverableFinalization = await finalizeSuccessfulRunDeliverable({
+          ...(run.artifactOutcome?.diff && baselineEntryFile ? { baselineEntryFile } : {}),
           projectsRoot: PROJECTS_DIR,
           projectId: run.projectId ?? null,
           projectMetadata: projectRecord?.metadata,
@@ -16566,9 +16629,41 @@ export async function startServer({
             : {}),
         });
         const { deliverable } = deliverableFinalization;
+        // Adding a second page must not erase an unambiguous pre-run entry.
+        // Retain only a verified baseline identity, without replacing a user's
+        // explicit selection or metadata changed while this Run was executing.
+        if (
+          deliverable.valid && deliverable.linkedPage
+          && deliverable.entryFile === baselineEntryFile
+          && run.artifactOutcome?.diff && run.projectId && cwd
+        ) {
+          try {
+            const current = getProject(db, run.projectId);
+            if (
+              current?.metadata?.kind === 'prototype'
+              && !current.metadata.entryFile
+              && resolveProjectDir(PROJECTS_DIR, current.id, current.metadata) === cwd
+            ) {
+              updateProject(db, current.id, {
+                metadata: { ...current.metadata, entryFile: deliverable.entryFile },
+                updatedAt: SYNC_KEEPS_UPDATED_AT,
+              });
+            }
+          } catch {
+            console.warn('[deliverable] could not retain verified prototype entry');
+          }
+        }
         if (strategyCompletionCandidate) {
           design.runs.setDeliverableValidation?.(run, deliverable);
           deliverableValid = deliverable.valid;
+          if (!deliverable.valid && strategyTaskAtStart) {
+            console.info('[od-next-task] completion evidence rejected', {
+              taskExecutionId: strategyTaskAtStart.taskExecutionId,
+              runId: run.id,
+              inputStage: strategyTaskAtStart.inputStage,
+              validation: deliverable.validation,
+            });
+          }
         }
         // Host-owned syntax finalization is based on physical delivery, not on
         // OD Next strategy identity. It never resumes or prompts the Agent.
@@ -16738,6 +16833,11 @@ export async function startServer({
               task: strategyTaskAtStart,
               parsed: strategyProtocolResult,
               toolUseCount: strategyToolUseCount,
+              // OPEND-2765: the production stage closes with the keyed host
+              // protocols, whose follow-up suggestions are user-visible prose.
+              ...(typeof chatBody.locale === 'string' && chatBody.locale
+                ? { locale: chatBody.locale }
+                : {}),
               ...(executionPreflight ? { executionPreflight } : {}),
               ...(complexRuntimeEvidence ? { complexRuntimeEvidence } : {}),
               ...(
@@ -16877,6 +16977,9 @@ export async function startServer({
         );
       }
       } finally {
+        // Superseded attempts and early/error exits also release their own
+        // receipt. The cleanup owner separately fences the shutdown deadline.
+        completeCodexEvidenceCollection();
         // Best-effort cleanup of the per-run agy log file on every close
         // path — successful, failed, cancelled, or non-zero exit — so
         // /tmp doesn't accumulate one file per Antigravity run. The log
@@ -17721,7 +17824,14 @@ export async function startServer({
       daemonShuttingDown = true;
       amrTerminalReportDelivery.stop();
       clearTerminalTelemetryFallbackTimers();
-      await design.runs.shutdownActive({ graceMs: resolveChatRunShutdownGraceMs() });
+      const shutdownGraceMs = resolveChatRunShutdownGraceMs();
+      await design.runs.shutdownActive({ graceMs: shutdownGraceMs });
+      // Cleanup runs independently of user terminal classification. Give
+      // confirmed closed writers at most three additional seconds at shutdown.
+      const cleanupDrain = await codexThreadCleanupOwner.drain(shutdownGraceMs);
+      if (cleanupDrain.pending > 0) {
+        console.warn('[codex] closed-thread cleanup shutdown deadline reached', cleanupDrain);
+      }
       await terminalService.shutdownActive();
       await browserSessionService.shutdownActive();
       await design.analytics.shutdown();
