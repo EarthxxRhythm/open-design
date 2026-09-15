@@ -60,7 +60,7 @@ let releaseWrite: () => void;
 let writeGate: Promise<void>;
 let writeStarted: boolean;
 let messageWrites: ChatMessage[];
-let strategy: 'missing-state' | 'delivered' | 'agent-declared' | 'ordinary-delivery';
+let strategy: 'missing-state' | 'delivered' | 'agent-declared' | 'ordinary-delivery' | 'project-delivered';
 
 function strategyTask() {
   return { activeRunId: `run-${project.id}`, executionMode: null, inputStage: 'request', route: 'full_plan',
@@ -102,6 +102,7 @@ beforeEach(() => {
     if (url.pathname === `/api/runs/run-${project.id}`) return Response.json({ runId: `run-${project.id}`,
       status: 'succeeded', createdAt: 1000, updatedAt: 2000, artifactCount: 0, artifactPaths: [],
       deliverableValid: strategy === 'delivered',
+      projectDeliverableValid: strategy === 'project-delivered',
       ...(strategy !== 'ordinary-delivery' ? { strategyTask: strategyTask() } : {}) });
     if (url.pathname === `/api/projects/${project.id}/files`) {
       if (method === 'POST') {
@@ -163,7 +164,7 @@ describe('artifact recovery preserves the established strategy verdict contract 
     expect(message.runStatus).toBe('failed');
     expect(screen.getAllByText('Run failed').length).toBeGreaterThan(0);
   });
-  it.each(['delivered', 'agent-declared', 'ordinary-delivery'] as const)(
+  it.each(['delivered', 'agent-declared', 'ordinary-delivery', 'project-delivered'] as const)(
     'retains successful recovery for the existing %s exception', async (kind) => {
       const message = await recover(kind);
       expect(message.runStatus).toBe('succeeded');

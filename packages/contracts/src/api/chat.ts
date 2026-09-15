@@ -814,6 +814,23 @@ export interface ChatRunStatusResponse {
     | 'entry_not_touched'
     | 'entry_unreadable'
     | 'type_mismatch';
+  /** Whether the project holds a usable canonical deliverable RIGHT NOW,
+   *  regardless of whether this run wrote it. `deliverableValid` answers "did
+   *  THIS run deliver" and is the right gate for accepting a completion claim;
+   *  this answers "does the user have it", which is what decides whether a
+   *  refused turn is worth showing as a failure. A turn that verifies finished
+   *  work and correctly changes nothing is `deliverableValid: false` and
+   *  `projectDeliverableValid: true`. Present for terminal runs whose strategy
+   *  task settled blocked; absent on daemons that predate the split. */
+  projectDeliverableValid?: boolean;
+  /** Why `projectDeliverableValid` came out the way it did. Run-scoped values
+   *  (`not_succeeded`, `no_artifact`, `entry_not_touched`) never appear here. */
+  projectDeliverableValidation?:
+    | 'valid'
+    | 'project_missing'
+    | 'entry_missing'
+    | 'entry_unreadable'
+    | 'type_mismatch';
   /** Canonical project-relative file selected by deliverable validation. */
   deliverableEntryFile?: string;
   /** File kind of deliverableEntryFile, derived from the daemon file index. */
@@ -1045,9 +1062,10 @@ export type PersistedAgentEvent =
    *
    * Persisted with the turn's other events so a reloaded conversation shows
    * the same three rows it showed live. Turns recorded before this event
-   * existed have none, and MUST render no next-step row at all — there is no
-   * legacy fallback, because the suggestions are about the specific thing that
-   * turn built and cannot be reconstructed after the fact.
+   * existed have none. Normally no next-step row is rendered; OPEND-2776
+   * permits the UI's three image actions when a successful turn has its own
+   * nonempty image deliverables. That fallback does not manufacture an event
+   * or infer generated images from user attachments or project history.
    */
   | { kind: 'next_steps'; suggestions: string[] }
   /**
@@ -1159,6 +1177,18 @@ export type PersistedAgentEvent =
       /** Terminal turn stop reason (e.g. `max_tokens`). Persisted so the project
        *  projection can read a truncation as incomplete after reload (#1247). */
       stopReason?: string;
+    }
+  // Per-request token usage for one model request (assistant `message`),
+  // keyed by `requestId` (provider `msg_…` id). Persisted alongside the
+  // run-level `usage` record so request-level cost/percentile analysis has a
+  // durable source; the per-request token sum reconciles with `usage`.
+  | {
+      kind: 'request_usage';
+      requestId: string;
+      inputTokens?: number;
+      outputTokens?: number;
+      cacheCreationInputTokens?: number;
+      cacheReadInputTokens?: number;
     }
   | { kind: 'raw'; line: string };
 

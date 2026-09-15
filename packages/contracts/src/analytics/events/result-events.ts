@@ -496,6 +496,21 @@ export interface RunCreatedProps extends RunTaskLineageProps {
    * and when the user never opted in (there is nothing to explain).
    */
   harness_fallback_reason?: string;
+  /**
+   * The gate that refused an OD Next turn, when its logical task settled
+   * `blocked`.
+   *
+   * `result` is derived from the PHYSICAL run status, and a refused turn
+   * usually exits 0 with a complete reply on screen — so this whole class of
+   * failure reported `result: 'success'` and left no trace anywhere queryable.
+   * The user saw a red card; the data said the run was fine. Carrying the
+   * primary reason code (the same `reasonCodes[0]` the failure card keys on)
+   * makes the class countable without changing what `result` means.
+   *
+   * Omitted for every run whose strategy task did not block, which is the
+   * common case.
+   */
+  od_next_blocked_reason_code?: string;
 }
 
 export interface RunFinishedProps extends Omit<RunCreatedProps, 'area'> {
@@ -670,6 +685,17 @@ export interface RunFinishedProps extends Omit<RunCreatedProps, 'area'> {
   // where session reuse applies.
   is_followup_turn?: boolean;
   cache_token_source?: 'anthropic' | 'openai' | 'unavailable';
+  // Per-request token coverage (#4610). `request_usage_count` is how many model
+  // requests in the run carry a per-request usage record (request_id + tokens);
+  // 0 means only the run-level aggregate was available. The `_sum` fields are
+  // the per-request token totals, and `request_usage_reconciles_aggregate` is
+  // whether that sum matches the run-level `result.usage` (the #4610 invariant).
+  // Together these let request-level cost/percentile analysis graduate off the
+  // run-level floor for claude_code.
+  request_usage_count?: number;
+  request_usage_input_tokens_sum?: number;
+  request_usage_output_tokens_sum?: number;
+  request_usage_reconciles_aggregate?: boolean;
   queue_duration_ms?: number;
   pre_spawn_duration_ms?: number;
   prompt_build_duration_ms?: number;

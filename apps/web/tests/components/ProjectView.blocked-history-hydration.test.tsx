@@ -326,6 +326,35 @@ describe('blocked task history hydration through real ProjectView and ChatPane (
     expect(screen.queryByTestId('chat-error-retry')).toBeNull();
   });
 
+  it.each([
+    { name: 'keeps project delivery with the current run response', content: 'The existing project is ready.', projectValid: true, succeeds: true },
+    { name: 'rejects project delivery with a blank current run response', content: '\n  ', projectValid: true, succeeds: false },
+    { name: 'keeps the blocked verdict when the project has no delivery', content: 'The existing project is ready.', projectValid: false, succeeds: false },
+  ])('$name after the authorized cold-history probe completes', async ({ content, projectValid, succeeds }) => {
+    // The HTTP fixture carries a main field not yet declared by this older
+    // PR's DTO. Use a structural extension, not a cast or production change.
+    const proof = { ...runProof(), projectDeliverableValid: projectValid };
+    proofs.set(runId(), proof);
+    setHistory(persistedAssistant({ content, events: [
+      { kind: 'thinking', text: 'Checking this run.' }, { kind: 'text', text: content },
+    ] }));
+    histories.get(historyKey())!.unshift({ id: 'earlier-reply', role: 'assistant',
+      content: 'A predecessor already explained this project.', createdAt: 800,
+      runStatus: 'succeeded', endedAt: 850 });
+    const original = structuredClone(histories.get(historyKey()));
+    holdProof();
+    render(view());
+    await settleExistingTaskProbe();
+    if (succeeds) {
+      await expectDisplayedStatus(en['chat.record.done']);
+      expect(screen.queryByTestId('chat-error-retry')).toBeNull();
+    } else {
+      await expectBlockedRecovery();
+    }
+    expect(histories.get(historyKey())).toEqual(original);
+    expect(unexpectedWrites).toEqual([]);
+  });
+
   it('does not treat an agent-declared reason without visible explanation as the success exception', async () => {
     // Schema permits null visible text; the provider success exception does
     // not. Keep that exact existing distinction in the history surface too.

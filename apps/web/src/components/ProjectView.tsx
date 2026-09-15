@@ -4661,6 +4661,9 @@ export function ProjectView({
     );
     if (!primaryFile) return;
     hasAppliedInitialPrimaryOpenRef.current = true;
+    // This default is a host selection, just like requestOpenFile. Persisting
+    // it must not turn an automatically opened search image into a user veto.
+    lastHostRequestedOpenRef.current = primaryFile.name;
     persistTabsState({ tabs: [primaryFile.name], active: primaryFile.name });
   }, [
     openTabsState.active,
@@ -6625,6 +6628,7 @@ export function ProjectView({
             && strategyTask.activeRunId === runId
             && !canRetainSuccessfulRunForBlockedStrategy(
               status.status, strategyTask, status.deliverableValid,
+              status.projectDeliverableValid, message.content,
             )
           ) {
             // A cold history row keeps the daemon's physical success. Restore
@@ -6781,7 +6785,9 @@ export function ProjectView({
               { telemetryFinalized: true },
             );
 
-            let nextFiles = await refreshProjectFiles();
+            // A terminal run's artifact paths must resolve against a post-run
+            // read, not a shared file-list result cached before its last write.
+            let nextFiles = await refreshProjectFiles({ fresh: true });
             const beforeFileNames = new Set(
               message.preTurnFileNames ?? nextFiles.map((f) => f.name),
             );
@@ -6863,7 +6869,7 @@ export function ProjectView({
                 projectDetail.resolvedDir,
               ),
             });
-            if (turnArtifacts.focused) {
+            if (turnArtifacts.focused && !userTookOverPreviewRef.current) {
               requestOpenTurnArtifacts(turnArtifacts.open, turnArtifacts.focused);
             }
             const deliveryOutcome = resolveDesignDeliveryOutcome({
@@ -7294,7 +7300,9 @@ export function ProjectView({
               if (latestReattachRunStatus === 'canceled') return;
               void (async () => {
                 const preTurn = message.preTurnFileNames;
-                let nextFiles = await refreshProjectFiles();
+                // Match live completion: the terminal artifact list can be
+                // newer than the GET coalescer's last successful file read.
+                let nextFiles = await refreshProjectFiles({ fresh: true });
                 let artifactPersistenceSucceeded = false;
                 let artifactPersistenceError: string | undefined;
                 // Use the turn-start snapshot when available so reload
@@ -7384,7 +7392,7 @@ export function ProjectView({
                     projectDetail.resolvedDir,
                   ),
                 });
-                if (turnArtifacts.focused) {
+                if (turnArtifacts.focused && !userTookOverPreviewRef.current) {
                   requestOpenTurnArtifacts(turnArtifacts.open, turnArtifacts.focused);
                 }
                 const deliveryContent = needsFullReplay ? replayedContent : message.content;
@@ -8041,6 +8049,7 @@ export function ProjectView({
           const blockedRunCanSucceed = latestRunStatus != null
             && canRetainSuccessfulRunForBlockedStrategy(
               latestRunStatus.status, strategyTask, latestRunStatus.deliverableValid,
+              latestRunStatus.projectDeliverableValid, sourceText,
             );
           updateMessageById(
             message.id,
