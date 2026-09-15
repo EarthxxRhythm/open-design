@@ -78,6 +78,8 @@ OpenDesign 实施位置：`touchpoint-lifecycle.ts` 统一拥有 30 秒 polling�
 
 - 三个上限都必须进入共享生命周期；不能只取 `endsAt`，不能因 polling、Test 切换、重新挂载或页面恢复重新起算并延長旧授权。活动尚 active 但授权先到期时，也必须撤载。
 - 按服务器时间和请求耗时保守换算本地调度；本地时钟变化、网络延迟或页面挂起不能延长已发授权。恢复时先阻止旧授权继续挂载，再重新验证；旧响应和旧 timer 不能复活已失效 decision。
+- 普通窗口 `focus` 不等同于页面恢复：页面仍可见且当前 lease 尚未到期时，立即后台验证并保留原挂载，不改变原授权截止；同一内容的有效响应只续期。`visibilitychange`、`pageshow`、`online` 仍走暂停展示的恢复路径，focus 时已过期的 lease 也先撤下。请求失败、超时、匹配撤销及到期的清理规则不变。
+- Test 弹窗关闭记录属于当前宿主内的账号、活动和 deployment，不属于单次 runtime 响应。临时空 decision、重新验证及轮询不得清除该记录；不同 deployment 可以展示。本规则不新增跨客户端重启的关闭持久化。
 - 生产 loader 的 404 是 no-decision，并不自行撤销有效 lease；只有有效且绑定当前 touchpointDecisionId/deploymentId/activityId/contentVersionId 的 410 receipt 才构成服务端撤销。匹配的撤销清除当前展示，但不停止后续发现新活动。非 Abort 的当前请求失败仍诊断后 clear。恢复期间先暂停旧展示；no-decision 或不匹配撤销只能保留尚未到期的原授权及原截止，不能续期或复活过期授权。
 - **用户已确认：Test 也由服务端返回 authorizationExpiresAt，与 Production 使用相同的短期展示授权规则。** OpenDesign Test DTO 已将此字段设为必填；适配器不得伪造授权或 fallback 到仅受 endsAt 限制。Vela 新响应仍待交付验证。
 - Vela 当前生产服务端最长授权 60 秒（`services/api/src/touchpoints/persistence.ts`：`resolveProductionRuntime`）；Test 每 GET 使用同一 serverTime 生成 `authorizationExpiresAt = min(endsAt, serverTime + 60 秒)`。before/ended 也返回该字段及完整 metadata，但不可挂载；ended 的授权时间可早于 serverTime。客户端 5 分钟安全上限不是服务端授权时长，不能延长 60 秒授权。

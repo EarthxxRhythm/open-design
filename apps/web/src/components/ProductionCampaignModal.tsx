@@ -196,7 +196,18 @@ export function ProductionCampaignModal({
 	const { locale } = useI18n();
 	const testRuntime = useTestRuntime();
 	const testDecision = testRuntime?.decisions.get(PLACEMENT);
-	const [testClosed, setTestClosed] = useState(false);
+	// Dismissal belongs to the account and deployed campaign, not a transient
+	// runtime response (or its renewed authorization timestamps).
+	const [dismissedTestCampaigns, setDismissedTestCampaigns] = useState<ReadonlySet<string>>(() => new Set());
+	const testCampaignKey = testDecision
+		? JSON.stringify([sessionSubject, testDecision.activityId, testDecision.deploymentId])
+		: null;
+	const testClosed = testCampaignKey !== null && dismissedTestCampaigns.has(testCampaignKey);
+	const closeTestModal = useCallback(() => {
+		if (testCampaignKey !== null) {
+			setDismissedTestCampaigns(previous => new Set([...previous, testCampaignKey]));
+		}
+	}, [testCampaignKey]);
 	const [closed, setClosed] = useState(false);
 	const openPresentation = useRef<OpenPresentation | null>(null);
 	const clearOpenPresentation = useCallback(() => {
@@ -463,7 +474,7 @@ export function ProductionCampaignModal({
 				: null;
 		const releaseScrollLock = lockWebTouchpointModalScroll();
 		const onKeyDown = (event: KeyboardEvent) => {
-			if (event.key === "Escape") setTestClosed(true);
+			if (event.key === "Escape") closeTestModal();
 			else trapWebTouchpointModalFocus(event, modalRef.current);
 		};
 		document.addEventListener("keydown", onKeyDown);
@@ -478,11 +489,7 @@ export function ProductionCampaignModal({
 			releaseScrollLock();
 			previous?.focus();
 		};
-	}, [authenticated, testClosed, testDecision]);
-	useEffect(() => {
-		if (!testDecision) setTestClosed(false);
-	}, [testDecision]);
-	const closeTestModal = useCallback(() => setTestClosed(true), []);
+	}, [authenticated, testClosed, testDecision, closeTestModal]);
 	const onTestVisible = useCallback(
 		(next: TestDecision, placementKey: TestCampaignPlacement) => {
 			if (testRuntime)
