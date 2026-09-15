@@ -1710,9 +1710,10 @@ export function listLatestProjectRunStatuses(db: SqliteDb) {
     )
     .all() as DbRow[];
   const latestByProject = new Map<string, DbRow>();
+  const completenessEvents = completenessEventsStatement(db);
   for (const row of rows) {
     latestByProject.set(row.projectId, {
-      value: projectDisplayStatusForRunRow(db, row.status, String(row.messageId)),
+      value: projectDisplayStatusForRunRow(completenessEvents, row.status, String(row.messageId)),
       updatedAt: Number(row.updatedAt),
       runId: row.runId ?? undefined,
     });
@@ -1726,10 +1727,14 @@ export function listLatestProjectRunStatuses(db: SqliteDb) {
 // is not actually done (#1247 / #1060). Derived from the same events the chat
 // footer reads, so the two surfaces cannot disagree, and it survives reload
 // because the events were persisted per-event as the run streamed.
-function projectDisplayStatusForRunRow(db: SqliteDb, status: unknown, messageId: string) {
+function projectDisplayStatusForRunRow(
+  completenessEvents: Database.Statement,
+  status: unknown,
+  messageId: string,
+) {
   const normalized = normalizeProjectRunStatus(status);
   if (normalized !== 'succeeded') return normalized;
-  const events = completenessEventsOfMessage(db, messageId);
+  const events = completenessEventsOfMessage(completenessEvents, messageId);
   return eventsEndedWithUnfinishedWork(events) ? 'incomplete' : normalized;
 }
 
@@ -1746,33 +1751,35 @@ function projectDisplayStatusForRunRow(db: SqliteDb, status: unknown, messageId:
  * `isTodoWriteToolName` (every name it accepts contains `todo` or is
  * `update_plan`); the predicate itself still decides exactly.
  */
-function completenessEventsOfMessage(db: SqliteDb, messageId: string): unknown[] {
-  const rows = db
-    .prepare(
-      `SELECT event.value AS value
-         FROM messages AS m,
-              json_each(
-                CASE
-                  WHEN json_valid(m.events_json) AND json_type(m.events_json) = 'array'
-                    THEN m.events_json
-                  ELSE '[]'
-                END
-              ) AS event
-        WHERE m.id = ?
-          AND event.type = 'object'
-          AND (
-            json_extract(event.value, '$.kind') IN ('usage', 'done_key', 'text')
-            OR (
-              json_extract(event.value, '$.kind') = 'tool_use'
-              AND (
-                lower(json_extract(event.value, '$.name')) LIKE '%todo%'
-                OR lower(json_extract(event.value, '$.name')) = 'update_plan'
-              )
+function completenessEventsStatement(db: SqliteDb): Database.Statement {
+  return db.prepare(
+    `SELECT event.value AS value
+       FROM messages AS m,
+            json_each(
+              CASE
+                WHEN json_valid(m.events_json) AND json_type(m.events_json) = 'array'
+                  THEN m.events_json
+                ELSE '[]'
+              END
+            ) AS event
+      WHERE m.id = ?
+        AND event.type = 'object'
+        AND (
+          json_extract(event.value, '$.kind') IN ('usage', 'done_key', 'text')
+          OR (
+            json_extract(event.value, '$.kind') = 'tool_use'
+            AND (
+              lower(json_extract(event.value, '$.name')) LIKE '%todo%'
+              OR lower(json_extract(event.value, '$.name')) = 'update_plan'
             )
           )
-        ORDER BY CAST(event.key AS INTEGER)`,
-    )
-    .all(messageId) as Array<{ value: string }>;
+        )
+      ORDER BY CAST(event.key AS INTEGER)`,
+  );
+}
+
+function completenessEventsOfMessage(statement: Database.Statement, messageId: string): unknown[] {
+  const rows = statement.all(messageId) as Array<{ value: string }>;
   const events: unknown[] = [];
   for (const row of rows) {
     const event = parseJsonOrUndef(row.value);
@@ -2951,9 +2958,14 @@ export function listMessages(db: SqliteDb, conversationId: string) {
   // held at full size at once: rows written before the run-event payload
   // budget can be MBs each, and normalizing bounds them (see
   // `normalizeMessage`). Nothing below runs another statement while the
-  // iterator is open — batches and artifact refs were read above.
+  // iterator is open — batches and artifact refs were read above. Lightweight
+  // adapters that model only `all()` (see `hasMessageEventBatchStorage`) get
+  // the same rows in one step.
+  const rows = typeof messages.iterate === 'function'
+    ? (messages.iterate(conversationId) as Iterable<DbRow>)
+    : (messages.all(conversationId) as DbRow[]);
   const normalized = [];
-  for (const message of messages.iterate(conversationId) as Iterable<DbRow>) {
+  for (const message of rows) {
     normalized.push(normalizeMessage(
       db,
       message,
