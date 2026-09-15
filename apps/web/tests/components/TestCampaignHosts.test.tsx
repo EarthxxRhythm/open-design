@@ -261,6 +261,171 @@ describe("Test decisions at the existing host touchpoints", () => {
 		expect(mountedTexts()).toEqual(expected("en"));
 	});
 
+	it("keeps the Test modal image through delayed focus refresh and stays closed after SDK dismissal", async () => {
+		vi.useFakeTimers({
+			toFake: [
+				"Date",
+				"performance",
+				"setTimeout",
+				"clearTimeout",
+				"setInterval",
+				"clearInterval",
+			],
+		});
+		vi.setSystemTime(new Date(context.updatedAt));
+		const pending: Array<() => void> = [];
+		let hold = false;
+		let close: (() => void) | undefined;
+		vi
+			.mocked(OpenDesignTouchpointElement.prototype.mount)
+			.mockImplementation(async function (
+				this: OpenDesignTouchpointElement,
+				_url,
+				_digest,
+				_context,
+				_resources,
+				_actions,
+				callbacks,
+			) {
+				const image = document.createElement("img");
+				image.src = "blob:test-host";
+				this.shadowRoot?.replaceChildren(image);
+				close = callbacks?.requestClose;
+			});
+		const deployment = {
+			id: context.deploymentId,
+			activityId: "activity-four",
+			snapshotHash: "sha256:four-snapshot",
+			snapshot: {
+				contentVersionId: "version-four-placement",
+				manifestHash: "sha256:four-manifest",
+				artifactHash: "sha256:four-artifact",
+				placementKeys: ["opend.home.campaign-modal"],
+			},
+		};
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: string) => {
+				const url = new URL(input, "http://localhost");
+				if (url.pathname.endsWith("/deployments"))
+					return Response.json({ deployments: [deployment] });
+				if (url.pathname.endsWith("/context")) return Response.json(context);
+				if (url.pathname === "/api/touchpoints/test-runtime") {
+					if (hold) await new Promise<void>((resolve) => pending.push(resolve));
+					return Response.json({
+						...decision("opend.home.campaign-modal"),
+						serverTime: new Date().toISOString(),
+						authorizationExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+					});
+				}
+				return Response.json(
+					{},
+					{ status: input.includes("acceptances") ? 201 : 404 },
+				);
+			}),
+		);
+		try {
+			render(
+				<I18nProvider initial="zh-CN">
+					<TestCampaignModal authenticated sessionSubject="account-a" />
+					<ProductionCampaignModal authenticated sessionSubject="account-a" />
+				</I18nProvider>,
+			);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(0);
+			});
+			const dialog = screen.getByRole("dialog", { name: "Test campaign" });
+			const element = dialog.querySelector("opend-touchpoint");
+			const image = element?.shadowRoot?.querySelector("img");
+			expect(image).toHaveAttribute("src", "blob:test-host");
+			hold = true;
+			act(() => {
+				window.dispatchEvent(new Event("focus"));
+			});
+			expect(pending).toHaveLength(1);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(5000);
+			});
+			expect(screen.getByRole("dialog", { name: "Test campaign" })).toBe(dialog);
+			expect(element?.isConnected).toBe(true);
+			expect(element?.shadowRoot?.querySelector("img")).toBe(image);
+			hold = false;
+			await act(async () => {
+				pending.splice(0).forEach((resolve) => resolve());
+			});
+			expect(dialog.querySelector("opend-touchpoint")).toBe(element);
+			expect(element?.shadowRoot?.querySelector("img")).toBe(image);
+			expect(close).toBeTypeOf("function");
+			act(() => {
+				close?.();
+			});
+			expect(screen.queryByRole("dialog", { name: "Test campaign" })).toBeNull();
+			await act(async () => {
+				window.dispatchEvent(new Event("online"));
+			});
+			await act(async () => {
+				window.dispatchEvent(new Event("focus"));
+				await vi.advanceTimersByTimeAsync(30_000);
+			});
+			expect(screen.queryByRole("dialog", { name: "Test campaign" })).toBeNull();
+		} finally {
+			cleanup();
+			vi.useRealTimers();
+		}
+	});
+
+	it("keeps a dismissed Test campaign closed across temporary session loss, but allows another deployment", async () => {
+		const value = decision("opend.home.campaign-modal");
+		const session: TestRuntimeSession = {
+			selectionKey: "deployment-four",
+			deployment: {
+				id: context.deploymentId,
+				activityId: "activity-four",
+				snapshotHash: value.snapshotHash,
+				snapshot: {
+					contentVersionId: value.content.id,
+					manifestHash: value.manifestHash,
+					artifactHash: value.artifactHash,
+					placementKeys: [...placements],
+				},
+			},
+			context,
+			decisions: new Map([["opend.home.campaign-modal", value]]),
+			isAuthorized: () => true,
+		};
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => Response.json({}, { status: 404 })),
+		);
+		setTestRuntimeSession(session);
+		render(<ProductionCampaignModal authenticated sessionSubject="account-a" />);
+		await screen.findByRole("dialog", { name: "Test campaign" });
+		fireEvent.keyDown(document, { key: "Escape" });
+		expect(screen.queryByRole("dialog", { name: "Test campaign" })).toBeNull();
+		await act(async () => {
+			clearTestRuntimeSession();
+		});
+		await act(async () => {
+			setTestRuntimeSession({ ...session, decisions: new Map(session.decisions) });
+		});
+		expect(screen.queryByRole("dialog", { name: "Test campaign" })).toBeNull();
+		const next = {
+			...value,
+			deploymentId: "deployment-2",
+			testContext: { ...value.testContext, deploymentId: "deployment-2" },
+		};
+		await act(async () => {
+			setTestRuntimeSession({
+				...session,
+				selectionKey: "deployment-2",
+				deployment: { ...session.deployment, id: "deployment-2" },
+				context: next.testContext,
+				decisions: new Map([["opend.home.campaign-modal", next]]),
+			});
+		});
+		expect(screen.getByRole("dialog", { name: "Test campaign" })).toBeVisible();
+	});
+
 	it("uses the selected Test session at modal, badge, and paired hover hosts without production reads", async () => {
 		const decisions = new Map(
 			placements.map((placementKey) => [placementKey, decision(placementKey)]),

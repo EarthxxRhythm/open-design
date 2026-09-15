@@ -256,6 +256,35 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe("shared display lifecycle", () => {
+	it("keeps an unexpired visible decision mounted while focus revalidation is pending", async () => {
+		const pending = deferred<TouchpointLifecycleLoad<Content>>();
+		const load = vi.fn<Load>().mockResolvedValueOnce({ kind: "decision", value: first, key: "same", validForMs: 60_000 }).mockReturnValue(pending.promise);
+		const { result } = renderHook(() => useTouchpointLifecycle({ enabled: true, identity: "test", load }));
+		await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+		const generation = result.current.generation;
+		act(() => { window.dispatchEvent(new Event("focus")); });
+		expect(load).toHaveBeenCalledTimes(2);
+		expect(result.current.current).toBe(first);
+		expect(result.current.generation).toBe(generation);
+		await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+		expect(result.current.current).toBe(first);
+		act(() => { window.dispatchEvent(new Event("focus")); });
+		expect(load).toHaveBeenCalledTimes(2);
+		await act(async () => { pending.resolve({ kind: "decision", value: { ...first }, key: "same", validForMs: 60_000 }); });
+		expect(result.current.current).toBe(first);
+		expect(result.current.generation).toBe(generation);
+	});
+
+	it("still withdraws display and authority on actual page hiding", async () => {
+		const load = vi.fn<Load>().mockResolvedValue({ kind: "decision", value: first, key: "same", validForMs: 60_000 });
+		const { result } = renderHook(() => useTouchpointLifecycle({ enabled: true, identity: "test", load }));
+		await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+		const generation = result.current.generation;
+		vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+		act(() => { document.dispatchEvent(new Event("visibilitychange")); });
+		expect(result.current.current).toBeNull();
+		expect(result.current.isCurrent(generation)).toBe(false);
+	});
 	it("renews authority without replacing a visible decision, then expires even after no-decision polls", async () => {
 		const load = vi.fn<Load>()
 			.mockResolvedValueOnce({ kind: "decision", value: first, key: "same", validForMs: 60_000 })
@@ -342,7 +371,7 @@ describe("shared display lifecycle", () => {
 		const { result } = renderHook(() => useTouchpointLifecycle({ enabled: true, identity: "production", load }));
 		await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
 		act(() => { window.dispatchEvent(new Event("focus")); });
-		expect(result.current.current).toBeNull();
+		expect(result.current.current).toBe(first);
 		await act(async () => { await vi.advanceTimersByTimeAsync(2000); pending.resolve({ kind: "retain" }); });
 		expect(result.current.current).toBeNull();
 	});

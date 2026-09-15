@@ -89,9 +89,7 @@ function decision(overrides: Partial<Record<string, unknown>> = {}) {
 	const serverTime = new Date();
 	return {
 		activityId: "campaign-1",
-		authorizationExpiresAt: new Date(
-			serverTime.getTime() + 60_000,
-		).toISOString(),
+		authorizationExpiresAt: new Date(serverTime.getTime() + 60_000).toISOString(),
 		content,
 		deploymentId: "deployment-1",
 		endsAt: new Date(serverTime.getTime() + 5 * 60_000).toISOString(),
@@ -119,22 +117,41 @@ function LocaleSwitcher() {
 	);
 }
 
-function localizedDecision(locale: "en" | "fr", overrides: Partial<Record<string, unknown>> = {}) {
-	const localizedManifest = { ...manifest, placements: manifest.placements.map((placement) => ({ ...placement, locales: [locale] })) };
-	return decision({ content: { ...content, id: `version-${locale}`, locale, manifest: localizedManifest, manifestHash: digest(JSON.stringify(localizedManifest)) }, touchpointDecisionId: `decision-${locale}`, ...overrides });
+function localizedDecision(
+	locale: "en" | "fr",
+	overrides: Partial<Record<string, unknown>> = {},
+) {
+	const localizedManifest = {
+		...manifest,
+		placements: manifest.placements.map((placement) => ({
+			...placement,
+			locales: [locale],
+		})),
+	};
+	return decision({
+		content: {
+			...content,
+			id: `version-${locale}`,
+			locale,
+			manifest: localizedManifest,
+			manifestHash: digest(JSON.stringify(localizedManifest)),
+		},
+		touchpointDecisionId: `decision-${locale}`,
+		...overrides,
+	});
 }
 
 beforeEach(() => {
 	vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue({
 		length: 1,
 	} as DOMRectList);
-	vi.spyOn(OpenDesignTouchpointElement.prototype, "mount").mockImplementation(
-		async function (this: OpenDesignTouchpointElement) {
+	vi
+		.spyOn(OpenDesignTouchpointElement.prototype, "mount")
+		.mockImplementation(async function (this: OpenDesignTouchpointElement) {
 			this.shadowRoot?.replaceChildren(
 				document.createTextNode("Verified campaign"),
 			);
-		},
-	);
+		});
 });
 
 afterEach(() => {
@@ -157,6 +174,7 @@ describe("ProductionCampaignModal", () => {
 	it("keeps generic modal chrome content-sized without asymmetric host padding", () => {
 		const modalRule = modalHostStyles.match(/\.modal\s*\{[^}]*\}/)?.[0];
 		expect(modalRule).toContain("max-width: calc(100vw - 32px)");
+		expect(modalRule).toContain("background: transparent");
 		expect(modalRule).not.toMatch(/(?:^|[;{]\s*)width:/);
 		expect(modalRule).not.toMatch(/(?:^|[;{]\s*)padding:/);
 	});
@@ -182,16 +200,26 @@ describe("ProductionCampaignModal", () => {
 		(globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = {
 			client: { osLocale: "de-DE", type: "desktop" },
 		};
-		vi.spyOn(OpenDesignTouchpointElement.prototype, "mount").mockImplementation(
-			async function (this: OpenDesignTouchpointElement, _entry, _digest, context) {
+		vi
+			.spyOn(OpenDesignTouchpointElement.prototype, "mount")
+			.mockImplementation(async function (
+				this: OpenDesignTouchpointElement,
+				_entry,
+				_digest,
+				context,
+			) {
 				this.shadowRoot?.replaceChildren(
 					document.createTextNode(`Campaign ${context.locale}`),
 				);
-			},
-		);
+			});
 		const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-			const locale = new URL(String(input), "http://localhost").searchParams.get("locale");
-			return new Response(JSON.stringify(localizedDecision(locale === "fr" ? "fr" : "en")), { status: 200 });
+			const locale = new URL(String(input), "http://localhost").searchParams.get(
+				"locale",
+			);
+			return new Response(
+				JSON.stringify(localizedDecision(locale === "fr" ? "fr" : "en")),
+				{ status: 200 },
+			);
 		});
 		vi.stubGlobal("fetch", fetchMock);
 		render(
@@ -201,15 +229,21 @@ describe("ProductionCampaignModal", () => {
 			</I18nProvider>,
 		);
 		await waitFor(() =>
-			expect(document.querySelector("opend-touchpoint")?.shadowRoot?.textContent).toContain("Campaign en"),
+			expect(
+				document.querySelector("opend-touchpoint")?.shadowRoot?.textContent,
+			).toContain("Campaign en"),
 		);
 		await waitFor(() =>
-			expect(localStorage.getItem("touchpoint-displayed:v1:locale-user:campaign-1")).toBe("1"),
+			expect(
+				localStorage.getItem("touchpoint-displayed:v1:locale-user:campaign-1"),
+			).toBe("1"),
 		);
 		fireEvent.click(screen.getByRole("button", { name: "Switch to fr" }));
 		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
 		await waitFor(() =>
-			expect(document.querySelector("opend-touchpoint")?.shadowRoot?.textContent).toContain("Campaign fr"),
+			expect(
+				document.querySelector("opend-touchpoint")?.shadowRoot?.textContent,
+			).toContain("Campaign fr"),
 		);
 		fireEvent.keyDown(document, { key: "Escape" });
 		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -220,7 +254,14 @@ describe("ProductionCampaignModal", () => {
 
 	it("keeps a displayed activity mounted when its renewed lease crosses the first authorization deadline before switching locale", async () => {
 		vi.useFakeTimers({
-			toFake: ["Date", "performance", "setTimeout", "clearTimeout", "setInterval", "clearInterval"],
+			toFake: [
+				"Date",
+				"performance",
+				"setTimeout",
+				"clearTimeout",
+				"setInterval",
+				"clearInterval",
+			],
 		});
 		try {
 			vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
@@ -228,15 +269,26 @@ describe("ProductionCampaignModal", () => {
 				client: { osLocale: "en-US", type: "desktop" },
 			};
 			let mounted!: () => void;
-			const mountedPromise = new Promise<void>((resolve) => { mounted = resolve; });
-			vi.spyOn(OpenDesignTouchpointElement.prototype, "mount").mockImplementation(
-				async function (this: OpenDesignTouchpointElement, _entry, _digest, context) {
-					this.shadowRoot?.replaceChildren(document.createTextNode(`Campaign ${context.locale}`));
+			const mountedPromise = new Promise<void>((resolve) => {
+				mounted = resolve;
+			});
+			vi
+				.spyOn(OpenDesignTouchpointElement.prototype, "mount")
+				.mockImplementation(async function (
+					this: OpenDesignTouchpointElement,
+					_entry,
+					_digest,
+					context,
+				) {
+					this.shadowRoot?.replaceChildren(
+						document.createTextNode(`Campaign ${context.locale}`),
+					);
 					mounted();
-				},
-			);
+				});
 			const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-				const locale = new URL(String(input), "http://localhost").searchParams.get("locale");
+				const locale = new URL(String(input), "http://localhost").searchParams.get(
+					"locale",
+				);
 				const now = Date.now();
 				return new Response(
 					JSON.stringify(
@@ -259,8 +311,12 @@ describe("ProductionCampaignModal", () => {
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(0);
 			});
-			await act(async () => { await mountedPromise; });
-			expect(document.querySelector("opend-touchpoint")?.shadowRoot?.textContent).toContain("Campaign en");
+			await act(async () => {
+				await mountedPromise;
+			});
+			expect(
+				document.querySelector("opend-touchpoint")?.shadowRoot?.textContent,
+			).toContain("Campaign en");
 			const originalElement = document.querySelector("opend-touchpoint");
 			localStorage.setItem("touchpoint-displayed:v1:renew-user:campaign-1", "1");
 			await act(async () => {
@@ -272,9 +328,13 @@ describe("ProductionCampaignModal", () => {
 			expect(document.querySelector("opend-touchpoint")).toBe(originalElement);
 			expect(originalElement?.shadowRoot?.textContent).toContain("Campaign en");
 			fireEvent.click(screen.getByRole("button", { name: "Switch to fr" }));
-			await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(0);
+			});
 			await vi.waitFor(() =>
-				expect(document.querySelector("opend-touchpoint")?.shadowRoot?.textContent).toContain("Campaign fr"),
+				expect(
+					document.querySelector("opend-touchpoint")?.shadowRoot?.textContent,
+				).toContain("Campaign fr"),
 			);
 		} finally {
 			cleanup();
@@ -287,7 +347,9 @@ describe("ProductionCampaignModal", () => {
 			client: { osLocale: "en-US", type: "desktop" },
 		};
 		const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-			const locale = new URL(String(input), "http://localhost").searchParams.get("locale");
+			const locale = new URL(String(input), "http://localhost").searchParams.get(
+				"locale",
+			);
 			return locale === "fr"
 				? new Response(null, { status: 404 })
 				: new Response(JSON.stringify(localizedDecision("en")), { status: 200 });
@@ -300,7 +362,9 @@ describe("ProductionCampaignModal", () => {
 			</I18nProvider>,
 		);
 		await waitFor(() =>
-			expect(localStorage.getItem("touchpoint-displayed:v1:locale-user:campaign-1")).toBe("1"),
+			expect(
+				localStorage.getItem("touchpoint-displayed:v1:locale-user:campaign-1"),
+			).toBe("1"),
 		);
 		fireEvent.click(screen.getByRole("button", { name: "Switch to fr" }));
 		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
@@ -319,7 +383,9 @@ describe("ProductionCampaignModal", () => {
 			resolveEnglish = resolve;
 		});
 		const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-			const locale = new URL(String(input), "http://localhost").searchParams.get("locale");
+			const locale = new URL(String(input), "http://localhost").searchParams.get(
+				"locale",
+			);
 			return locale === "fr"
 				? new Response(null, { status: 404 })
 				: { ok: true, json: () => english };
@@ -351,10 +417,9 @@ describe("ProductionCampaignModal", () => {
 				new Response(JSON.stringify(decision()), { status: 200 }),
 			)
 			.mockResolvedValueOnce(
-				new Response(
-					JSON.stringify(decision({ deploymentId: "deployment-2" })),
-					{ status: 200 },
-				),
+				new Response(JSON.stringify(decision({ deploymentId: "deployment-2" })), {
+					status: 200,
+				}),
 			)
 			.mockResolvedValueOnce(
 				new Response(JSON.stringify(decision()), { status: 200 }),
@@ -443,9 +508,7 @@ describe("ProductionCampaignModal", () => {
 					);
 		const fetchMock = vi
 			.fn()
-			.mockResolvedValueOnce(
-				new Response(JSON.stringify(active), { status: 200 }),
-			)
+			.mockResolvedValueOnce(new Response(JSON.stringify(active), { status: 200 }))
 			.mockResolvedValueOnce(response);
 		const diagnostic = vi.spyOn(
 			touchpointComponent,
@@ -645,9 +708,7 @@ describe("Production campaign live refresh", () => {
 		await tick(30_000);
 		expect(fetchMock).toHaveBeenCalledTimes(2);
 		expect(document.querySelector("opend-touchpoint")).toBe(host);
-		expect(OpenDesignTouchpointElement.prototype.mount).toHaveBeenCalledTimes(
-			1,
-		);
+		expect(OpenDesignTouchpointElement.prototype.mount).toHaveBeenCalledTimes(1);
 		fireEvent.keyDown(document, { key: "Escape" });
 		expect(screen.queryByRole("dialog")).toBeNull();
 		await tick(60_000);
@@ -905,8 +966,9 @@ describe("ProductionCampaignModal mount lifetime", () => {
 		(globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = {
 			client: { osLocale: "en-US", type: "desktop" },
 		};
-		vi.spyOn(OpenDesignTouchpointElement.prototype, "mount").mockImplementation(
-			async function (
+		vi
+			.spyOn(OpenDesignTouchpointElement.prototype, "mount")
+			.mockImplementation(async function (
 				this: OpenDesignTouchpointElement,
 				_entry,
 				_digest,
@@ -921,8 +983,7 @@ describe("ProductionCampaignModal mount lifetime", () => {
 				close.textContent = "Close campaign";
 				close.addEventListener("click", () => options?.requestClose?.());
 				this.shadowRoot?.replaceChildren(close);
-			},
-		);
+			});
 		vi.stubGlobal(
 			"fetch",
 			vi
@@ -951,9 +1012,9 @@ describe("ProductionCampaignModal mount lifetime", () => {
 		(globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = {
 			client: { osLocale: "en-US", type: "desktop" },
 		};
-		vi.spyOn(OpenDesignTouchpointElement.prototype, "mount").mockRejectedValue(
-			new Error("mount failed"),
-		);
+		vi
+			.spyOn(OpenDesignTouchpointElement.prototype, "mount")
+			.mockRejectedValue(new Error("mount failed"));
 		vi.stubGlobal(
 			"fetch",
 			vi
@@ -963,7 +1024,9 @@ describe("ProductionCampaignModal mount lifetime", () => {
 				),
 		);
 		render(<ProductionCampaignModal authenticated sessionSubject="user-a" />);
-		await waitFor(() => expect(OpenDesignTouchpointElement.prototype.mount).toHaveBeenCalled());
+		await waitFor(() =>
+			expect(OpenDesignTouchpointElement.prototype.mount).toHaveBeenCalled(),
+		);
 		expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
 		fireEvent.keyDown(document, { key: "Escape" });
 		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -974,14 +1037,14 @@ describe("ProductionCampaignModal mount lifetime", () => {
 			client: { osLocale: "en-US", type: "desktop" },
 		};
 		let closeControl!: HTMLButtonElement;
-		vi.spyOn(OpenDesignTouchpointElement.prototype, "mount").mockImplementation(
-			async function (this: OpenDesignTouchpointElement) {
+		vi
+			.spyOn(OpenDesignTouchpointElement.prototype, "mount")
+			.mockImplementation(async function (this: OpenDesignTouchpointElement) {
 				closeControl = document.createElement("button");
 				closeControl.dataset.touchpointClose = "true";
 				closeControl.disabled = true;
 				this.shadowRoot?.replaceChildren(closeControl);
-			},
-		);
+			});
 		vi.stubGlobal(
 			"fetch",
 			vi
@@ -1000,38 +1063,91 @@ describe("ProductionCampaignModal mount lifetime", () => {
 	});
 
 	it("keeps a mounted action authorized after same-key polling renews its lease", async () => {
-		vi.useFakeTimers({ toFake: ["Date", "performance", "setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+		vi.useFakeTimers({
+			toFake: [
+				"Date",
+				"performance",
+				"setTimeout",
+				"clearTimeout",
+				"setInterval",
+				"clearInterval",
+			],
+		});
 		try {
 			vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
-			(globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = { client: { osLocale: "en-US", type: "desktop" } };
+			(globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = {
+				client: { osLocale: "en-US", type: "desktop" },
+			};
 			let dispatchAction: ((actionId: string) => Promise<void>) | undefined;
 			let mounted!: () => void;
-			const mountedPromise = new Promise<void>((resolve) => { mounted = resolve; });
-			vi.spyOn(OpenDesignTouchpointElement.prototype, "mount").mockImplementation(async function (this: OpenDesignTouchpointElement, _entry, _digest, _context, _urls, _actions, options) {
-				dispatchAction = options?.dispatchAction;
-				this.shadowRoot?.replaceChildren(document.createTextNode("Verified campaign"));
-				mounted();
+			const mountedPromise = new Promise<void>((resolve) => {
+				mounted = resolve;
 			});
+			vi
+				.spyOn(OpenDesignTouchpointElement.prototype, "mount")
+				.mockImplementation(async function (
+					this: OpenDesignTouchpointElement,
+					_entry,
+					_digest,
+					_context,
+					_urls,
+					_actions,
+					options,
+				) {
+					dispatchAction = options?.dispatchAction;
+					this.shadowRoot?.replaceChildren(
+						document.createTextNode("Verified campaign"),
+					);
+					mounted();
+				});
 			let gets = 0;
 			const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
-				if (init?.method === "POST") return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+				if (init?.method === "POST")
+					return Promise.resolve(
+						new Response(JSON.stringify({ ok: true }), { status: 200 }),
+					);
 				gets += 1;
 				const time = Date.now();
-				return Promise.resolve(new Response(JSON.stringify(decision({ serverTime: new Date(time).toISOString(), authorizationExpiresAt: new Date(time + 40_000).toISOString(), endsAt: new Date(time + 300_000).toISOString() })), { status: 200 }));
+				return Promise.resolve(
+					new Response(
+						JSON.stringify(
+							decision({
+								serverTime: new Date(time).toISOString(),
+								authorizationExpiresAt: new Date(time + 40_000).toISOString(),
+								endsAt: new Date(time + 300_000).toISOString(),
+							}),
+						),
+						{ status: 200 },
+					),
+				);
 			});
 			vi.stubGlobal("fetch", fetchMock);
-			Object.defineProperty(navigator, "userActivation", { configurable: true, value: { isActive: true } });
+			Object.defineProperty(navigator, "userActivation", {
+				configurable: true,
+				value: { isActive: true },
+			});
 			render(<ProductionCampaignModal authenticated sessionSubject="user-a" />);
-			await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(0);
+			});
 			// Commit the authorized decision before awaiting the mount effect it schedules.
-			await act(async () => { await mountedPromise; });
+			await act(async () => {
+				await mountedPromise;
+			});
 			expect(dispatchAction).toBeTypeOf("function");
-			await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(30_000);
+			});
 			expect(gets).toBe(2);
 			expect(OpenDesignTouchpointElement.prototype.mount).toHaveBeenCalledTimes(1);
-			await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(10_000);
+			});
 			await dispatchAction?.("learn");
-			expect(fetchMock).toHaveBeenCalledWith("/api/touchpoints/production-runtime/events", expect.objectContaining({ method: "POST" }));
+			expect(fetchMock).toHaveBeenCalledWith(
+				"/api/touchpoints/production-runtime/events",
+				expect.objectContaining({ method: "POST" }),
+			);
 			expect(openExternalUrlMock).toHaveBeenCalledWith("https://example.com");
 		} finally {
 			cleanup();
@@ -1044,8 +1160,9 @@ describe("ProductionCampaignModal mount lifetime", () => {
 			client: { osLocale: "en-US", type: "desktop" },
 		};
 		let dispatchAction: ((actionId: string) => Promise<void>) | undefined;
-		vi.spyOn(OpenDesignTouchpointElement.prototype, "mount").mockImplementation(
-			async function (
+		vi
+			.spyOn(OpenDesignTouchpointElement.prototype, "mount")
+			.mockImplementation(async function (
 				this: OpenDesignTouchpointElement,
 				_entry,
 				_digest,
@@ -1058,8 +1175,7 @@ describe("ProductionCampaignModal mount lifetime", () => {
 				this.shadowRoot?.replaceChildren(
 					document.createTextNode("Verified campaign"),
 				);
-			},
-		);
+			});
 		const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
 			Promise.resolve(
 				init?.method === "POST"
@@ -1099,9 +1215,7 @@ describe("ProductionCampaignModal mount lifetime", () => {
 			.spyOn(touchpointComponent, "verifyWebTouchpoint")
 			.mockReturnValue(verified);
 		const fetchMock = vi.fn(() =>
-			Promise.resolve(
-				new Response(JSON.stringify(decision()), { status: 200 }),
-			),
+			Promise.resolve(new Response(JSON.stringify(decision()), { status: 200 })),
 		);
 		vi.stubGlobal("fetch", fetchMock);
 		render(<ProductionCampaignModal authenticated sessionSubject="user-a" />);
@@ -1137,8 +1251,9 @@ describe("ProductionCampaignModal mount lifetime", () => {
 		});
 		let rejectOldMount!: (reason?: unknown) => void;
 		let mountCount = 0;
-		vi.spyOn(OpenDesignTouchpointElement.prototype, "mount").mockImplementation(
-			async function (this: OpenDesignTouchpointElement) {
+		vi
+			.spyOn(OpenDesignTouchpointElement.prototype, "mount")
+			.mockImplementation(async function (this: OpenDesignTouchpointElement) {
 				mountCount += 1;
 				if (mountCount === 1) {
 					await new Promise<never>((_, reject) => {
@@ -1150,8 +1265,7 @@ describe("ProductionCampaignModal mount lifetime", () => {
 				close.dataset.touchpointClose = "true";
 				close.textContent = "Close campaign";
 				this.shadowRoot?.replaceChildren(close);
-			},
-		);
+			});
 		let fetchCount = 0;
 		vi.stubGlobal(
 			"fetch",
@@ -1179,7 +1293,6 @@ describe("ProductionCampaignModal mount lifetime", () => {
 			expect(screen.queryByRole("button", { name: "Close" })).toBeNull(),
 		);
 	});
-
 
 	it("releases a late verified modal resource once without mounting after unmount", async () => {
 		(globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = {
@@ -1228,9 +1341,7 @@ describe("ProductionCampaignModal device impressions", () => {
 		};
 		vi.stubGlobal(
 			"fetch",
-			vi.fn(
-				async () => new Response(JSON.stringify(decision()), { status: 200 }),
-			),
+			vi.fn(async () => new Response(JSON.stringify(decision()), { status: 200 })),
 		);
 	});
 	it("persists successful display without dismissal across restart and login, isolating accounts and profiles", async () => {
@@ -1257,9 +1368,7 @@ describe("ProductionCampaignModal device impressions", () => {
 		restarted.rerender(
 			<ProductionCampaignModal authenticated sessionSubject="user-b" />,
 		);
-		await waitFor(() =>
-			expect(localStorage.getItem(marker("user-b"))).toBe("1"),
-		);
+		await waitFor(() => expect(localStorage.getItem(marker("user-b"))).toBe("1"));
 		restarted.unmount();
 		localStorage.clear(); // A different local browser/device profile has its own storage.
 		render(<ProductionCampaignModal authenticated sessionSubject="user-a" />);
@@ -1347,8 +1456,9 @@ describe("ProductionCampaignModal device impressions", () => {
 			},
 		});
 		let click!: (id: string) => Promise<void>;
-		vi.spyOn(OpenDesignTouchpointElement.prototype, "mount").mockImplementation(
-			async function (
+		vi
+			.spyOn(OpenDesignTouchpointElement.prototype, "mount")
+			.mockImplementation(async function (
 				this: OpenDesignTouchpointElement,
 				_entry,
 				_digest,
@@ -1358,24 +1468,23 @@ describe("ProductionCampaignModal device impressions", () => {
 				options,
 			) {
 				click = options!.dispatchAction!;
-				this.shadowRoot?.replaceChildren(
-					document.createTextNode("Open campaign"),
-				);
-			},
-		);
-		vi.mocked(fetch).mockImplementation(
-			async (input, init) =>
-				new Response(
-					JSON.stringify(
-						init?.method === "POST"
-							? { ok: true }
-							: String(input).includes(placementKey)
-								? badgeDecision
-								: decision(),
+				this.shadowRoot?.replaceChildren(document.createTextNode("Open campaign"));
+			});
+		vi
+			.mocked(fetch)
+			.mockImplementation(
+				async (input, init) =>
+					new Response(
+						JSON.stringify(
+							init?.method === "POST"
+								? { ok: true }
+								: String(input).includes(placementKey)
+									? badgeDecision
+									: decision(),
+						),
+						{ status: 200 },
 					),
-					{ status: 200 },
-				),
-		);
+			);
 		Object.defineProperty(navigator, "userActivation", {
 			configurable: true,
 			value: { isActive: true },

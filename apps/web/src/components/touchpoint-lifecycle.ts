@@ -193,10 +193,21 @@ export function useTouchpointLifecycle<T>({ enabled, identity, load, onError }: 
 			revoke();
 			if (!document.hidden) void refresh();
 		};
+		// Ordinary window focus is not page recovery. A still-valid visible lease
+		// keeps its mount while refreshing; hidden/pageshow/online still fence it.
+		const focus = () => {
+			if (stopped || ended) return;
+			const current = lease.current;
+			if (!document.hidden && current && elapsed(current.start) < current.validForMs) {
+				void refresh();
+			} else {
+				wake();
+			}
+		};
 		const offline = () => cancelRequest();
 		void refresh();
 		const interval = setInterval(() => void refresh(), POLL_MS);
-		window.addEventListener("focus", wake);
+		window.addEventListener("focus", focus);
 		window.addEventListener("online", wake);
 		window.addEventListener("pageshow", wake);
 		window.addEventListener("offline", offline);
@@ -205,7 +216,7 @@ export function useTouchpointLifecycle<T>({ enabled, identity, load, onError }: 
 			stopped = true;
 			revoke();
 			clearInterval(interval);
-			window.removeEventListener("focus", wake);
+			window.removeEventListener("focus", focus);
 			window.removeEventListener("online", wake);
 			window.removeEventListener("pageshow", wake);
 			window.removeEventListener("offline", offline);
