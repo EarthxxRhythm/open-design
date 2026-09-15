@@ -84,8 +84,9 @@ def containerize(resources):
     resources.rename(source)
     resources.mkdir()
     # Keep every native binary outside ASAR, preserving its original signature.
-    pattern = '{' + ','.join('**/' + row['path'].removeprefix('Contents/Resources/')
-                            for row in native) + '}'
+    patterns = ['**/' + row['path'].removeprefix('Contents/Resources/') for row in native]
+    assert patterns, 'real reference must contain native Resources'
+    pattern = patterns[0] if len(patterns) == 1 else '{' + ','.join(patterns) + '}'
     run('npm', 'exec', '--yes', '--package=@electron/asar@3.4.1', '--', 'asar',
         'pack', source, resources / 'content.asar', '--unpack', pattern)
     for row in native:
