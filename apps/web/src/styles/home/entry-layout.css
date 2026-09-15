@@ -9699,3 +9699,13 @@ button.entry-nav-rail__menu-credits-row:active:not(:disabled) {
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
+
+/* A completed recent project keeps its folder and adds an unread notice. */
+.entry-nav-rail__recent-unread {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: #1F68FE;
+}
