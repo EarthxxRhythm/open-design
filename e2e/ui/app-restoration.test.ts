@@ -1311,7 +1311,7 @@ test('[P0] retrying a failed run does not duplicate the original user message', 
     }
     await route.fulfill({ json: { config: {
       onboardingCompleted: true, agentId: 'amr', skillId: null,
-      designSystemId: null, agentModels: { amr: 'glm-5' },
+      designSystemId: null, agentModels: { amr: { model: 'glm-5', reasoning: 'default' } },
       privacyDecisionAt: 1,
       telemetry: { metrics: false, content: false, artifactManifest: false },
     } } });
