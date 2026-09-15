@@ -2,142 +2,330 @@
 
 import { createHash } from "node:crypto";
 import {
-	act,
-	cleanup,
-	fireEvent,
-	render,
-	screen,
-	waitFor,
+ act,
+ cleanup,
+ fireEvent,
+ render,
+ screen,
+ waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const openExternalUrlMock = vi.hoisted(() => vi.fn(async () => true));
-type CampaignHostGlobal = typeof globalThis & { __openDesignCampaignTestHost?: unknown };
+type CampaignHostGlobal = typeof globalThis & {
+ __openDesignCampaignTestHost?: unknown;
+};
 vi.mock("@open-design/host", () => ({
-	OPEN_DESIGN_HOST_VERSION: 2,
-	getOpenDesignHost: () => (globalThis as CampaignHostGlobal).__openDesignCampaignTestHost,
+ OPEN_DESIGN_HOST_VERSION: 2,
+ getOpenDesignHost: () =>
+  (globalThis as CampaignHostGlobal).__openDesignCampaignTestHost,
 }));
-vi.mock("../../src/providers/registry", () => ({ openExternalUrl: openExternalUrlMock }));
+vi.mock("../../src/providers/registry", () => ({
+ openExternalUrl: openExternalUrlMock,
+}));
 
 import { ProductionCampaignModal } from "../../src/components/ProductionCampaignModal";
 import * as touchpointComponent from "../../src/components/touchpoint-component";
 import { OpenDesignTouchpointElement } from "../../src/components/touchpoint-component";
 
-const digest = (value: string) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
-const entryModule = "export function mount(root) { root.textContent = 'Verified campaign'; return root; }";
-const manifest = { formatVersion: 2 as const, runtimeKind: "web-component" as const, runtimeApiVersion: 1 as const, platformWrapperVersion: "vela-touchpoint-wrapper-v1" as const, sdkVersion: "vela-touchpoint-sdk-v1" as const, contentLine: "production", placements: [{ key: "opend.home.campaign-modal" as const, entry: "component.js", resources: [], locales: ["en-US"], requiredCapabilities: ["close", "static-action"], staticActions: [{ id: "learn", target: { kind: "https" as const, url: "https://example.com" } }] }], resources: ["component.js"], images: [] };
-const content = { id: "version-1", placementKey: "opend.home.campaign-modal", locale: "en-US", manifestHash: digest(JSON.stringify(manifest)), entryPath: "component.js", entryDigest: digest(entryModule), entryModule, resources: [{ path: "component.js", digest: digest(entryModule), bytes: btoa(entryModule) }], runtime: { kind: "web-component" as const, apiVersion: 1 as const, wrapperVersion: "vela-touchpoint-wrapper-v1" as const, sdkVersion: "vela-touchpoint-sdk-v1" as const }, buildIdentity: { fingerprint: "fixed" }, manifest };
+const digest = (value: string) =>
+ `sha256:${createHash("sha256").update(value).digest("hex")}`;
+const entryModule =
+ "export function mount(root) { root.textContent = 'Verified campaign'; return root; }";
+const manifest = {
+ formatVersion: 2 as const,
+ runtimeKind: "web-component" as const,
+ runtimeApiVersion: 1 as const,
+ platformWrapperVersion: "vela-touchpoint-wrapper-v1" as const,
+ sdkVersion: "vela-touchpoint-sdk-v1" as const,
+ contentLine: "production",
+ placements: [
+  {
+   key: "opend.home.campaign-modal" as const,
+   entry: "component.js",
+   resources: [],
+   locales: ["en-US"],
+   requiredCapabilities: ["close", "static-action"],
+   staticActions: [
+    {
+     id: "learn",
+     target: { kind: "https" as const, url: "https://example.com" },
+    },
+   ],
+  },
+ ],
+ resources: ["component.js"],
+ images: [],
+};
+const content = {
+ id: "version-1",
+ placementKey: "opend.home.campaign-modal",
+ locale: "en-US",
+ manifestHash: digest(JSON.stringify(manifest)),
+ entryPath: "component.js",
+ entryDigest: digest(entryModule),
+ entryModule,
+ resources: [
+  {
+   path: "component.js",
+   digest: digest(entryModule),
+   bytes: btoa(entryModule),
+  },
+ ],
+ runtime: {
+  kind: "web-component" as const,
+  apiVersion: 1 as const,
+  wrapperVersion: "vela-touchpoint-wrapper-v1" as const,
+  sdkVersion: "vela-touchpoint-sdk-v1" as const,
+ },
+ buildIdentity: { fingerprint: "fixed" },
+ manifest,
+};
 function decision(overrides: Partial<Record<string, unknown>> = {}) {
- const serverTime = new Date(); return { activityId: "campaign-1", authorizationExpiresAt: new Date(serverTime.getTime() + 60_000).toISOString(), content, deploymentId: "deployment-1", endsAt: new Date(serverTime.getTime() + 5 * 60_000).toISOString(), placementKey: "opend.home.campaign-modal", requiredCapabilities: ["close", "static-action"], touchpointDecisionId: "decision-1", serverTime: serverTime.toISOString(), staticActions: [{ id: "learn", target: { kind: "https", url: "https://example.com" } }], ...overrides };
+ const serverTime = new Date();
+ return {
+  activityId: "campaign-1",
+  authorizationExpiresAt: new Date(serverTime.getTime() + 60_000).toISOString(),
+  content,
+  deploymentId: "deployment-1",
+  endsAt: new Date(serverTime.getTime() + 5 * 60_000).toISOString(),
+  placementKey: "opend.home.campaign-modal",
+  requiredCapabilities: ["close", "static-action"],
+  touchpointDecisionId: "decision-1",
+  serverTime: serverTime.toISOString(),
+  staticActions: [
+   { id: "learn", target: { kind: "https", url: "https://example.com" } },
+  ],
+  ...overrides,
+ };
 }
 
-beforeEach(() => { vi.spyOn(OpenDesignTouchpointElement.prototype, "mount").mockImplementation(async function (this: OpenDesignTouchpointElement) { this.shadowRoot?.replaceChildren(document.createTextNode("Verified campaign")); }); });
+beforeEach(() => {
+ vi
+  .spyOn(OpenDesignTouchpointElement.prototype, "mount")
+  .mockImplementation(async function (this: OpenDesignTouchpointElement) {
+   this.shadowRoot?.replaceChildren(
+    document.createTextNode("Verified campaign"),
+   );
+  });
+});
 
 afterEach(() => {
-	cleanup();
-	delete (globalThis as CampaignHostGlobal).__openDesignCampaignTestHost;
-	openExternalUrlMock.mockClear();
-	vi.unstubAllGlobals();
-	sessionStorage.clear();
-	vi.useRealTimers();
-	vi.restoreAllMocks();
+ cleanup();
+ delete (globalThis as CampaignHostGlobal).__openDesignCampaignTestHost;
+ openExternalUrlMock.mockClear();
+ vi.unstubAllGlobals();
+ sessionStorage.clear();
+ vi.useRealTimers();
+ vi.restoreAllMocks();
 });
 
 describe("ProductionCampaignModal", () => {
-	it("does not restart the production loader on an unchanged parent render",async()=>{
-		(globalThis as CampaignHostGlobal).__openDesignCampaignTestHost={client:{osLocale:"en-US",type:"desktop"}};
-		const fetchMock=vi.fn(async()=>new Response(JSON.stringify(decision()),{status:200}));
-		vi.stubGlobal("fetch",fetchMock);
-		const {rerender}=render(<ProductionCampaignModal authenticated sessionSubject="stable-user" />);
-		await screen.findByRole("dialog");
-		rerender(<ProductionCampaignModal authenticated sessionSubject="stable-user" />);
-		await act(async()=>{});
-		expect(fetchMock).toHaveBeenCalledTimes(1);
-	});
-	it("suppresses a closed campaign for the same subject while leaving a normal update in the current bounded lease", async () => {
-		const registerContent = vi.fn(async () => ({ ok: true }));
-		const removeContent = vi.fn(async () => ({ ok: true }));
-		(globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = {
-			client: { osLocale: "en-US", type: "desktop" },
-			touchpoints: { registerContent, removeContent },
-		};
-		const fetchMock = vi
-			.fn()
-			.mockResolvedValueOnce(
-				new Response(JSON.stringify(decision()), { status: 200 }),
-			)
-			.mockResolvedValueOnce(
-				new Response(
-					JSON.stringify(decision({ deploymentId: "deployment-2" })),
-					{ status: 200 },
-				),
-			)
-			.mockResolvedValueOnce(
-				new Response(JSON.stringify(decision()), { status: 200 }),
-			)
-			.mockResolvedValueOnce(
-				new Response(JSON.stringify(decision()), { status: 200 }),
-			);
-		vi.stubGlobal("fetch", fetchMock);
-		const first = render(
-			<ProductionCampaignModal authenticated sessionSubject="user-a" />,
-		);
-		await screen.findByRole("dialog");
-		fireEvent.focus(window);
-		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-		expect(screen.getByTestId("campaign-custom-element").querySelector("opend-touchpoint")).not.toBeNull();
-		expect(document.body.style.overflow).toBe("hidden");
-		expect(document.querySelector("iframe,webview")).toBeNull();
-		fireEvent.click(screen.getByRole("button", { name: "Close" }));
-		expect(document.body.style.overflow).toBe("");
-		expect(screen.queryByRole("dialog")).toBeNull();
-		first.unmount();
+ it("replaces a live A lease with server-confirmed B at the 60-second recheck", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2030-01-01T00:00:00.000Z"));
+  (globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = {
+   client: { osLocale: "en-US", type: "desktop" },
+  };
+  const fetchMock = vi.fn(() =>
+   Promise.resolve(
+    new Response(
+     JSON.stringify(
+      fetchMock.mock.calls.length > 1
+       ? decision({
+          deploymentId: "deployment-b",
+          touchpointDecisionId: "decision-b",
+         })
+       : decision({
+          deploymentId: "deployment-a",
+          touchpointDecisionId: "decision-a",
+         }),
+     ),
+     { status: 200 },
+    ),
+   ),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  render(<ProductionCampaignModal authenticated sessionSubject="user-a" />);
+  await act(async () => {});
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  await act(async () => {
+   await vi.advanceTimersByTimeAsync(59_999);
+  });
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  await act(async () => {
+   await vi.advanceTimersByTimeAsync(1);
+  });
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(
+   (fetchMock.mock.calls as unknown as Array<[string]>)[1]?.[0],
+  ).toContain("activeDecisionId=decision-a");
+ });
 
-		render(<ProductionCampaignModal authenticated sessionSubject="user-a" />);
-		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
-		expect(screen.queryByRole("dialog")).toBeNull();
-		cleanup();
-		render(<ProductionCampaignModal authenticated sessionSubject="user-b" />);
-		await screen.findByRole("dialog");
-	});
+ it("does not restart the production loader on an unchanged parent render", async () => {
+  (globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = {
+   client: { osLocale: "en-US", type: "desktop" },
+  };
+  const fetchMock = vi.fn(
+   async () => new Response(JSON.stringify(decision()), { status: 200 }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  const { rerender } = render(
+   <ProductionCampaignModal authenticated sessionSubject="stable-user" />,
+  );
+  await screen.findByRole("dialog");
+  rerender(
+   <ProductionCampaignModal authenticated sessionSubject="stable-user" />,
+  );
+  await act(async () => {});
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+ });
+ it("suppresses a closed campaign for the same subject while leaving a normal update in the current bounded lease", async () => {
+  const registerContent = vi.fn(async () => ({ ok: true }));
+  const removeContent = vi.fn(async () => ({ ok: true }));
+  (globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = {
+   client: { osLocale: "en-US", type: "desktop" },
+   touchpoints: { registerContent, removeContent },
+  };
+  const fetchMock = vi
+   .fn()
+   .mockResolvedValueOnce(
+    new Response(JSON.stringify(decision()), { status: 200 }),
+   )
+   .mockResolvedValueOnce(
+    new Response(JSON.stringify(decision({ deploymentId: "deployment-2" })), {
+     status: 200,
+    }),
+   )
+   .mockResolvedValueOnce(
+    new Response(JSON.stringify(decision()), { status: 200 }),
+   )
+   .mockResolvedValueOnce(
+    new Response(JSON.stringify(decision()), { status: 200 }),
+   );
+  vi.stubGlobal("fetch", fetchMock);
+  const first = render(
+   <ProductionCampaignModal authenticated sessionSubject="user-a" />,
+  );
+  await screen.findByRole("dialog");
+  fireEvent.focus(window);
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+  expect(
+   screen
+    .getByTestId("campaign-custom-element")
+    .querySelector("opend-touchpoint"),
+  ).not.toBeNull();
+  expect(document.body.style.overflow).toBe("hidden");
+  expect(document.querySelector("iframe,webview")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  expect(document.body.style.overflow).toBe("");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  first.unmount();
+
+  render(<ProductionCampaignModal authenticated sessionSubject="user-a" />);
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  cleanup();
+  render(<ProductionCampaignModal authenticated sessionSubject="user-b" />);
+  await screen.findByRole("dialog");
+ });
 
  it.each([
   ["matching receipt clears the mounted lease", "matching", true, false],
-  ["valid mismatched receipt retains the mounted lease", "mismatched", false, false],
-  ["malformed 410 diagnoses and clears the mounted lease", "malformed", true, true],
+  [
+   "valid mismatched receipt retains the mounted lease",
+   "mismatched",
+   false,
+   false,
+  ],
+  [
+   "malformed 410 diagnoses and clears the mounted lease",
+   "malformed",
+   true,
+   true,
+  ],
  ] as const)("%s", async (_name, kind, clears, diagnoses) => {
-  (globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = { client: { osLocale: "en-US", type: "desktop" } };
+  (globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = {
+   client: { osLocale: "en-US", type: "desktop" },
+  };
   const active = decision();
-  const receipt = { touchpointDecisionId: active.touchpointDecisionId, deploymentId: active.deploymentId, activityId: active.activityId, contentVersionId: active.content.id };
-  const response = kind === "malformed"
-   ? new Response(JSON.stringify({ error: "production_runtime_revoked", receipt: { touchpointDecisionId: receipt.touchpointDecisionId } }), { status: 410 })
-   : new Response(JSON.stringify({ error: "production_runtime_revoked", receipt: kind === "matching" ? receipt : { ...receipt, deploymentId: "other-deployment" } }), { status: 410 });
-  const fetchMock = vi.fn()
+  const receipt = {
+   touchpointDecisionId: active.touchpointDecisionId,
+   deploymentId: active.deploymentId,
+   activityId: active.activityId,
+   contentVersionId: active.content.id,
+  };
+  const response =
+   kind === "malformed"
+    ? new Response(
+       JSON.stringify({
+        error: "production_runtime_revoked",
+        receipt: { touchpointDecisionId: receipt.touchpointDecisionId },
+       }),
+       { status: 410 },
+      )
+    : new Response(
+       JSON.stringify({
+        error: "production_runtime_revoked",
+        receipt:
+         kind === "matching"
+          ? receipt
+          : { ...receipt, deploymentId: "other-deployment" },
+       }),
+       { status: 410 },
+      );
+  const fetchMock = vi
+   .fn()
    .mockResolvedValueOnce(new Response(JSON.stringify(active), { status: 200 }))
    .mockResolvedValueOnce(response);
-  const diagnostic = vi.spyOn(touchpointComponent, "emitWebTouchpointDiagnostic");
+  const diagnostic = vi.spyOn(
+   touchpointComponent,
+   "emitWebTouchpointDiagnostic",
+  );
   vi.stubGlobal("fetch", fetchMock);
   render(<ProductionCampaignModal authenticated sessionSubject="user-a" />);
   await screen.findByTestId("campaign-custom-element");
   window.dispatchEvent(new Event("focus"));
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-  expect(fetchMock.mock.calls[1]?.[0]).toContain(`activeDecisionId=${active.touchpointDecisionId}`);
-  if (clears) await waitFor(() => expect(screen.queryByTestId("campaign-custom-element")).toBeNull());
+  expect(fetchMock.mock.calls[1]?.[0]).toContain(
+   `activeDecisionId=${active.touchpointDecisionId}`,
+  );
+  if (clears)
+   await waitFor(() =>
+    expect(screen.queryByTestId("campaign-custom-element")).toBeNull(),
+   );
   else expect(screen.getByRole("dialog")).toBeTruthy();
-  if (diagnoses) expect(diagnostic).toHaveBeenCalledWith({ code: "touchpoint_load_failed", detail: "http_410" });
-  else expect(diagnostic).not.toHaveBeenCalledWith(expect.objectContaining({ detail: "http_410" }));
+  if (diagnoses)
+   expect(diagnostic).toHaveBeenCalledWith({
+    code: "touchpoint_load_failed",
+    detail: "http_410",
+   });
+  else
+   expect(diagnostic).not.toHaveBeenCalledWith(
+    expect.objectContaining({ detail: "http_410" }),
+   );
  });
-
 });
 
 it("denies synchronously when authentication is revoked and ignores a deferred A response body", async () => {
- (globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = { client: { osLocale: "en-US", type: "desktop" } };
+ (globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = {
+  client: { osLocale: "en-US", type: "desktop" },
+ };
  let resolveBody: ((value: ReturnType<typeof decision>) => void) | undefined;
- const body = new Promise<ReturnType<typeof decision>>((resolve) => { resolveBody = resolve; });
- vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: () => body }));
- const view = render(<ProductionCampaignModal authenticated sessionSubject="user-a" />);
+ const body = new Promise<ReturnType<typeof decision>>((resolve) => {
+  resolveBody = resolve;
+ });
+ vi.stubGlobal(
+  "fetch",
+  vi.fn().mockResolvedValue({ ok: true, json: () => body }),
+ );
+ const view = render(
+  <ProductionCampaignModal authenticated sessionSubject="user-a" />,
+ );
  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
- view.rerender(<ProductionCampaignModal authenticated={false} sessionSubject="user-a" />);
+ view.rerender(
+  <ProductionCampaignModal authenticated={false} sessionSubject="user-a" />,
+ );
  expect(screen.queryByRole("dialog")).toBeNull();
  resolveBody?.(decision());
  await Promise.resolve();
@@ -145,117 +333,270 @@ it("denies synchronously when authentication is revoked and ignores a deferred A
 });
 
 it("rejects static actions substituted from the verified modal placement", async () => {
- (globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = { client: { osLocale: "en-US", type: "desktop" } };
- vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(decision({ staticActions: [{ id: "substituted", target: { kind: "internal", path: "/other" } }] })), { status: 200 })));
+ (globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = {
+  client: { osLocale: "en-US", type: "desktop" },
+ };
+ vi.stubGlobal(
+  "fetch",
+  vi
+   .fn()
+   .mockResolvedValue(
+    new Response(
+     JSON.stringify(
+      decision({
+       staticActions: [
+        { id: "substituted", target: { kind: "internal", path: "/other" } },
+       ],
+      }),
+     ),
+     { status: 200 },
+    ),
+   ),
+ );
  render(<ProductionCampaignModal authenticated sessionSubject="user-a" />);
  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 });
 
 it("rejects a decision unless both decision and content target the campaign modal placement", async () => {
-	(globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = {
-		client: { osLocale: "en-US", type: "desktop" },
-		touchpoints: {
-			registerContent: vi.fn(async () => ({ ok: true })),
-			removeContent: vi.fn(async () => ({ ok: true })),
-		},
-	};
-	const mismatchedContent = { ...content, placementKey: "opend.home.account-badge" };
-	const fetchMock = vi.fn().mockResolvedValue(
-		new Response(JSON.stringify(decision({ content: mismatchedContent })), { status: 200 }),
-	);
-	vi.stubGlobal("fetch", fetchMock);
-	render(<ProductionCampaignModal authenticated sessionSubject="user-a" />);
-	await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-	expect(screen.queryByRole("dialog")).toBeNull();
-	expect(screen.queryByTestId("campaign-custom-element")).toBeNull();
+ (globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = {
+  client: { osLocale: "en-US", type: "desktop" },
+  touchpoints: {
+   registerContent: vi.fn(async () => ({ ok: true })),
+   removeContent: vi.fn(async () => ({ ok: true })),
+  },
+ };
+ const mismatchedContent = {
+  ...content,
+  placementKey: "opend.home.account-badge",
+ };
+ const fetchMock = vi
+  .fn()
+  .mockResolvedValue(
+   new Response(JSON.stringify(decision({ content: mismatchedContent })), {
+    status: 200,
+   }),
+  );
+ vi.stubGlobal("fetch", fetchMock);
+ render(<ProductionCampaignModal authenticated sessionSubject="user-a" />);
+ await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+ expect(screen.queryByRole("dialog")).toBeNull();
+ expect(screen.queryByTestId("campaign-custom-element")).toBeNull();
 });
 
 describe("Production campaign action guard", () => {
  it("rejects stale callbacks before they can report or consume a static action", async () => {
-  const { dispatchProductionCampaignAction } = await import("../../src/components/ProductionCampaignModal");
-  const fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock);
+  const { dispatchProductionCampaignAction } = await import(
+   "../../src/components/ProductionCampaignModal"
+  );
+  const fetchMock = vi.fn();
+  vi.stubGlobal("fetch", fetchMock);
   const accepted = await dispatchProductionCampaignAction(
-   decision({ staticActions: [{ id: "learn", target: { kind: "https", url: "https://example.com" } }] }) as any,
-   "learn", 1, () => 2, Date.now() + 10_000,
+   decision({
+    staticActions: [
+     { id: "learn", target: { kind: "https", url: "https://example.com" } },
+    ],
+   }) as any,
+   "learn",
+   1,
+   () => 2,
+   Date.now() + 10_000,
   );
   expect(accepted).toBe(false);
   expect(fetchMock).not.toHaveBeenCalled();
  });
 });
 
-
- it("reports the trusted production click before consuming its static target", async () => {
-  const { dispatchProductionCampaignAction } = await import("../../src/components/ProductionCampaignModal");
-  Object.defineProperty(navigator, "userActivation", { configurable: true, value: { isActive: true } });
-  const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 })); vi.stubGlobal("fetch", fetchMock);
-  const accepted = await dispatchProductionCampaignAction(decision({ staticActions: [{ id: "learn", target: { kind: "https", url: "https://example.com" } }] }) as any, "learn", 1, () => 1, Date.now() + 10_000);
-  expect(accepted).toBe(true); expect(fetchMock).toHaveBeenCalledWith("/api/touchpoints/production-runtime/events", expect.objectContaining({ method: "POST" }));
-  expect(openExternalUrlMock).toHaveBeenCalledWith("https://example.com");
+it("reports the trusted production click before consuming its static target", async () => {
+ const { dispatchProductionCampaignAction } = await import(
+  "../../src/components/ProductionCampaignModal"
+ );
+ Object.defineProperty(navigator, "userActivation", {
+  configurable: true,
+  value: { isActive: true },
  });
-
+ const fetchMock = vi.fn(
+  async () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
+ );
+ vi.stubGlobal("fetch", fetchMock);
+ const accepted = await dispatchProductionCampaignAction(
+  decision({
+   staticActions: [
+    { id: "learn", target: { kind: "https", url: "https://example.com" } },
+   ],
+  }) as any,
+  "learn",
+  1,
+  () => 1,
+  Date.now() + 10_000,
+ );
+ expect(accepted).toBe(true);
+ expect(fetchMock).toHaveBeenCalledWith(
+  "/api/touchpoints/production-runtime/events",
+  expect.objectContaining({ method: "POST" }),
+ );
+ expect(openExternalUrlMock).toHaveBeenCalledWith("https://example.com");
+});
 
 describe("ProductionCampaignModal mount lifetime", () => {
  it("keeps the mounted modal action authorized across focus and online refreshes", async () => {
-  (globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = { client: { osLocale: "en-US", type: "desktop" } };
+  (globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = {
+   client: { osLocale: "en-US", type: "desktop" },
+  };
   let dispatchAction: ((actionId: string) => Promise<void>) | undefined;
-  vi.spyOn(OpenDesignTouchpointElement.prototype, "mount").mockImplementation(async function (this: OpenDesignTouchpointElement, _entry, _digest, _context, _urls, _actions, options) { dispatchAction = options?.dispatchAction; this.shadowRoot?.replaceChildren(document.createTextNode("Verified campaign")); });
-  const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => Promise.resolve(
-   init?.method === "POST"
-    ? new Response(JSON.stringify({ ok: true }), { status: 200 })
-    : new Response(JSON.stringify(decision()), { status: 200 }),
-  )); vi.stubGlobal("fetch", fetchMock);
-  Object.defineProperty(navigator, "userActivation", { configurable: true, value: { isActive: true } });
+  vi
+   .spyOn(OpenDesignTouchpointElement.prototype, "mount")
+   .mockImplementation(async function (
+    this: OpenDesignTouchpointElement,
+    _entry,
+    _digest,
+    _context,
+    _urls,
+    _actions,
+    options,
+   ) {
+    dispatchAction = options?.dispatchAction;
+    this.shadowRoot?.replaceChildren(
+     document.createTextNode("Verified campaign"),
+    );
+   });
+  const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+   Promise.resolve(
+    init?.method === "POST"
+     ? new Response(JSON.stringify({ ok: true }), { status: 200 })
+     : new Response(JSON.stringify(decision()), { status: 200 }),
+   ),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  Object.defineProperty(navigator, "userActivation", {
+   configurable: true,
+   value: { isActive: true },
+  });
   render(<ProductionCampaignModal authenticated sessionSubject="user-a" />);
   await waitFor(() => expect(dispatchAction).toBeTypeOf("function"));
-  window.dispatchEvent(new Event("focus")); window.dispatchEvent(new Event("online"));
+  window.dispatchEvent(new Event("focus"));
+  window.dispatchEvent(new Event("online"));
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
   await dispatchAction?.("learn");
-  expect(fetchMock).toHaveBeenCalledWith("/api/touchpoints/production-runtime/events", expect.objectContaining({ method: "POST" }));
+  expect(fetchMock).toHaveBeenCalledWith(
+   "/api/touchpoints/production-runtime/events",
+   expect.objectContaining({ method: "POST" }),
+  );
   expect(openExternalUrlMock).toHaveBeenCalledWith("https://example.com");
  });
 
  it("mounts valid modal content when a refresh starts while verification is deferred", async () => {
-  (globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = { client: { osLocale: "en-US", type: "desktop" } };
+  (globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = {
+   client: { osLocale: "en-US", type: "desktop" },
+  };
   let resolveVerified: ((value: any) => void) | undefined;
-  const verified = new Promise<any>((resolve) => { resolveVerified = resolve; });
-  const verify = vi.spyOn(touchpointComponent, "verifyWebTouchpoint").mockReturnValue(verified);
-  const fetchMock = vi.fn(() => Promise.resolve(new Response(JSON.stringify(decision()), { status: 200 }))); vi.stubGlobal("fetch", fetchMock);
+  const verified = new Promise<any>((resolve) => {
+   resolveVerified = resolve;
+  });
+  const verify = vi
+   .spyOn(touchpointComponent, "verifyWebTouchpoint")
+   .mockReturnValue(verified);
+  const fetchMock = vi.fn(() =>
+   Promise.resolve(new Response(JSON.stringify(decision()), { status: 200 })),
+  );
+  vi.stubGlobal("fetch", fetchMock);
   render(<ProductionCampaignModal authenticated sessionSubject="user-a" />);
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-  window.dispatchEvent(new Event("focus")); await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-  resolveVerified?.({ entryUrl: "blob:modal", resourceUrls: new Map(), dispose: vi.fn() });
+  window.dispatchEvent(new Event("focus"));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+  resolveVerified?.({
+   entryUrl: "blob:modal",
+   resourceUrls: new Map(),
+   dispose: vi.fn(),
+  });
   const host = await screen.findByTestId("campaign-custom-element");
-  await waitFor(() => expect(host.querySelector("opend-touchpoint")?.shadowRoot?.textContent).toContain("Verified campaign"));
+  await waitFor(() =>
+   expect(
+    host.querySelector("opend-touchpoint")?.shadowRoot?.textContent,
+   ).toContain("Verified campaign"),
+  );
  });
 
  it("cancels and fences an expired modal timer after accepting a replacement", async () => {
-  (globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = { client: { osLocale: "en-US", type: "desktop" } };
+  (globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = {
+   client: { osLocale: "en-US", type: "desktop" },
+  };
   const start = Date.now();
   const now = vi.spyOn(Date, "now").mockReturnValue(start);
-  const scheduledTimers: Array<{ callback: () => void; delay: number; handle: number }> = [];
+  const scheduledTimers: Array<{
+   callback: () => void;
+   delay: number;
+   handle: number;
+  }> = [];
   const actualSetTimeout = globalThis.setTimeout;
-  vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback: TimerHandler, delay?: number, ...args: any[]) => {
+  vi.spyOn(globalThis, "setTimeout").mockImplementation(((
+   callback: TimerHandler,
+   delay?: number,
+   ...args: any[]
+  ) => {
    const handle = actualSetTimeout(callback, delay, ...args);
-   if (typeof callback === "function") scheduledTimers.push({ callback: () => callback(...args), delay: Number(delay), handle });
+   if (typeof callback === "function")
+    scheduledTimers.push({
+     callback: () => callback(...args),
+     delay: Number(delay),
+     handle,
+    });
    return handle;
   }) as typeof setTimeout);
   const clearTimeoutMock = vi.spyOn(globalThis, "clearTimeout");
   const callbacks: Array<(actionId: string) => Promise<void>> = [];
-  vi.spyOn(OpenDesignTouchpointElement.prototype, "mount").mockImplementation(async function (this: OpenDesignTouchpointElement, _entry, _digest, _context, _urls, _actions, options) { if (options?.dispatchAction) callbacks.push(options.dispatchAction); this.shadowRoot?.replaceChildren(document.createTextNode("Verified campaign")); });
-  let resolveReplacement: ((value: ReturnType<typeof decision>) => void) | undefined;
-  const replacementBody = new Promise<ReturnType<typeof decision>>((resolve) => { resolveReplacement = resolve; });
-  const oldDecision = decision({ authorizationExpiresAt: new Date(start + 7_000).toISOString() });
-  const replacementDecision = decision({ authorizationExpiresAt: new Date(start + 15_000).toISOString(), touchpointDecisionId: "replacement-modal" });
-  const replacementResponse = new Response(JSON.stringify(replacementDecision), { status: 200 });
+  vi
+   .spyOn(OpenDesignTouchpointElement.prototype, "mount")
+   .mockImplementation(async function (
+    this: OpenDesignTouchpointElement,
+    _entry,
+    _digest,
+    _context,
+    _urls,
+    _actions,
+    options,
+   ) {
+    if (options?.dispatchAction) callbacks.push(options.dispatchAction);
+    this.shadowRoot?.replaceChildren(
+     document.createTextNode("Verified campaign"),
+    );
+   });
+  let resolveReplacement:
+   | ((value: ReturnType<typeof decision>) => void)
+   | undefined;
+  const replacementBody = new Promise<ReturnType<typeof decision>>(
+   (resolve) => {
+    resolveReplacement = resolve;
+   },
+  );
+  const oldDecision = decision({
+   authorizationExpiresAt: new Date(start + 7_000).toISOString(),
+  });
+  const replacementDecision = decision({
+   authorizationExpiresAt: new Date(start + 15_000).toISOString(),
+   touchpointDecisionId: "replacement-modal",
+  });
+  const replacementResponse = new Response(
+   JSON.stringify(replacementDecision),
+   { status: 200 },
+  );
   vi.spyOn(replacementResponse, "json").mockReturnValue(replacementBody);
   const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
-   if (init?.method === "POST") return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
-   if (fetchMock.mock.calls.length === 2) return Promise.resolve(replacementResponse);
-   return Promise.resolve(new Response(JSON.stringify(oldDecision), { status: 200 }));
+   if (init?.method === "POST")
+    return Promise.resolve(
+     new Response(JSON.stringify({ ok: true }), { status: 200 }),
+    );
+   if (fetchMock.mock.calls.length === 2)
+    return Promise.resolve(replacementResponse);
+   return Promise.resolve(
+    new Response(JSON.stringify(oldDecision), { status: 200 }),
+   );
   });
   vi.stubGlobal("fetch", fetchMock);
-  Object.defineProperty(navigator, "userActivation", { configurable: true, value: { isActive: true } });
+  Object.defineProperty(navigator, "userActivation", {
+   configurable: true,
+   value: { isActive: true },
+  });
   render(<ProductionCampaignModal authenticated sessionSubject="user-a" />);
   await waitFor(() => expect(callbacks).toHaveLength(1));
   const oldCallback = callbacks[0]!;
@@ -271,32 +612,66 @@ describe("ProductionCampaignModal mount lifetime", () => {
   expect(fetchMock).toHaveBeenCalledTimes(2);
   expect(openExternalUrlMock).not.toHaveBeenCalled();
   await waitFor(() => expect(callbacks).toHaveLength(2));
-  await act(async () => { oldTimer?.callback(); }); // A queued stale callback must not clear the replacement.
-  expect(screen.getByTestId("campaign-custom-element").querySelector("opend-touchpoint")?.shadowRoot?.textContent).toContain("Verified campaign");
+  await act(async () => {
+   oldTimer?.callback();
+  }); // A queued stale callback must not clear the replacement.
+  expect(
+   screen
+    .getByTestId("campaign-custom-element")
+    .querySelector("opend-touchpoint")?.shadowRoot?.textContent,
+  ).toContain("Verified campaign");
   await callbacks[1]!("learn");
-  expect(fetchMock).toHaveBeenCalledWith("/api/touchpoints/production-runtime/events", expect.objectContaining({ method: "POST" }));
+  expect(fetchMock).toHaveBeenCalledWith(
+   "/api/touchpoints/production-runtime/events",
+   expect.objectContaining({ method: "POST" }),
+  );
   expect(openExternalUrlMock).toHaveBeenCalledWith("https://example.com");
-  const replacementTimer = scheduledTimers.find((timer) => timer.delay === 7_999);
+  const replacementTimer = scheduledTimers.find(
+   (timer) => timer.delay === 7_999,
+  );
   expect(replacementTimer).toBeDefined();
   now.mockReturnValue(start + 15_001);
-  await act(async () => { replacementTimer?.callback(); });
+  await act(async () => {
+   replacementTimer?.callback();
+  });
   expect(screen.queryByTestId("campaign-custom-element")).toBeNull();
   await callbacks[1]!("learn");
   expect(fetchMock).toHaveBeenCalledTimes(3);
  });
 
  it("releases a late verified modal resource once without mounting after unmount", async () => {
-  (globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = { client: { osLocale: "en-US", type: "desktop" } };
+  (globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = {
+   client: { osLocale: "en-US", type: "desktop" },
+  };
   let resolveVerified: ((value: any) => void) | undefined;
-  const verified = new Promise<any>((resolve) => { resolveVerified = resolve; });
-  const verify = vi.spyOn(touchpointComponent, "verifyWebTouchpoint").mockReturnValue(verified);
-  const mount = vi.spyOn(OpenDesignTouchpointElement.prototype, "mount"); mount.mockClear();
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(decision()), { status: 200 })));
-  const view = render(<ProductionCampaignModal authenticated sessionSubject="user-a" />);
+  const verified = new Promise<any>((resolve) => {
+   resolveVerified = resolve;
+  });
+  const verify = vi
+   .spyOn(touchpointComponent, "verifyWebTouchpoint")
+   .mockReturnValue(verified);
+  const mount = vi.spyOn(OpenDesignTouchpointElement.prototype, "mount");
+  mount.mockClear();
+  vi.stubGlobal(
+   "fetch",
+   vi
+    .fn()
+    .mockResolvedValue(
+     new Response(JSON.stringify(decision()), { status: 200 }),
+    ),
+  );
+  const view = render(
+   <ProductionCampaignModal authenticated sessionSubject="user-a" />,
+  );
   await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
   await waitFor(() => expect(verify).toHaveBeenCalledTimes(1));
   view.unmount();
-  const release = vi.fn(); resolveVerified?.({ entryUrl: "blob:modal", resourceUrls: new Map(), dispose: release });
+  const release = vi.fn();
+  resolveVerified?.({
+   entryUrl: "blob:modal",
+   resourceUrls: new Map(),
+   dispose: release,
+  });
   await waitFor(() => expect(release).toHaveBeenCalledTimes(1));
   expect(mount).not.toHaveBeenCalled();
  });

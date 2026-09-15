@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { overlaySpy, diagnosticSpy } = vi.hoisted(() => ({
@@ -68,7 +68,7 @@ const decision = (
 	serverTime: "2030-01-01T00:00:00.000Z",
 	placementKey,
 	content: content(placementKey),
-		requiredCapabilities: ["hover", "static-action"],
+	requiredCapabilities: ["hover", "static-action"],
 	staticActions: [
 		{ id: "learn", target: { kind: "https", url: "https://example.com" } },
 	],
@@ -169,9 +169,7 @@ describe("ProductionCampaignHover", () => {
 				),
 			),
 		);
-		render(
-			<ProductionCampaignHover authenticated sessionSubject="account-a" />,
-		);
+		render(<ProductionCampaignHover authenticated sessionSubject="account-a" />);
 		await screen.findByTestId("production-hover-overlay");
 		const props = (
 			overlaySpy.mock.calls as unknown as Array<
@@ -202,9 +200,7 @@ describe("ProductionCampaignHover", () => {
 			),
 		);
 		vi.stubGlobal("fetch", fetchMock);
-		render(
-			<ProductionCampaignHover authenticated sessionSubject="account-a" />,
-		);
+		render(<ProductionCampaignHover authenticated sessionSubject="account-a" />);
 		await screen.findByTestId("production-hover-overlay");
 		expect(fetchMock).toHaveBeenCalledWith(
 			"/api/touchpoints/production-runtime?placementKey=opend.home.hover-entry&locale=en-US",
@@ -263,12 +259,46 @@ describe("ProductionCampaignHover", () => {
 				),
 			),
 		);
-		render(
-			<ProductionCampaignHover authenticated sessionSubject="account-a" />,
-		);
+		render(<ProductionCampaignHover authenticated sessionSubject="account-a" />);
 		await waitFor(() =>
 			expect(screen.queryByTestId("production-hover-overlay")).toBeNull(),
 		);
+	});
+
+	it("renews a same-content authorization lease without clearing the production hover", async () => {
+		const fetchMock = vi.fn((url: string) => {
+			const renewal = fetchMock.mock.calls.length > 2;
+			const placementKey = url.includes("hover-entry")
+				? "opend.home.hover-entry"
+				: "opend.home.hover-layer";
+			return Promise.resolve(
+				new Response(
+					JSON.stringify(
+						decision(
+							placementKey,
+							renewal
+								? {
+										authorizationExpiresAt: "2030-01-01T00:01:30.000Z",
+										serverTime: "2030-01-01T00:00:30.000Z",
+									}
+								: {},
+						),
+					),
+					{ status: 200 },
+				),
+			);
+		});
+		vi.stubGlobal("fetch", fetchMock);
+		render(<ProductionCampaignHover authenticated sessionSubject="account-a" />);
+		await screen.findByTestId("production-hover-overlay");
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(30_000);
+		});
+		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(30_000);
+		});
+		expect(screen.getByTestId("production-hover-overlay")).toBeTruthy();
 	});
 
 	it("clears a visible pair when a timed recheck returns different deployment snapshots", async () => {
@@ -294,9 +324,7 @@ describe("ProductionCampaignHover", () => {
 			);
 		});
 		vi.stubGlobal("fetch", fetchMock);
-		render(
-			<ProductionCampaignHover authenticated sessionSubject="account-a" />,
-		);
+		render(<ProductionCampaignHover authenticated sessionSubject="account-a" />);
 		await screen.findByTestId("production-hover-overlay");
 		expect(fetchMock).toHaveBeenCalledTimes(2);
 
@@ -325,9 +353,7 @@ describe("ProductionCampaignHover", () => {
 				),
 			),
 		);
-		render(
-			<ProductionCampaignHover authenticated sessionSubject="account-a" />,
-		);
+		render(<ProductionCampaignHover authenticated sessionSubject="account-a" />);
 		await waitFor(() =>
 			expect(screen.queryByTestId("production-hover-overlay")).toBeNull(),
 		);
@@ -380,10 +406,7 @@ describe("ProductionCampaignHover", () => {
 		);
 		await screen.findByTestId("production-hover-overlay");
 		view.rerender(
-			<ProductionCampaignHover
-				authenticated={false}
-				sessionSubject="account-a"
-			/>,
+			<ProductionCampaignHover authenticated={false} sessionSubject="account-a" />,
 		);
 		expect(screen.queryByTestId("production-hover-overlay")).toBeNull();
 	});
@@ -481,9 +504,7 @@ describe("ProductionCampaignHover", () => {
 				);
 			});
 			vi.stubGlobal("fetch", fetchMock);
-			render(
-				<ProductionCampaignHover authenticated sessionSubject="account-a" />,
-			);
+			render(<ProductionCampaignHover authenticated sessionSubject="account-a" />);
 			await screen.findByTestId("production-hover-overlay");
 			window.dispatchEvent(new Event("focus"));
 			await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
@@ -523,9 +544,7 @@ describe("ProductionCampaignHover", () => {
 			),
 		);
 		vi.stubGlobal("fetch", fetchMock);
-		render(
-			<ProductionCampaignHover authenticated sessionSubject="account-a" />,
-		);
+		render(<ProductionCampaignHover authenticated sessionSubject="account-a" />);
 		await screen.findByTestId("production-hover-overlay");
 		window.dispatchEvent(new Event("focus"));
 		await waitFor(() =>

@@ -19,7 +19,10 @@ import {
 	type OpenDesignTouchpointElement,
 	type WebTouchpointContent,
 } from "./touchpoint-component";
-import { emitProductionTouchpointLoadDiagnostic, loadProductionTouchpointDecision } from "./production-touchpoint-loader";
+import {
+	emitProductionTouchpointLoadDiagnostic,
+	loadProductionTouchpointDecision,
+} from "./production-touchpoint-loader";
 import {
 	TestTouchpointMount,
 	recordVisibleTestTouchpoint,
@@ -29,6 +32,7 @@ import type { TestCampaignPlacement, TestDecision } from "./TestCampaignModal";
 import styles from "./TestCampaignModal.module.css";
 const PLACEMENT = "opend.home.campaign-modal";
 const MAX_LEASE_MS = 5 * 60_000;
+const RECHECK_MS = 60_000;
 const supportedCapabilities = new Set(["close", "static-action"]);
 
 type Decision = {
@@ -92,8 +96,7 @@ export async function dispatchProductionCampaignAction(
 			});
 			return false;
 		}
-		if (action.target.kind === "https")
-			await openExternalUrl(action.target.url);
+		if (action.target.kind === "https") await openExternalUrl(action.target.url);
 		else window.location.assign(action.target.path);
 		return true;
 	} catch {
@@ -169,15 +172,28 @@ export function ProductionCampaignModal({
 			const nextRequestGeneration = ++requestGeneration.current;
 			try {
 				const loaded = await loadProductionTouchpointDecision(
-					PLACEMENT, locale, controller.signal, decisionRef.current?.touchpointDecisionId,
+					PLACEMENT,
+					locale,
+					controller.signal,
+					decisionRef.current?.touchpointDecisionId,
 				);
 				if (!current(nextRequestGeneration)) return;
 				if (loaded.kind === "revoked") {
 					const active = decisionRef.current;
-					if (active && loaded.receipt.touchpointDecisionId === active.touchpointDecisionId && loaded.receipt.deploymentId === active.deploymentId && loaded.receipt.activityId === active.activityId && loaded.receipt.contentVersionId === active.content.id) clear();
+					if (
+						active &&
+						loaded.receipt.touchpointDecisionId === active.touchpointDecisionId &&
+						loaded.receipt.deploymentId === active.deploymentId &&
+						loaded.receipt.activityId === active.activityId &&
+						loaded.receipt.contentVersionId === active.content.id
+					)
+						clear();
 					return;
 				}
-				if (loaded.kind === "no-decision") { if (!decisionRef.current) clear(); return; }
+				if (loaded.kind === "no-decision") {
+					if (!decisionRef.current) clear();
+					return;
+				}
 				const next = loaded.value as Decision;
 				if (!current(nextRequestGeneration)) return;
 				const deadline = Math.min(
@@ -217,7 +233,16 @@ export function ProductionCampaignModal({
 					clear();
 					return;
 				}
-				if (expiry.current > Date.now()) return;
+				const active = decisionRef.current;
+				if (
+					active &&
+					expiry.current > Date.now() &&
+					active.touchpointDecisionId === next.touchpointDecisionId &&
+					active.deploymentId === next.deploymentId &&
+					active.activityId === next.activityId &&
+					active.content.id === next.content.id
+				)
+					return;
 				// Revoke the old mount and cancel its lease timer before scheduling React's replacement cleanup.
 				++authorizationGeneration.current;
 				const nextLeaseGeneration = ++leaseGeneration.current;
@@ -237,7 +262,11 @@ export function ProductionCampaignModal({
 					Math.max(0, deadline - Date.now()),
 				);
 			} catch (error) {
-				if (!current(nextRequestGeneration) || (error instanceof DOMException && error.name === "AbortError")) return;
+				if (
+					!current(nextRequestGeneration) ||
+					(error instanceof DOMException && error.name === "AbortError")
+				)
+					return;
 				const diagnostic = emitProductionTouchpointLoadDiagnostic(error);
 				if (diagnostic) emitWebTouchpointDiagnostic(diagnostic);
 				clear();
@@ -247,14 +276,18 @@ export function ProductionCampaignModal({
 		const wake = () => {
 			if (!document.hidden) void decide();
 		};
+		const recheck = setInterval(() => void decide(), RECHECK_MS);
 		window.addEventListener("focus", wake);
 		window.addEventListener("online", wake);
+		document.addEventListener("visibilitychange", wake);
 		return () => {
 			cancelled = true;
 			controller.abort();
 			if (timer) clearTimeout(timer);
+			clearInterval(recheck);
 			window.removeEventListener("focus", wake);
 			window.removeEventListener("online", wake);
+			document.removeEventListener("visibilitychange", wake);
 			clear();
 		};
 	}, [authenticated, sessionSubject, testRuntime]);
@@ -323,9 +356,7 @@ export function ProductionCampaignModal({
 					decision.content,
 					readWebTouchpointHostContext(
 						decision.content.locale,
-						document.documentElement.classList.contains("dark")
-							? "dark"
-							: "light",
+						document.documentElement.classList.contains("dark") ? "dark" : "light",
 					),
 				);
 				if (!current() || !context) {
@@ -360,8 +391,7 @@ export function ProductionCampaignModal({
 			} catch (error) {
 				if (current()) {
 					emitWebTouchpointDiagnostic({
-						code:
-							error instanceof Error ? error.message : "touchpoint_load_failed",
+						code: error instanceof Error ? error.message : "touchpoint_load_failed",
 					});
 					clear();
 				}
@@ -404,14 +434,19 @@ export function ProductionCampaignModal({
 	}, [closed, decision, sessionSubject]);
 	useEffect(() => {
 		if (!testDecision || testClosed || !authenticated) return;
-		const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+		const previous =
+			document.activeElement instanceof HTMLElement
+				? document.activeElement
+				: null;
 		const releaseScrollLock = lockWebTouchpointModalScroll();
 		const onKeyDown = (event: KeyboardEvent) => {
 			if (event.key === "Escape") setTestClosed(true);
 			else trapWebTouchpointModalFocus(event, modalRef.current);
 		};
 		document.addEventListener("keydown", onKeyDown);
-		queueMicrotask(() => modalRef.current?.querySelector<HTMLElement>("button")?.focus());
+		queueMicrotask(() =>
+			modalRef.current?.querySelector<HTMLElement>("button")?.focus(),
+		);
 		return () => {
 			document.removeEventListener("keydown", onKeyDown);
 			releaseScrollLock();
@@ -424,15 +459,23 @@ export function ProductionCampaignModal({
 	const closeTestModal = useCallback(() => setTestClosed(true), []);
 	const onTestVisible = useCallback(
 		(next: TestDecision, placementKey: TestCampaignPlacement) => {
-			if (testRuntime) recordVisibleTestTouchpoint(testRuntime, next, placementKey);
+			if (testRuntime)
+				recordVisibleTestTouchpoint(testRuntime, next, placementKey);
 		},
 		[testRuntime],
 	);
 	if (authenticated && testRuntime && testDecision && !testClosed) {
 		return (
-			<div className={styles.backdrop} role="dialog" aria-label="Test campaign" aria-modal="true">
+			<div
+				className={styles.backdrop}
+				role="dialog"
+				aria-label="Test campaign"
+				aria-modal="true"
+			>
 				<div className={styles.modal} ref={modalRef} tabIndex={-1}>
-					<Button type="button" onClick={() => setTestClosed(true)}>Close</Button>
+					<Button type="button" onClick={() => setTestClosed(true)}>
+						Close
+					</Button>
 					<TestTouchpointMount
 						decision={testDecision}
 						placementKey={PLACEMENT}

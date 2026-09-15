@@ -20,6 +20,24 @@ const VIEWPORT_MARGIN = 8;
 const GAP = 8;
 const EMPTY_ACTION_IDS: ReadonlySet<string> = new Set();
 
+/** Only immutable package fields may replace a mounted Shadow DOM host. */
+function touchpointMountKey(touchpoint: WebTouchpointContent): string {
+	return JSON.stringify([
+		touchpoint.id,
+		touchpoint.placementKey,
+		touchpoint.locale,
+		touchpoint.manifestHash,
+		touchpoint.entryPath,
+		touchpoint.entryDigest,
+		touchpoint.buildIdentity.fingerprint,
+		touchpoint.resources.map((resource) => [resource.path, resource.digest]),
+	]);
+}
+
+function actionIdsKey(actionIds: ReadonlySet<string>): string {
+	return [...actionIds].sort().join("\u0000");
+}
+
 export type HoverOverlayPosition = Readonly<{
 	left: number;
 	top: number;
@@ -53,10 +71,7 @@ export function placeHoverOverlay(
 	const height = Math.min(layer.height, maxHeight);
 	const top =
 		placement === "below"
-			? Math.min(
-					anchor.bottom + GAP,
-					viewport.bottom - height - VIEWPORT_MARGIN,
-				)
+			? Math.min(anchor.bottom + GAP, viewport.bottom - height - VIEWPORT_MARGIN)
 			: Math.max(viewport.top + VIEWPORT_MARGIN, anchor.top - GAP - height);
 	return Object.freeze({
 		left: Math.max(
@@ -96,6 +111,7 @@ export type HoverTouchpointOverlayProps = Readonly<{
 	entry: WebTouchpointContent;
 	layer: WebTouchpointContent;
 	mode?: "test" | "production";
+	mountIdentity?: string;
 	onDiagnostic?: (code: string) => void;
 	onEntryVisible?: () => void;
 	onLayerVisible?: () => void;
@@ -114,6 +130,7 @@ export function HoverTouchpointOverlay({
 	entry,
 	layer,
 	mode = "production",
+	mountIdentity = "",
 	onDiagnostic,
 	onEntryVisible,
 	onLayerVisible,
@@ -130,8 +147,28 @@ export function HoverTouchpointOverlay({
 	const restoreFocusRef = useRef<HTMLElement | null>(null);
 	const restoringFocusRef = useRef(false);
 	const [position, setPosition] = useState<HoverOverlayPosition>();
-	const [elementReady, setElementReady] = useState(() =>
-		typeof customElements !== "undefined" && customElements.get("opend-touchpoint") !== undefined,
+	const entryDispatchRef = useRef(dispatchEntryAction);
+	const layerDispatchRef = useRef(dispatchLayerAction);
+	const diagnosticRef = useRef(onDiagnostic);
+	const entryVisibleRef = useRef(onEntryVisible);
+	const layerVisibleRef = useRef(onLayerVisible);
+	entryDispatchRef.current = dispatchEntryAction;
+	layerDispatchRef.current = dispatchLayerAction;
+	diagnosticRef.current = onDiagnostic;
+	entryVisibleRef.current = onEntryVisible;
+	layerVisibleRef.current = onLayerVisible;
+	const entryKey = touchpointMountKey(entry);
+	const layerKey = touchpointMountKey(layer);
+	const entryActionsKey = actionIdsKey(entryActionIds);
+	const layerActionsKey = actionIdsKey(layerActionIds);
+	const hostContextKey = [
+		document.documentElement.lang,
+		document.documentElement.classList.contains("dark") ? "dark" : "light",
+	].join("\u0000");
+	const [elementReady, setElementReady] = useState(
+		() =>
+			typeof customElements !== "undefined" &&
+			customElements.get("opend-touchpoint") !== undefined,
 	);
 	useEffect(() => {
 		ensureWebTouchpointElement();
@@ -159,7 +196,7 @@ export function HoverTouchpointOverlay({
 			entry.placementKey !== ENTRY_PLACEMENT ||
 			layer.placementKey !== LAYER_PLACEMENT
 		) {
-			onDiagnostic?.("hover_placement_mismatch");
+			diagnosticRef.current?.("hover_placement_mismatch");
 			return;
 		}
 		let cancelled = false;
@@ -212,8 +249,10 @@ export function HoverTouchpointOverlay({
 					entryVerified.resourceUrls,
 					entryActionIds,
 					{
-						dispatchAction: dispatchEntryAction,
-						onDiagnostic: (d) => onDiagnostic?.(d.code),
+						dispatchAction: async (actionId) => {
+							if (!cancelled) await entryDispatchRef.current?.(actionId);
+						},
+						onDiagnostic: (d) => diagnosticRef.current?.(d.code),
 					},
 				);
 				if (abandon()) return;
@@ -224,21 +263,27 @@ export function HoverTouchpointOverlay({
 					layerVerified.resourceUrls,
 					layerActionIds,
 					{
-						dispatchAction: dispatchLayerAction,
+						dispatchAction: async (actionId) => {
+							if (!cancelled) await layerDispatchRef.current?.(actionId);
+						},
 						requestClose: () => close(true),
-						onDiagnostic: (d) => onDiagnostic?.(d.code),
+						onDiagnostic: (d) => diagnosticRef.current?.(d.code),
 					},
 				);
 				if (abandon()) return;
 				setReady(true);
 				requestAnimationFrame(() => {
-					if (!cancelled && !document.hidden && entryElement?.getClientRects().length)
-						onEntryVisible?.();
+					if (
+						!cancelled &&
+						!document.hidden &&
+						entryElement?.getClientRects().length
+					)
+						entryVisibleRef.current?.();
 				});
 			} catch (error) {
 				dispose();
 				if (!cancelled) {
-					onDiagnostic?.(
+					diagnosticRef.current?.(
 						error instanceof Error ? error.message : "hover_mount_failed",
 					);
 					close();
@@ -251,7 +296,45 @@ export function HoverTouchpointOverlay({
 			setReady(false);
 			dispose();
 		};
-	}, [close, dispatchEntryAction, dispatchLayerAction, elementReady, entry, entryActionIds, layer, layerActionIds, mode, onDiagnostic, onEntryVisible, onLayerVisible]);
+	}, [
+		close,
+		elementReady,
+		entryActionsKey,
+		entryKey,
+		layerActionsKey,
+		layerKey,
+		mode,
+		mountIdentity,
+	]);
+
+	useEffect(() => {
+		if (!elementReady || !ready) return;
+		const entryElement = entryRef.current as InstanceType<
+			ReturnType<typeof ensureWebTouchpointElement>
+		> | null;
+		const layerElement = layerRef.current as InstanceType<
+			ReturnType<typeof ensureWebTouchpointElement>
+		> | null;
+		const entryContext = webTouchpointContext(entry);
+		const layerContext = webTouchpointContext(layer);
+		if (
+			!entryElement ||
+			!layerElement ||
+			!entryContext ||
+			!layerContext ||
+			typeof entryElement.update !== "function" ||
+			typeof layerElement.update !== "function"
+		)
+			return;
+		void Promise.all([
+			entryElement.update({ ...entryContext, mode }, new Map()),
+			layerElement.update({ ...layerContext, mode }, new Map()),
+		]).catch((error) =>
+			diagnosticRef.current?.(
+				error instanceof Error ? error.message : "hover_context_update_failed",
+			),
+		);
+	}, [elementReady, entryKey, hostContextKey, layerKey, mode, ready]);
 
 	useLayoutEffect(() => {
 		if (open && ready) refreshPosition();
@@ -260,10 +343,10 @@ export function HoverTouchpointOverlay({
 		if (!open || !ready) return;
 		const frame = requestAnimationFrame(() => {
 			if (!document.hidden && layerRef.current?.getClientRects().length)
-				onLayerVisible?.();
+				layerVisibleRef.current?.();
 		});
 		return () => cancelAnimationFrame(frame);
-	}, [onLayerVisible, open, ready]);
+	}, [open, ready]);
 	useEffect(() => {
 		if (!open || !ready) return;
 		const reposition = () => refreshPosition();
@@ -319,8 +402,7 @@ export function HoverTouchpointOverlay({
 			"aria-haspopup": "dialog",
 			onPointerEnter: () => setOpen(true),
 			onPointerLeave: (event: React.PointerEvent) => {
-				if (!rootRef.current?.contains(event.relatedTarget as Node | null))
-					close();
+				if (!rootRef.current?.contains(event.relatedTarget as Node | null)) close();
 			},
 			onFocus: () => {
 				restoreFocusRef.current = entryRef.current;
