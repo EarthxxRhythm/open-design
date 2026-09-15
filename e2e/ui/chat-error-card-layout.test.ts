@@ -206,6 +206,9 @@ async function expectActionsContained(
   for (let index = 1; index < layout.buttons.length; index += 1) {
     const previous = layout.buttons[index - 1];
     const current = layout.buttons[index];
+    if (!previous || !current) {
+      throw new Error(`Missing error-card action geometry at index ${index}`);
+    }
     expect(current.top).toBeGreaterThanOrEqual(previous.bottom);
     expect(current.left).toBe(previous.left);
     expect(current.right).toBe(previous.right);
