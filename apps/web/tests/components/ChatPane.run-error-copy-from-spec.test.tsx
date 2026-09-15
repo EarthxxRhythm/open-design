@@ -153,7 +153,7 @@ const SPEC_CELLS: readonly SpecCell[] = [
   },
   // ⚠️ S30 **不在**这张表里,是故意的。S30 的润色表只有一行,「场景内的情况」
   // 写死是「地区不支持」,而 web 把这张卡发给的五个 detail 一个都不是地区拦截。
-  // 那五格因此保持旧文案,由下面 `S30 · …` 那个 describe 单独钉住。
+  // 那五格使用 2026-09-14 产品补充文案,由下面 `S30 · …` 那个 describe 单独钉住。
 ];
 
 describe('报错卡文案 = 飞书文档的润色列(逐字)', () => {
@@ -205,19 +205,19 @@ describe('这些格子不许再落到兜底句上', () => {
  * 网络后再试」,既是错误诊断,给的处置也一点用没有 —— 这正是把含糊的旧文案
  * 换成明确的错话时会发生的净劣化。
  */
-const CLIENT_ENVIRONMENT_CELLS: readonly { detail: string; cause: string }[] = [
-  { detail: 'local_storage_failure', cause: '本机存储读写失败' },
-  { detail: 'host_policy_block', cause: '被系统策略拦截' },
-  { detail: 'certificate_failure', cause: '证书校验失败' },
-  { detail: 'proxy_configuration', cause: '代理配置有问题' },
-  { detail: 'network_configuration', cause: '网络连不上' },
+const CLIENT_ENVIRONMENT_CELLS: readonly { detail: string; body: string }[] = [
+  { detail: 'local_storage_failure', body: '文件无法写入磁盘。请确认有足够的剩余空间，且有权限保存到当前文件夹。' },
+  { detail: 'host_policy_block', body: 'Windows 阻止了程序启动，请检查系统的安全设置。' },
+  { detail: 'certificate_failure', body: '连接服务时未通过安全验证，请尝试更换网络。' },
+  { detail: 'proxy_configuration', body: '当前设置的代理无法连接，请确认代理已开启、设置正确后再试。' },
+  { detail: 'network_configuration', body: '暂时无法访问服务，请检查网络连接后再试。' },
 ];
 
 /** 地区拦截专有的说法。任何一条出现在这五格上都是错误诊断。 */
 const REGIONAL_DIAGNOSIS = [/地区/, /切换网络/];
 
 describe('S30 · 够不上「地区拦截」的成因,不许被说成地区不支持', () => {
-  for (const { detail, cause } of CLIENT_ENVIRONMENT_CELLS) {
+  for (const { detail, body } of CLIENT_ENVIRONMENT_CELLS) {
     it(`${detail} 的卡面不出现地区拦截的诊断或处置`, () => {
       const { container } = renderFailure('AGENT_EXECUTION_FAILED', detail);
 
@@ -229,11 +229,11 @@ describe('S30 · 够不上「地区拦截」的成因,不许被说成地区不�
       }
     });
 
-    it(`${detail} 的正文点名的是它自己的成因`, () => {
+    it(`${detail} 的正文逐字使用补充文档为该成因批准的文案`, () => {
       renderFailure('AGENT_EXECUTION_FAILED', detail);
       // 正向的一半:摘掉地区文案之后,卡面仍然说得出这一格到底出了什么事,
       // 而不是退回一句谁都适用的空话。
-      expect(screen.getByTestId('chat-run-error-description').textContent).toContain(cause);
+      expect(screen.getByTestId('chat-run-error-description').textContent).toBe(body);
     });
   }
 

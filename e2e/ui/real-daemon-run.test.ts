@@ -1009,8 +1009,8 @@ test('[P0] empty daemon output fails cleanly, persists after reload, and does no
 
   const rawError = 'Agent completed without producing any output.';
   const card = runErrorCard(page);
-  await expect(card).toContainText('No output produced', { timeout: 15_000 });
-  await expect(card).toContainText('The agent finished without producing any output');
+  await expect(card).toContainText('Unable to generate content', { timeout: 15_000 });
+  await expect(card).toContainText('The AI could not generate content. Please start the task again, or switch models and try again.');
   await expect(card).not.toContainText(rawError);
 
   const { projectId, conversationId } = await currentProjectContext(page);
@@ -1023,8 +1023,8 @@ test('[P0] empty daemon output fails cleanly, persists after reload, and does no
 
   await page.reload({ waitUntil: 'domcontentloaded' });
   await expectWorkspaceReady(page);
-  await expect(runErrorCard(page)).toContainText('No output produced');
-  await expect(runErrorCard(page)).toContainText('The agent finished without producing any output');
+  await expect(runErrorCard(page)).toContainText('Unable to generate content');
+  await expect(runErrorCard(page)).toContainText('The AI could not generate content. Please start the task again, or switch models and try again.');
   await expect(runErrorCard(page)).not.toContainText(rawError);
   expect(await listProjectFiles(page, projectId)).toEqual([]);
 });

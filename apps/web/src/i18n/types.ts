@@ -2889,6 +2889,18 @@ export interface Dict {
   'chat.runError.title.clarificationRepeated': string;
   'chat.runError.clarificationRepeatedMessage': string;
   'chat.runError.title.clientEnvironment': string;
+  'chat.runError.title.certificateFailure': string;
+  'chat.runError.certificateFailureMessage': string;
+  'chat.runError.title.proxyConfiguration': string;
+  'chat.runError.proxyConfigurationMessage': string;
+  'chat.runError.title.networkConfiguration': string;
+  'chat.runError.networkConfigurationMessage': string;
+  'chat.runError.title.hostPolicyBlock': string;
+  'chat.runError.hostPolicyBlockMessage': string;
+  'chat.runError.title.localStorageFailure': string;
+  'chat.runError.localStorageFailureMessage': string;
+  'chat.runError.title.tierUpgradeRequired': string;
+  'chat.runError.tierUpgradeRequiredMessage': string;
   'chat.runError.title.generic': string;
   'chat.runError.title.artifactMissing': string;
   'chat.runError.signInMessage.amr': string;

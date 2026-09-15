@@ -532,8 +532,8 @@ describe('resolveRunFailureUi', () => {
     const ui = resolveRunFailureUi('AMR_TIER_UPGRADE_REQUIRED', null, 'amr');
     expect(ui).toMatchObject({
       primaryAction: 'upgrade',
-      titleKey: 'chat.amrBalanceGate.title',
-      messageKey: null,
+      titleKey: 'chat.runError.title.tierUpgradeRequired',
+      messageKey: 'chat.runError.tierUpgradeRequiredMessage',
       secondaryRetry: true,
       cloudSwitchCta: false,
     });

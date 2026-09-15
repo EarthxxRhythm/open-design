@@ -137,21 +137,20 @@ describe('S30 · 环境类报错卡的文案', () => {
    * 「场景内的情况」写死是「地区不支持」;而这张卡服务的五个 detail 里没有一个
    * 是地区拦截(真正的地区信号 `Country, region, or territory not supported`
    * 落在 `upstream_client_error`)。判据全文在 `amr-guidance.ts` 的
-   * `clientEnvironmentCard` 文档注释里。所以这里钉的仍是旧文案。
+   * `clientEnvironmentCard` 文档注释里。此处改用补充文档 revision 96 为证书专门批准的文案。
    */
-  it('卡面就是 S30 那一句,{供应商} 和成因都填好了', () => {
+  it('卡面逐字使用产品补充文档的证书标题和正文', () => {
     renderPane({ onOpenSettings: vi.fn(), onRetry: vi.fn() });
 
-    expect(screen.getByText('网络环境不对')).toBeTruthy();
+    expect(screen.getByText('无法安全连接服务')).toBeTruthy();
     // 括号里是这一格自己的成因,不是五格一个说法。
     const body = screen.getByTestId('chat-run-error-description').textContent ?? '';
-    expect(body).toMatch(/^看起来走了代理或公司网络，.+拒绝了请求（证书校验失败）。/);
-    expect(body).toMatch(/换一个网络出口，或在设置里调整代理。$/);
+    expect(body).toBe('连接服务时未通过安全验证，请尝试更换网络。');
   });
 
-  it('卡上不再出现「任务执行失败」这句什么都没说的兜底', () => {
+  it('卡上不再出现「任务未能完成」这句什么都没说的兜底', () => {
     renderPane({ onOpenSettings: vi.fn(), onRetry: vi.fn() });
-    expect(screen.queryByText('任务执行失败')).toBeNull();
+    expect(screen.queryByText('任务未能完成')).toBeNull();
   });
 
   it('也不再把上游那串英文原文摊在卡面上', () => {
