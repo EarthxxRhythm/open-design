@@ -1114,12 +1114,13 @@ export function foldStrategyTaskTurns(messages: ChatMessage[]): ChatMessage[] {
  */
 function stampRunSpan(message: ChatMessage): NonNullable<ChatMessage['events']> {
   const events = message.events ?? [];
-  if (message.createdAt == null && message.endedAt == null) return events;
+  const startedAt = message.startedAt ?? message.createdAt;
+  if (startedAt == null && message.endedAt == null) return events;
   return events.map((event) => (
     event.kind === 'done_key'
       ? {
         ...event,
-        ...(message.createdAt != null ? { runStartedAt: message.createdAt } : {}),
+        ...(startedAt != null ? { runStartedAt: startedAt } : {}),
         ...(message.endedAt != null ? { runEndedAt: message.endedAt } : {}),
       }
       : event
@@ -1177,6 +1178,7 @@ function hasVisibleBrandAssistantEvent(event: NonNullable<ChatMessage['events']>
     case 'status':
       return !HIDDEN_BRAND_ASSISTANT_STATUS_LABELS.has(event.label);
     case 'usage':
+    case 'request_usage':
     case 'diagnostic':
     case 'conversation_title':
     // Protocol metadata for this turn's done marker — never user-visible.

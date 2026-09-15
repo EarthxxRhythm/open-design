@@ -667,6 +667,21 @@ describe('OD Next V2 prompt recipe', () => {
     expect(request).toContain('Resolve executionIntent from the user');
   });
 
+  it('keeps clarification-stage guidance compatible with a completed no-write answer', () => {
+    const input = { stage: 'clarification' as const, nativeSessionResume: true as const,
+      taskExecutionId: 'planning-task', taskRunIndex: 1, answer: 'Use the operator console.' };
+    const planning = composeOdNextStrategyContinuationV2({ ...input, executionIntent: 'plan_only' });
+    expect(planning).toContain('task is locked to executionIntent plan_only');
+    expect(planning).toContain('inputStage clarification (not request)');
+    expect(planning).toContain('outcome completed for an executionIntent plan_only answer without file writes');
+    expect(planning).toContain(input.answer);
+
+    const production = composeOdNextStrategyContinuationV2({ ...input, executionIntent: 'produce' });
+    expect(production).toContain('inputStage clarification (not request)');
+    expect(production).toContain('outcome plan_ready once the Full Plan is frozen for production');
+    expect(production).not.toContain('task is locked to executionIntent plan_only');
+  });
+
   it('emits native-session-only deltas and gives Production the frozen plan plus terminal state shape', () => {
     const clarification = composeOdNextStrategyContinuationV2({
       stage: 'clarification',
@@ -692,6 +707,13 @@ describe('OD Next V2 prompt recipe', () => {
     });
 
     expect(clarification).toContain('Clarification answer');
+    // OPEND-2954: every Runtime State example in the protocol reference shows
+    // `inputStage: "request"`, and this was the one continuation that never
+    // named its own stage — so a clarification turn copied the example and was
+    // refused for it. The continuation now says which stage it runs at.
+    expect(clarification).toContain('stage="clarification" task_run_index="1"');
+    expect(clarification).toContain('inputStage clarification');
+    expect(clarification).toContain('outcome plan_ready');
     expect(contractRepair).toContain('serialization-only');
     expect(production).toContain(`planContractHash=${A}`);
     expect(production).toMatch(/^<open_design_request_turn/);

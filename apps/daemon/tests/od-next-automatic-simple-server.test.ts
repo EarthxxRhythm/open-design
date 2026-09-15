@@ -1,6 +1,8 @@
+import type { CollectCodexChildEvidenceInput, CodexChildEvidenceCollection } from '../src/runtimes/codex-child-evidence.js';
+import type { CodexThreadCleanupResult } from '../src/agent-protocol/codex-app-server/thread-cleanup.js';
 import type { Server } from 'node:http';
 import { execFile } from 'node:child_process';
-import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,6 +22,56 @@ import {
   parseOdNextIntentResolutionTurnV1,
 } from '@open-design/contracts';
 
+const codexArchiveBoundary = vi.hoisted(() => ({
+  home: '', activeParentPath: '', cleanupStarted: false,
+  cleanupFinished: Promise.resolve(), onCleanupFinished: () => {},
+  order: [] as string[],
+  collections: [] as Array<{ input: CollectCodexChildEvidenceInput; result: CodexChildEvidenceCollection }>,
+  cleanupResults: [] as CodexThreadCleanupResult[],
+}));
+vi.mock('../src/agent-protocol/codex-app-server/thread-cleanup.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../src/agent-protocol/codex-app-server/thread-cleanup.js')>();
+  return { ...actual, cleanupClosedCodexThread: async (...args: Parameters<typeof actual.cleanupClosedCodexThread>) => {
+    if (!codexArchiveBoundary.home || args[0].env.CODEX_HOME !== codexArchiveBoundary.home) {
+      return actual.cleanupClosedCodexThread(...args);
+    }
+    codexArchiveBoundary.cleanupStarted = true;
+    codexArchiveBoundary.order.push('cleanup:start');
+    try {
+      const result = await actual.cleanupClosedCodexThread(...args);
+      codexArchiveBoundary.cleanupResults.push(result);
+      return result;
+    } finally {
+      codexArchiveBoundary.order.push('cleanup:end');
+      codexArchiveBoundary.onCleanupFinished();
+    }
+  } };
+});
+vi.mock('../src/runtimes/codex-child-evidence.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../src/runtimes/codex-child-evidence.js')>();
+  return { ...actual, collectCodexChildEvidence: async (...args: Parameters<typeof actual.collectCodexChildEvidence>) => {
+    if (!codexArchiveBoundary.home || args[0].codexHome !== codexArchiveBoundary.home) {
+      return actual.collectCodexChildEvidence(...args);
+    }
+    codexArchiveBoundary.order.push('collector:start');
+    const result = await actual.collectCodexChildEvidence(...args);
+    codexArchiveBoundary.collections.push({ input: args[0], result });
+    codexArchiveBoundary.order.push('collector:end');
+    return result;
+  } };
+});
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, open: async (...args: Parameters<typeof actual.open>) => {
+    // Only an already-started real cleanup may delay this actual file open.
+    // On the repaired server cleanup cannot start until collection finishes,
+    // so the collector never waits for an archive that cannot yet be launched.
+    if (codexArchiveBoundary.home && args[0] === codexArchiveBoundary.activeParentPath
+      && codexArchiveBoundary.cleanupStarted) await codexArchiveBoundary.cleanupFinished;
+    return actual.open(...args);
+  } };
+});
+
 const uuidControl = vi.hoisted(() => ({ forced: [] as string[] }));
 let pendingAutomaticFixtureIdentity: {
   initialRunId: string;
@@ -35,6 +87,8 @@ vi.mock('node:crypto', async (importOriginal) => {
 });
 
 import { closeDatabase, openDatabase } from '../src/db.js';
+import { AGENT_DEFS } from '../src/runtimes/registry.js';
+import { agentBinEnvKey } from '../src/runtimes/executables.js';
 import { createSnapshot, linkSnapshotToProject } from '../src/plugins/snapshots.js';
 import {
   getInstalledPlugin,
@@ -63,6 +117,13 @@ type StartedServer = {
 // Each fixture owns its HTTP transport; daemon-internal fetch remains untouched.
 const fixtureHttpClients = new Map<string, { owner: StartedServer; dispatcher: Agent }>();
 const fixtureShutdowns = new WeakMap<StartedServer, Promise<void>>();
+const fixtureAgentBinEnvKeys = [...new Set([
+  ...AGENT_DEFS.map(def => agentBinEnvKey(def.id)).filter((key): key is string => key !== null),
+  'VELA_OPENCODE_BIN',
+])];
+let fixtureDetectionIsolation: Promise<{ root: string; home: string; bin: string }> | null = null;
+let previousDetectionEnv: Record<string, string | undefined> = {};
+
 function fetch(input: Parameters<typeof undiciFetch>[0], init?: Parameters<typeof undiciFetch>[1]) {
   const origin = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url).origin;
   const client = fixtureHttpClients.get(origin);
@@ -162,6 +223,8 @@ describe('OD Next automatic production through the real server', () => {
   let previousCodexTransport: string | undefined;
 
   beforeEach(() => {
+    previousDetectionEnv = Object.fromEntries(['PATH', 'OD_AGENT_HOME', ...fixtureAgentBinEnvKeys]
+      .map(key => [key, process.env[key]]));
     previousCodexTransport = process.env.OD_CODEX_TRANSPORT;
     process.env.OD_CODEX_TRANSPORT = 'exec-json';
   });
@@ -173,11 +236,125 @@ describe('OD Next automatic production through the real server', () => {
     delete process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY;
     uuidControl.forced.length = 0;
     pendingAutomaticFixtureIdentity = null;
-    await stopServer(started);
-    started = null;
-    closeDatabase();
-    if (binDir) await rm(binDir, { recursive: true, force: true });
-    binDir = null;
+    try {
+      await stopServer(started);
+      started = null;
+      closeDatabase();
+      if (binDir) await rm(binDir, { recursive: true, force: true });
+      binDir = null;
+    } finally {
+      try {
+        const isolation = await fixtureDetectionIsolation;
+        if (isolation) await rm(isolation.root, { recursive: true, force: true });
+      } finally {
+        fixtureDetectionIsolation = null;
+        for (const [key, value] of Object.entries(previousDetectionEnv)) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
+      }
+    }
+  });
+
+  it('isolates host CLI probes while retaining real selected Codex detection and preflight', async () => {
+    const hostRoot = await mkdtemp(path.join(os.tmpdir(), 'od-next-controlled-host-'));
+    const hostBinDir = path.join(hostRoot, 'bin');
+    const hostHome = path.join(hostRoot, 'home');
+    const hostLog = path.join(hostRoot, 'host-probes.jsonl');
+    const selectedLog = path.join(hostRoot, 'selected-probes.jsonl');
+    const previous = { PATH: process.env.PATH, OD_AGENT_HOME: process.env.OD_AGENT_HOME,
+      AIDER_BIN: process.env.AIDER_BIN };
+    await mkdir(hostBinDir);
+    await mkdir(hostHome);
+    await writeFile(hostLog, '');
+    await writeFile(selectedLog, '');
+    await symlink(process.execPath, path.join(hostBinDir, 'node'));
+    const sentinel = path.join(hostBinDir, 'aider');
+    await writeFile(sentinel, `#!/usr/bin/env node
+const fs = require('node:fs');
+fs.appendFileSync(${JSON.stringify(hostLog)}, JSON.stringify(process.argv.slice(2)) + '\\n');
+console.log('aider 0.86.0');
+`, 'utf8');
+    await chmod(sentinel, 0o755);
+    // A controlled host candidate, not the developer's real CLI. Fixture
+    // isolation must fence both PATH discovery and inherited explicit overrides.
+    process.env.PATH = [hostBinDir, '/usr/bin', '/bin', '/usr/sbin', '/sbin'].join(path.delimiter);
+    process.env.OD_AGENT_HOME = hostHome;
+    process.env.AIDER_BIN = sentinel;
+    try {
+      const productionPreflight = vi.fn(() => EXECUTION_PREFLIGHT);
+      const fixture = await createFixture('repair', { preflightResolver: productionPreflight,
+        probeLogPath: selectedLog });
+      const selectedBin = path.join(path.dirname(fixture.logPath), 'codex-repair');
+      // Empty fixture-only API-key entries ensure the actual login-status
+      // probe is observed instead of relying on any inherited authenticated env.
+      const config = await fetch(`${started!.url}/api/app-config`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ agentId: 'codex', agentCliEnv: { codex: {
+          CODEX_BIN: selectedBin, CODEX_HOME: path.dirname(selectedBin),
+          CODEX_API_KEY: '', OPENAI_API_KEY: '',
+        } } }),
+      });
+      expect(config.status).toBe(200);
+      const detected = await fetch(`${started!.url}/api/agents`);
+      expect(detected.status).toBe(200);
+      const available = await detected.json() as { agents: Array<{ id: string; available: boolean }> };
+      expect(available.agents.find(agent => agent.id === 'codex')?.available).toBe(true);
+      const probes = (await readFile(selectedLog, 'utf8')).trim().split('\n')
+        .filter(Boolean).map(line => JSON.parse(line) as string[]);
+      expect(probes).toContainEqual(['--version']);
+      // Codex declares listModels/authProbe but no helpArgs/capabilityFlags;
+      // probeCapabilities therefore returns without invoking --help.
+      expect(probes).toContainEqual(['debug', 'models']);
+      expect(probes).toContainEqual(['login', 'status']);
+
+      queueFixtureIds(fixture);
+      await postRun(started!.url, createRunRequest(fixture, 'Build the operator prototype.'));
+      const task = await waitForTask(fixture.taskExecutionId, 'completed');
+      await waitForRunTerminal(started!.url, task.latestRunId);
+      expect(productionPreflight).toHaveBeenCalled();
+      const invocations = await readProjectInvocations(fixture.logPath, fixture.projectId);
+      expect(invocations.some(call => call.stdin.includes('native continuation — production'))).toBe(true);
+
+      // A real non-invocable selected executable must still become unavailable.
+      // Exit 127 is the supported stale-wrapper signal, unlike generic exit 1.
+      await writeFile(selectedBin, `#!/usr/bin/env node
+require('node:fs').appendFileSync(${JSON.stringify(selectedLog)}, JSON.stringify(process.argv.slice(2)) + '\\n');
+process.exit(127);
+`, 'utf8');
+      const probeCount = (await readFile(selectedLog, 'utf8')).trim().split('\n').length;
+      const brokenResponse = await fetch(`${started!.url}/api/agents`);
+      expect(brokenResponse.status).toBe(200);
+      const broken = await brokenResponse.json() as { agents: Array<{ id: string; available: boolean }> };
+      expect(broken.agents.find(agent => agent.id === 'codex')?.available).toBe(false);
+      const afterFailure = (await readFile(selectedLog, 'utf8')).trim().split('\n')
+        .filter(Boolean).map(line => JSON.parse(line) as string[]);
+      expect(afterFailure.length).toBeGreaterThan(probeCount);
+      expect(afterFailure.slice(probeCount)).toContainEqual(['--version']);
+      // This is the expected red anchor on the unisolated fixture. All selected
+      // runtime assertions above must pass before this boundary can be green.
+      const hostProbes = (await readFile(hostLog, 'utf8')).trim().split('\n').filter(Boolean);
+      expect(hostProbes).toEqual([]);
+    } finally {
+      await stopServer(started);
+      started = null;
+      // Keep the probe-only evidence in the Vitest log before removing owned
+      // fixture files, including when a prerequisite assertion fails.
+      const probeEvidence = await Promise.all([selectedLog, hostLog].map(async file => {
+        try {
+          return (await readFile(file, 'utf8')).trim().split('\n').filter(Boolean)
+            .map(line => JSON.parse(line) as string[]);
+        } catch { return null; }
+      }));
+      console.info('[2623-probe-evidence]', JSON.stringify({
+        selected: probeEvidence[0], controlledHost: probeEvidence[1],
+      }));
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      await rm(hostRoot, { recursive: true, force: true });
+    }
   });
 
   it.each(['intent-question', 'intent-request', 'intent-first-write', 'intent-fail'] as const)(
@@ -2224,6 +2401,57 @@ describe('OD Next automatic production through the real server', () => {
     expect(researchContract).not.toContain('## assistant');
   });
 
+  it('fails a blocked production exit before publishing its Run and message terminal status (OPEND-2953)', async () => {
+    const fixture = await createFixture('repair');
+    await writeFile(`${fixture.logPath}.blocked-production`, '1');
+    queueFixtureIds(fixture);
+    await postRun(started!.url, createRunRequest(fixture, 'Build the lesson deck.'), {
+      'x-od-analytics-device-id': 'device-opend-2953',
+      'x-od-analytics-session-id': 'session-opend-2953',
+      'x-od-analytics-client-type': 'desktop',
+    });
+    const task = await waitForTask(fixture.taskExecutionId, 'blocked');
+    const terminal = await waitForRunTerminal(started!.url, task.latestRunId);
+    expect(terminal).toMatchObject({
+      status: 'failed',
+      exitCode: 0,
+      errorCode: 'OD_NEXT_TASK_BLOCKED',
+      failureCategory: 'process_exit',
+      failureDetail: 'execution_failed',
+      retryable: false,
+      strategyTask: { outcome: 'blocked', terminal: true },
+    });
+    expect(terminal.error).toContain('od_next_protocol_runtime_state_missing');
+    const records = (await readFile(terminal.eventsLogPath, 'utf8')).trim().split('\n')
+      .map((line) => JSON.parse(line));
+    expect(records.filter((event) => event.event === 'end')).toHaveLength(1);
+    expect(records.find((event) => event.event === 'end')?.data).toMatchObject({
+      status: 'failed', code: 0, artifactCount: 0,
+    });
+    expect(records.find((event) => event.data?.type === 'runtime_close')?.data)
+      .toMatchObject({ rpc_close_reason: 'exit_0', status: 'failed', exit_code: 0 });
+    const response = await fetch(
+      `${started!.url}/api/projects/${fixture.projectId}/conversations/${fixture.conversationId}/messages`,
+    );
+    const { messages } = await response.json() as {
+      messages: Array<{ runId?: string; runStatus?: string }>;
+    };
+    expect(messages.find((message) => message.runId === task.latestRunId)?.runStatus).toBe('failed');
+    const [recovery] = await waitForRunAnalyticsRecoveries([task.latestRunId]);
+    expect(recovery?.properties).toMatchObject({
+      result: 'failed',
+      error_code: 'OD_NEXT_TASK_BLOCKED',
+      failure_stage: 'finalize',
+      failure_detail: 'execution_failed',
+      retryable: false,
+      rpc_close_reason: 'exit_0',
+    });
+    for (const mapping of task.runs.slice(0, -1)) {
+      expect((await getRun(started!.url, mapping.runId)).status).toBe('succeeded');
+    }
+    expect(await readProjectInvocations(fixture.logPath, fixture.projectId)).toHaveLength(3);
+  }, 90_000);
+
   it('blocks the durable task when the selected agent exits before publishing a session', async () => {
     const fixture = await createFixture('repair');
     await writeFile(`${fixture.logPath}.fail-start`, '1');
@@ -2569,16 +2797,120 @@ describe('OD Next automatic production through the real server', () => {
     expect(persistedEvents).not.toContain('INTERNAL_CHILD_TOOL_OUTPUT');
   });
 
+  it.each(['cancel', 'normal'] as const)(
+    'OPEND-2960 real server preserves child evidence through %s app-server close and archives once',
+    async (mode) => {
+      const fixture = await createFixture('repair');
+      if (!started || !binDir) throw new Error('Expected the owned server fixture');
+      const ownedServer = started;
+      const dataDir = process.env.OD_DATA_DIR;
+      if (!dataDir) throw new Error('Expected the fixture data directory');
+      // Reuse the exact selected CLI path installed by createFixture('repair').
+      // Its version remains the same verified 0.147.0 tuple; only its local
+      // protocol implementation changes from exec-json to app-server.
+      const history = await writeCodexArchiveServerFixture(path.join(binDir, 'codex-repair'), binDir, mode);
+      process.env.OD_CODEX_TRANSPORT = 'app-server';
+      let releaseArchive: () => void = () => {};
+      const archiveFinished = new Promise<void>(resolve => { releaseArchive = resolve; });
+      Object.assign(codexArchiveBoundary, { home: binDir, activeParentPath: history.parentPath,
+        cleanupStarted: false, cleanupFinished: archiveFinished, onCleanupFinished: releaseArchive,
+        order: [], collections: [], cleanupResults: [] });
+      let runId: string | undefined;
+      let stopped = false;
+      try {
+        queueFixtureIds(fixture);
+        const created = await postRun(ownedServer.url, createRunRequest(fixture, 'Ask a question before making files.'));
+        if (typeof created.runId !== 'string') throw new Error('Expected the actual physical run id');
+        runId = created.runId;
+        await vi.waitFor(async () => {
+          expect((await readCodexArchiveFrames(history.framesPath)).some(frame => frame.method === 'fixture:ready')).toBe(true);
+        });
+        if (mode === 'cancel') {
+          const response = await fetch(`${ownedServer.url}/api/runs/${runId}/cancel`, { method: 'POST' });
+          expect(response.status, await response.text()).toBe(200);
+        }
+        const terminal = await waitForRunTerminal(ownedServer.url, runId);
+        expect(terminal.status).toBe(mode === 'cancel' ? 'canceled' : 'succeeded');
+        // The production server must actually invoke the collector. A canceled
+        // state or a collection made manually by this test is not sufficient.
+        await vi.waitFor(() => expect(codexArchiveBoundary.collections).toHaveLength(1));
+        const collected = codexArchiveBoundary.collections[0];
+        if (!collected) throw new Error('Expected the production collector result');
+        const task = getStrategyTaskExecution(database(), fixture.taskExecutionId);
+        const mapping = task?.runs.find(run => run.runId === runId);
+        if (!mapping) throw new Error('Expected the physical run mapping');
+        expect(collected.input).toMatchObject({ codexHome: binDir,
+          parentSessionId: history.parentId, taskExecutionId: fixture.taskExecutionId,
+          runId, taskRunIndex: mapping.taskRunIndex, stage: mapping.inputStage });
+        expect.soft(collected.result.availability).toBe('complete');
+        expect.soft(collected.result.knownChildCount).toBe(1);
+        expect.soft(collected.result.observations.filter(row => row.kind === 'child_agent' && row.status === 'completed')).toHaveLength(1);
+        if (mode === 'cancel') {
+          await vi.waitFor(() => expect(codexArchiveBoundary.cleanupResults).toHaveLength(1));
+          expect(codexArchiveBoundary.cleanupResults[0]).toMatchObject({ status: 'archived' });
+          expect.soft(codexArchiveBoundary.order.indexOf('collector:end'))
+            .toBeLessThan(codexArchiveBoundary.order.indexOf('cleanup:start'));
+        } else {
+          expect(codexArchiveBoundary.cleanupStarted).toBe(false);
+          expect(codexArchiveBoundary.cleanupResults).toEqual([]);
+          expect(task?.outcome).toBe('clarification_required');
+        }
+        // Drain the actual server lifecycle before checking durable external
+        // effects. Collector/ordering assertions above remain independent.
+        await stopServer(ownedServer);
+        stopped = true;
+        if (started === ownedServer) started = null;
+        const persisted = JSON.parse(await readFile(path.join(dataDir, 'runs', runId, 'state.json'), 'utf8')) as { id?: string; status?: string };
+        expect(persisted).toMatchObject({ id: runId, status: terminal.status });
+        const frames = await readCodexArchiveFrames(history.framesPath);
+        const original = frames.find(frame => frame.method === 'turn/start');
+        const archives = frames.filter(frame => frame.method === 'thread/archive');
+        if (!original) throw new Error('Expected the original app-server turn');
+        expect(archives).toHaveLength(1);
+        const archiveFrame = archives[0];
+        if (!archiveFrame) throw new Error('Expected one real archive request');
+        expect(archives[0]?.threadId).toBe(history.parentId);
+        expect(archives[0]?.pid === original?.pid).toBe(mode === 'normal');
+        if (mode === 'cancel') {
+          expect(frames.filter(frame => frame.pid === archiveFrame.pid).map(frame => frame.method))
+            .toEqual(['initialize', 'initialized', 'thread/archive']);
+        }
+        expect(await readFile(history.childPath, 'utf8')).toBe(await readFile(history.expectedChildPath, 'utf8'));
+        expect(await readFile(history.archivedParentPath, 'utf8')).toBe(await readFile(history.expectedParentPath, 'utf8'));
+        await expect(readFile(history.parentPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      } finally {
+        // Release only the test's interleaving waiter. Real server shutdown
+        // owns the original child and its bounded cleanup helper lifecycle.
+        releaseArchive();
+        try {
+          if (!stopped) {
+            try {
+              if (runId) await fetch(`${ownedServer.url}/api/runs/${runId}/cancel`, { method: 'POST' });
+            } finally {
+              await stopServer(ownedServer);
+              if (started === ownedServer) started = null;
+            }
+          }
+        } finally {
+          Object.assign(codexArchiveBoundary, { home: '', activeParentPath: '', cleanupStarted: false,
+            cleanupFinished: Promise.resolve(), onCleanupFinished: () => {}, order: [], collections: [], cleanupResults: [] });
+        }
+      }
+    },
+  );
+
   async function createFixture(
     mode: 'repair' | 'direct' | 'complex' | IntentServerMode,
     {
       selectedAgentId = 'codex',
       capability,
       preflightResolver,
+      probeLogPath,
     }: {
       selectedAgentId?: string;
       capability?: OdNextRuntimeCapabilitySnapshotV1;
       preflightResolver?: NonNullable<StartServerOptions['odNextExecutionPreflightResolver']>;
+      probeLogPath?: string;
     } = {},
   ) {
     const suffix = `${mode}-${Date.now()}-${++sequence}`;
@@ -2599,7 +2931,7 @@ describe('OD Next automatic production through the real server', () => {
       const plan = planContract(template.snapshotId, template.strategy, mode.startsWith('intent-') ? 'repair' : mode as 'repair' | 'complex', capability);
       const { bin, logPath } = selectedAgentId === 'claude'
         ? await writeStrategyClaude(binDir, plan)
-        : await writeStrategyCodex(binDir, mode, plan);
+        : await writeStrategyCodex(binDir, mode, plan, probeLogPath);
       const configResponse = await fetch(`${started.url}/api/app-config`, {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
@@ -2694,7 +3026,7 @@ describe('OD Next automatic production through the real server', () => {
     const plan = planContract(snapshot.snapshotId, snapshot.strategy!, mode as 'repair' | 'direct' | 'complex', capability);
     const { bin, logPath } = selectedAgentId === 'claude'
       ? await writeStrategyClaude(binDir, plan)
-      : await writeStrategyCodex(binDir, mode, plan);
+      : await writeStrategyCodex(binDir, mode, plan, probeLogPath);
     const configResponse = await fetch(`${started.url}/api/app-config`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
@@ -2723,6 +3055,84 @@ describe('OD Next automatic production through the real server', () => {
     };
   }
 });
+
+type CodexArchiveFrame = { pid: number; method: string; threadId?: string };
+async function readCodexArchiveFrames(file: string): Promise<CodexArchiveFrame[]> {
+  return (await readFile(file, 'utf8')).trim().split('\n').filter(Boolean)
+    .map(line => JSON.parse(line) as CodexArchiveFrame);
+}
+
+async function writeCodexArchiveServerFixture(bin: string, home: string, mode: 'cancel' | 'normal') {
+  const parentId = '10000000-0000-4000-8000-000000000001';
+  const childId = '20000000-0000-4000-8000-000000000002';
+  const active = path.join(home, 'sessions', '2026', '09', '12');
+  const archive = path.join(home, 'archived_sessions');
+  const parentName = `rollout-2026-09-12-${parentId}.jsonl`;
+  const childName = `rollout-2026-09-12-${childId}.jsonl`;
+  const framesPath = path.join(home, 'archive-server-frames.jsonl');
+  const childPath = path.join(active, childName);
+  const parentPath = path.join(active, parentName);
+  const expectedChildPath = path.join(home, 'expected-child.jsonl');
+  const expectedParentPath = path.join(home, 'expected-parent.jsonl');
+  await writeFile(bin, `#!/usr/bin/env node
+const fs = require('node:fs');
+const path = require('node:path');
+const readline = require('node:readline');
+const argv = process.argv.slice(2);
+if (argv.includes('--version')) { console.log('codex-cli 0.147.0'); process.exit(0); }
+if (argv.includes('--help')) { console.log('Usage: codex app-server'); process.exit(0); }
+if (!argv.includes('app-server')) process.exit(9);
+const home = ${JSON.stringify(home)};
+if (process.env.CODEX_HOME !== home) process.exit(10);
+const active = ${JSON.stringify(active)}, archive = ${JSON.stringify(archive)};
+const parentId = ${JSON.stringify(parentId)}, childId = ${JSON.stringify(childId)};
+const parentPath = ${JSON.stringify(parentPath)}, childPath = ${JSON.stringify(childPath)};
+const send = frame => process.stdout.write(JSON.stringify(frame) + '\\n');
+const record = (method, threadId) => fs.appendFileSync(${JSON.stringify(framesPath)}, JSON.stringify({ pid: process.pid, method, ...(threadId ? {threadId} : {}) }) + '\\n');
+const input = readline.createInterface({ input: process.stdin });
+input.on('line', line => {
+  const frame = JSON.parse(line);
+  record(frame.method, frame.params?.threadId);
+  if (frame.method === 'initialize') send({ id: frame.id, result: { userAgent: 'codex/0.147.0' } });
+  else if (frame.method === 'thread/start') send({ id: frame.id, result: { thread: { id: parentId, historyMode: 'paginated', path: parentPath } } });
+  else if (frame.method === 'turn/start') {
+    const now = Date.now();
+    const row = (offset, payload) => ({ timestamp: new Date(now + offset).toISOString(), type: 'event_msg', payload });
+    const parent = [
+      { timestamp: new Date(now).toISOString(), type: 'session_meta', payload: { id: parentId } },
+      row(-6, { type: 'task_started', turn_id: 'parent-turn' }),
+      row(-5, { type: 'sub_agent_activity', agent_thread_id: childId, kind: 'started', occurred_at_ms: now - 5 }),
+      row(-1, { type: 'sub_agent_activity', agent_thread_id: childId, kind: 'completed', occurred_at_ms: now - 1 }),
+      row(0, { type: 'task_complete', turn_id: 'parent-turn' }),
+    ];
+    fs.mkdirSync(active, { recursive: true, mode: 0o700 });
+    fs.mkdirSync(archive, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(parentPath, parent.map(row => JSON.stringify(row)).join('\\n') + '\\n', { mode: 0o600 });
+    fs.writeFileSync(${JSON.stringify(expectedParentPath)}, fs.readFileSync(parentPath), { mode: 0o600 });
+    const child = [
+      { timestamp: new Date(now - 4).toISOString(), type: 'session_meta', payload: { id: childId, parent_thread_id: parentId } },
+      row(-4, { type: 'task_started', turn_id: 'child-turn' }),
+      row(-3, { type: 'user_message', message: 'Read the scoped child evidence' }),
+      row(-2, { type: 'task_complete', turn_id: 'child-turn' }),
+    ].map(row => JSON.stringify(row)).join('\\n') + '\\n';
+    fs.writeFileSync(childPath, child, { mode: 0o600 });
+    fs.writeFileSync(${JSON.stringify(expectedChildPath)}, child, { mode: 0o600 });
+    send({ id: frame.id, result: { turn: { id: 'parent-turn' } } });
+    send({ method: 'turn/started', params: { threadId: parentId, turn: { id: 'parent-turn', status: 'inProgress' } } });
+    send({ method: 'item/agentMessage/delta', params: { threadId: parentId, turnId: 'parent-turn', itemId: 'answer', delta: '<question-form id="archive-check">{"questions":[{"id":"audience","type":"text","label":"Audience?","required":true}]}</question-form>' } });
+    record('fixture:ready', parentId);
+    if (${JSON.stringify(mode)} === 'normal') send({ method: 'turn/completed', params: { threadId: parentId, turn: { id: 'parent-turn', status: 'completed', items: [] } } });
+  } else if (frame.method === 'turn/interrupt') process.exit(130);
+  else if (frame.method === 'thread/archive') {
+    if (frame.params?.threadId !== parentId) process.exit(11);
+    fs.renameSync(parentPath, path.join(archive, path.basename(parentPath)));
+    send({ id: frame.id, result: {} });
+  }
+});
+`, 'utf8');
+  await chmod(bin, 0o755);
+  return { parentId, framesPath, parentPath, childPath, expectedChildPath, expectedParentPath, archivedParentPath: path.join(archive, parentName) };
+}
 
 async function createPublicRolloutFixture(
   label: string,
@@ -2929,11 +3339,41 @@ async function readDurableRunState(runId: string): Promise<Record<string, unknow
   )) as Record<string, unknown>;
 }
 
+/**
+ * Reuse the ACP server fixtures' OD_AGENT_HOME + minimal PATH boundary.
+ * Detection and the selected CLI still run normally; only unrelated host
+ * executables are outside this test's discovery scope. Explicit *_BIN paths
+ * can bypass PATH, so the fixture also removes inherited executable overrides.
+ */
+async function isolateAgentDetection(): Promise<void> {
+  fixtureDetectionIsolation ??= (async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'od-next-agent-detection-'));
+    try {
+      const home = path.join(root, 'home');
+      const bin = path.join(root, 'bin');
+      await mkdir(home);
+      await mkdir(bin);
+      // Keep Node shebangs usable without exposing every CLI installed beside
+      // the host Node binary. Selected agent bins stay explicit in app config.
+      await symlink(process.execPath, path.join(bin, 'node'));
+      return { root, home, bin };
+    } catch (error) {
+      await rm(root, { recursive: true, force: true });
+      throw error;
+    }
+  })();
+  const isolation = await fixtureDetectionIsolation;
+  process.env.OD_AGENT_HOME = isolation.home;
+  process.env.PATH = [isolation.bin, '/usr/bin', '/bin', '/usr/sbin', '/sbin'].join(path.delimiter);
+  for (const key of fixtureAgentBinEnvKeys) delete process.env[key];
+}
+
 async function startDaemon(
   resolver: NonNullable<StartServerOptions['odNextExecutionPreflightResolver']> =
     () => EXECUTION_PREFLIGHT,
   complexResolver: StartServerOptions['odNextComplexProductionResolver'] = null,
 ): Promise<StartedServer> {
+  await isolateAgentDetection();
   const started = await startServer({
     port: 0,
     returnServer: true,
@@ -3141,6 +3581,7 @@ async function writeStrategyCodex(
   dir: string,
   mode: 'repair' | 'direct' | 'complex' | IntentServerMode,
   plan: OpenDesignPlanContractV2,
+  probeLogPath?: string,
 ): Promise<{ bin: string; logPath: string }> {
   const bin = path.join(dir, `codex-${mode}`);
   const logPath = path.join(dir, `codex-${mode}.jsonl`);
@@ -3190,6 +3631,7 @@ const path = require('node:path');
 const argv = process.argv.slice(2);
 const logPath = ${JSON.stringify(logPath)};
 const mode = ${JSON.stringify(mode)};
+${probeLogPath ? `if (argv.includes('--version') || argv.includes('--help') || argv[0] === 'debug' && argv[1] === 'models' || argv[0] === 'login' && argv[1] === 'status') fs.appendFileSync(${JSON.stringify(probeLogPath)}, JSON.stringify(argv) + '\\n');` : ''}
 if (argv.includes('--version')) { console.log('codex-cli 0.147.0'); process.exit(0); }
 if (argv.includes('--help')) { console.log('Usage: codex exec [--sandbox MODE]'); process.exit(0); }
 if (fs.existsSync(logPath + '.fail-start')) {
@@ -3252,6 +3694,9 @@ function finish() {
     text = ${JSON.stringify(complexPlan)};
   } else if (stdin.includes('native continuation — contract_repair')) {
     text = ${JSON.stringify(repaired)};
+  } else if (stdin.includes('native continuation — production') && fs.existsSync(logPath + '.blocked-production')) {
+    staleTodoList = true;
+    text = 'Working on the lesson.';
   } else if (stdin.includes('native continuation — production')) {
     fs.writeFileSync(path.join(process.cwd(), 'index.html'), '<!doctype html><title>Production</title>');
     staleTodoList = true;
@@ -3275,6 +3720,15 @@ function finish() {
   }
   console.log(JSON.stringify({ type: 'thread.started', thread_id: ${JSON.stringify(THREAD_ID)} }));
   console.log(JSON.stringify({ type: 'turn.started' }));
+  if (stdin.includes('native continuation — production') && fs.existsSync(logPath + '.blocked-production')) {
+    // Replay the host-observed failure boundary: completed tools and progress text,
+    // no deliverable or Runtime State, then a clean process exit.
+    for (let i = 0; i < 2; i++) console.log(JSON.stringify({ type: 'item.completed', item: {
+      id: 'tool-' + i, type: 'mcp_tool_call', server: 'tasks', tool: 'TodoWrite',
+      arguments: { todos: [{ content: 'Build the lesson', status: 'in_progress' }] },
+      result: { content: [{ type: 'text', text: 'Updated task list' }] }, status: 'completed',
+    } }));
+  }
   if (staleTodoList) {
     // Observed on real turns: the deliverable is written, but the LAST plan
     // snapshot the agent emits still carries unchecked items.
