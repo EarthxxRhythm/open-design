@@ -215,7 +215,10 @@ describe('GET /api/projects/:id resolvedDir', () => {
         runId: 'source-run-1',
         runStatus: 'succeeded',
         lastRunEventId: 'evt-1',
-        events: [{ kind: 'status', label: 'completed', detail: 'first version' }],
+        events: [
+          { kind: 'status', label: 'completed', detail: 'first version' },
+          { kind: 'artifact_focus', show: ['pangu-kaitian-lesson.html'] },
+        ],
         producedFiles: [
           { name: 'pangu-kaitian-lesson.html', size: 1, mtime: 1, kind: 'html' },
           { name: 'pangu-kaitian-cover.png', size: 1, mtime: 1, kind: 'image' },
@@ -288,10 +291,10 @@ describe('GET /api/projects/:id resolvedDir', () => {
     expect(forkMessagesBody.messages[1]?.runId).toBeUndefined();
     expect(forkMessagesBody.messages[1]?.runStatus).toBe('succeeded');
     expect(forkMessagesBody.messages[1]?.lastRunEventId).toBeUndefined();
-    // A seeded fork clears run pointers, but should not present copied
-    // artifact/event history as newly produced in the fork.
-    expect(forkMessagesBody.messages[1]?.events).toBeUndefined();
-    expect(forkMessagesBody.messages[1]?.producedFiles).toBeUndefined();
+    // Historical deliveries and execution records survive the fork. Only
+    // their source run pointers are cleared; supporting files remain reachable.
+    expect(forkMessagesBody.messages[1]?.events).toEqual(seedMessages[1]?.events);
+    expect(forkMessagesBody.messages[1]?.producedFiles).toEqual(seedMessages[1]?.producedFiles);
 
     /*
      * 分叉分界线落在**新会话**里(2026-08-26 用户真机指认两次:
