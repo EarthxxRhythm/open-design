@@ -141,6 +141,7 @@ function projectView(options?: {
   resolvedDir?: string | null;
   projectId?: string;
   routeConversationId?: string | null;
+  apiMode?: boolean;
 }) {
   const project = {
     id: options?.projectId ?? 'project-1',
@@ -160,9 +161,14 @@ function projectView(options?: {
           agentId: 'agent-1',
           notifications: undefined,
           agentModels: {},
+          ...(options?.apiMode ? {
+            mode: 'api', agentId: null, apiProtocol: 'openai', apiKey: 'byok-test-key',
+            baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat',
+          } : {}),
         } as never
       }
-      agents={[{ id: 'agent-1', name: 'OpenCode', models: [] } as never]}
+      agents={[{ id: 'agent-1', name: 'OpenCode', models: [] } as never,
+        { id: 'byok-opencode', name: 'BYOK OpenCode', bin: 'opencode', available: true, models: [] } as never]}
       skills={[]}
       designTemplates={[]}
       designSystems={[]}
@@ -355,4 +361,284 @@ describe('OPEND-2944 delayed memory summaries keep their originating conversatio
       }
     },
   );
+
+  it.each(['BYOK sending draft', 'observed physical successor runs'] as const)('preserves positive ownership for %s', async scenario => {
+    listConversations.mockResolvedValue([{ id: 'conv-1', title: 'Chat' }]);
+    listMessages.mockResolvedValue([]);
+    fetchPreviewComments.mockResolvedValue([]);
+    loadTabs.mockResolvedValue({ tabs: [], activeTabId: null });
+    fetchLiveArtifacts.mockResolvedValue([]);
+    fetchSkill.mockResolvedValue(null);
+    fetchDesignSystem.mockResolvedValue(null);
+    getTemplate.mockResolvedValue(null);
+    listActiveChatRuns.mockResolvedValue([]);
+    listProjectRuns.mockResolvedValue([]);
+    fetchProjectFiles.mockResolvedValue([]);
+    const { saveMessage: persistMessage } = await vi.importActual<typeof import('../../src/state/projects')>('../../src/state/projects');
+    saveMessage.mockImplementation(persistMessage);
+    let stream: DaemonStreamOptions | undefined;
+    streamViaDaemon.mockImplementation(async (options: DaemonStreamOptions) => { stream = options; return new Promise<void>(() => {}); });
+    const preflights: Record<string, unknown>[] = [];
+    const records: unknown[] = [];
+    const puts: ChatMessage[] = [];
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === '/api/memory/extract') { preflights.push(JSON.parse(String(init?.body))); return Response.json({ changed: [], attemptedLLM: false }); }
+      if (url === '/api/memory/extractions') return Response.json({ extractions: records });
+      if (url === '/api/memory/system-prompt') return Response.json({ body: '' });
+      if (url === '/api/memory') return Response.json({ entries: [
+        { id: 'rule_from_a', name: 'A preference', type: 'rule' }, { id: 'rule_from_b', name: 'B preference', type: 'rule' },
+        { id: 'rule_foreign', name: 'Foreign preference', type: 'rule' },
+      ] });
+      if (url.includes('/messages/') && init?.method === 'PUT') {
+        const message = JSON.parse(String(init.body)) as ChatMessage;
+        if (memoryMessages([message]).length) puts.push(message);
+        return Response.json({ message });
+      }
+      return Response.json({});
+    }) as typeof fetch;
+    render(projectView({ routeConversationId: 'conv-1', apiMode: scenario === 'BYOK sending draft' }));
+    await waitFor(() => expect(listMessages.mock.calls.some(call => call[1] === 'conv-1')).toBe(true));
+    await waitFor(() => expect(chatPaneHarness.onSend).not.toBeNull());
+    vi.useFakeTimers();
+    await act(async () => { void chatPaneHarness.onSend!('Remember a preference', [], []); });
+    expect(stream).toBeDefined();
+    const run = stream!;
+    if (scenario === 'BYOK sending draft') {
+      expect(run.agentId).toBe('byok-opencode');
+      expect(preflights).toHaveLength(1);
+      expect(preflights[0]).toMatchObject({ projectId: 'project-1', conversationId: 'conv-1', assistantMessageId: run.assistantMessageId });
+      return;
+    }
+    // Real provider loops call onRunCreated for each successor without an
+    // intermediate terminal status. Batch both callbacks into one React commit
+    // so deriving an observed set from rendered latest runId cannot fake green.
+    await act(async () => {
+      run.onRunCreated?.('physical-a');
+      run.onRunStatus?.('running');
+      run.onRunCreated?.('physical-b', {
+        taskExecutionId: 'task-memory', strategy: { id: 'od-next-strategy', version: '1', packageHash: 'a'.repeat(64), snapshotId: 'snapshot-memory' },
+        inputStage: 'production', outcome: 'running', route: 'full_plan', executionMode: 'complex', activeRunId: 'physical-b', terminal: false,
+      });
+      run.onRunStatus?.('running');
+    });
+    expect(chatPaneHarness.messages.find(message => message.id === run.assistantMessageId)?.runId).toBe('physical-b');
+    for (const [name, runId, assistantMessageId] of [
+      ['a', 'physical-a', run.assistantMessageId],
+      ['b', 'physical-b', 'odnext_assistant_server_successor'],
+      ['foreign', 'foreign-run', 'foreign-assistant'],
+    ]) records.push({
+      id: `extraction-${name}`, kind: 'llm', phase: 'success', startedAt: Date.now(), finishedAt: Date.now(), writtenCount: 1, writtenIds: [`rule_${name === 'foreign' ? 'foreign' : `from_${name}`}`],
+      extractionOrigin: { projectId: 'project-1', conversationId: 'conv-1', runId, assistantMessageId },
+    });
+    await act(async () => { run.handlers.onDelta('Done'); run.onRunStatus?.('succeeded'); run.handlers.onDone('Done'); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+    expect(puts).toHaveLength(2);
+    expect(puts.map(message => message.content).join('\n')).toContain('A preference');
+    expect(puts.map(message => message.content).join('\n')).toContain('B preference');
+    expect(puts.map(message => message.content).join('\n')).not.toContain('Foreign preference');
+  });
+
+  it('keeps a delayed B run id when an A host notification is appended after the B draft', async () => {
+    const stored = new Map<string, ChatMessage[]>();
+    listConversations.mockResolvedValue([{ id: 'conv-1', title: 'A and B' }]);
+    listMessages.mockImplementation(async (projectId: string, conversationId: string) => stored.get(`${projectId}:${conversationId}`) ?? []);
+    const { saveMessage: persistMessage } = await vi.importActual<typeof import('../../src/state/projects')>('../../src/state/projects');
+    saveMessage.mockImplementation(persistMessage);
+    fetchPreviewComments.mockResolvedValue([]);
+    loadTabs.mockResolvedValue({ tabs: [], activeTabId: null });
+    fetchLiveArtifacts.mockResolvedValue([]);
+    fetchSkill.mockResolvedValue(null);
+    fetchDesignSystem.mockResolvedValue(null);
+    getTemplate.mockResolvedValue(null);
+    listActiveChatRuns.mockResolvedValue([]);
+    listProjectRuns.mockResolvedValue([]);
+    fetchProjectFiles.mockResolvedValue([]);
+    const streams: DaemonStreamOptions[] = [];
+    streamViaDaemon.mockImplementation(async (options: DaemonStreamOptions) => {
+      streams.push(options);
+      if (streams.length === 1) options.onRunCreated?.('run-memory-a');
+      return new Promise<void>(() => {});
+    });
+    const records: unknown[] = [];
+    const puts: ChatMessage[] = [];
+    const record = (letter: 'a' | 'b') => ({
+      id: `extraction-${letter}`, kind: 'llm', startedAt: Date.now(), finishedAt: Date.now(), phase: 'success',
+      writtenCount: 1, writtenIds: [`rule_from_${letter}`],
+      extractionOrigin: { projectId: 'project-1', conversationId: 'conv-1', runId: `run-memory-${letter}` },
+    });
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const match = /^\/api\/projects\/([^/]+)\/conversations\/([^/]+)\/messages\/([^/]+)$/.exec(url);
+      if (match && init?.method === 'PUT') {
+        const message = JSON.parse(String(init.body)) as ChatMessage;
+        const key = `${match[1]}:${match[2]}`;
+        const previous = stored.get(key) ?? [];
+        stored.set(key, [...previous.filter(item => item.id !== message.id), message]);
+        if (memoryMessages([message]).length) puts.push(message);
+        return Response.json({ message });
+      }
+      if (url === '/api/memory/extractions') return Response.json({ extractions: records });
+      if (url === '/api/memory') return Response.json({ entries: [
+        { id: 'rule_from_a', name: 'A preference', type: 'rule' }, { id: 'rule_from_b', name: 'B preference', type: 'rule' },
+      ] });
+      return Response.json({});
+    }) as typeof fetch;
+    render(projectView({ routeConversationId: 'conv-1' }));
+    await waitFor(() => expect(listMessages.mock.calls.some(call => call[0] === 'project-1' && call[1] === 'conv-1')).toBe(true));
+    await waitFor(() => expect(chatPaneHarness.onSend).not.toBeNull());
+    vi.useFakeTimers();
+    await act(async () => { void chatPaneHarness.onSend!('A preference', [], []); });
+    expect(streams).toHaveLength(1);
+    await act(async () => {
+      streams[0]!.handlers.onDelta('A done');
+      streams[0]!.onRunStatus?.('succeeded');
+      streams[0]!.handlers.onDone('A done');
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    await act(async () => { void chatPaneHarness.onSend!('B preference', [], []); });
+    expect(streams).toHaveLength(2);
+    records.push(record('a'));
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+    expect(puts).toHaveLength(1);
+    expect(puts[0]!.content).toContain('A preference');
+    const bDraftId = streams[1]!.assistantMessageId;
+    const bDraftIndex = chatPaneHarness.messages.findIndex(message => message.id === bDraftId);
+    const hostIndex = chatPaneHarness.messages.findIndex(message => message.id === puts[0]!.id);
+    expect(bDraftIndex).toBeGreaterThanOrEqual(0);
+    expect(hostIndex).toBeGreaterThan(bDraftIndex);
+    await act(async () => { streams[1]!.onRunCreated?.('run-memory-b'); });
+    expect(chatPaneHarness.messages.find(message => message.id === bDraftId)?.runId).toBe('run-memory-b');
+    expect(chatPaneHarness.messages.at(-1)?.id).toBe(puts[0]!.id);
+    records.push(record('b'));
+    await act(async () => {
+      streams[1]!.handlers.onDelta('B done');
+      streams[1]!.onRunStatus?.('succeeded');
+      streams[1]!.handlers.onDone('B done');
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+    expect(puts).toHaveLength(2);
+    expect(puts[1]!.content).toContain('B preference');
+  });
+
+  it.each([
+    { start: 'early', arrival: 'A-first' },
+    { start: 'late', arrival: 'A-first' },
+    { start: 'early', arrival: 'B-first' },
+    { start: 'late', arrival: 'B-first' },
+  ] as const)('retains both completed windows when A starts $start and arrives $arrival', async ({ start, arrival }) => {
+    const stored = new Map<string, ChatMessage[]>();
+    listConversations.mockResolvedValue([{ id: 'conv-1', title: 'A' }, { id: 'conv-2', title: 'B' }]);
+    listMessages.mockImplementation(async (projectId: string, conversationId: string) =>
+      stored.get(`${projectId}:${conversationId}`) ?? []);
+    const { saveMessage: persistMessage } = await vi.importActual<typeof import('../../src/state/projects')>('../../src/state/projects');
+    saveMessage.mockImplementation(persistMessage);
+    fetchPreviewComments.mockResolvedValue([]);
+    loadTabs.mockResolvedValue({ tabs: [], activeTabId: null });
+    fetchLiveArtifacts.mockResolvedValue([]);
+    fetchSkill.mockResolvedValue(null);
+    fetchDesignSystem.mockResolvedValue(null);
+    getTemplate.mockResolvedValue(null);
+    listActiveChatRuns.mockResolvedValue([]);
+    listProjectRuns.mockResolvedValue([]);
+    fetchProjectFiles.mockResolvedValue([]);
+    const streams: DaemonStreamOptions[] = [];
+    streamViaDaemon.mockImplementation(async (options: DaemonStreamOptions) => {
+      streams.push(options);
+      options.onRunCreated?.(streams.length === 1 ? 'run-memory-a' : 'run-memory-b');
+      return new Promise<void>(() => {});
+    });
+    // Proposed additive wire contract. These owners are supplied explicitly by
+    // the producing run, never inferred from record ordering or preview text.
+    // Companion daemon specs must prove that production actually emits them.
+    type OwnedRecord = {
+      id: string; kind: 'llm'; startedAt: number; finishedAt: number;
+      phase: 'success'; writtenCount: number; writtenIds: string[];
+      extractionOrigin: { projectId: string; conversationId: string; runId: string };
+    };
+    const exposed: OwnedRecord[] = [];
+    let polls = 0;
+    const puts: Array<{ conversationId: string; message: ChatMessage }> = [];
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const match = /^\/api\/projects\/([^/]+)\/conversations\/([^/]+)\/messages\/([^/]+)$/.exec(url);
+      if (match && init?.method === 'PUT') {
+        const message = JSON.parse(String(init.body)) as ChatMessage;
+        const key = `${match[1]}:${match[2]}`;
+        const previous = stored.get(key) ?? [];
+        stored.set(key, [...previous.filter(item => item.id !== message.id), message]);
+        if (memoryMessages([message]).length) puts.push({ conversationId: match[2]!, message });
+        return Response.json({ message });
+      }
+      if (url === '/api/memory/extractions') {
+        polls += 1;
+        return Response.json({ extractions: exposed });
+      }
+      if (url === '/api/memory') return Response.json({ entries: [
+        { id: 'rule_from_a', name: 'A preference', type: 'rule' },
+        { id: 'rule_from_b', name: 'B preference', type: 'rule' },
+      ] });
+      return Response.json({});
+    }) as typeof fetch;
+    const view = render(projectView({ routeConversationId: 'conv-1' }));
+    await waitFor(() => expect(listMessages.mock.calls.some(call => call[0] === 'project-1' && call[1] === 'conv-1')).toBe(true));
+    await waitFor(() => expect(chatPaneHarness.onSend).not.toBeNull());
+    vi.useFakeTimers();
+    await act(async () => { void chatPaneHarness.onSend!('A preference', [], []); });
+    expect(streams).toHaveLength(1);
+    const complete = async (stream: DaemonStreamOptions) => {
+      await act(async () => {
+        stream.handlers.onDelta('Completed');
+        stream.onRunStatus?.('succeeded');
+        stream.handlers.onDone('Completed');
+      });
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    };
+    await complete(streams[0]!);
+    expect(polls).toBe(1);
+    const earlyStartedAt = Date.now();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    await act(async () => { view.rerender(projectView({ routeConversationId: 'conv-2' })); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    await act(async () => { void chatPaneHarness.onSend!('B preference', [], []); });
+    expect(streams).toHaveLength(2);
+    const bStartedAt = Date.now();
+    await complete(streams[1]!);
+    // A is still absent when B finishes; A's original budget has not expired.
+    expect(puts).toHaveLength(0);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    const records: Record<'A' | 'B', OwnedRecord> = {
+      A: { id: 'extraction-a', kind: 'llm', startedAt: start === 'early' ? earlyStartedAt : Date.now(),
+        finishedAt: Date.now(), phase: 'success', writtenCount: 1, writtenIds: ['rule_from_a'],
+        extractionOrigin: { projectId: 'project-1', conversationId: 'conv-1', runId: 'run-memory-a' } },
+      B: { id: 'extraction-b', kind: 'llm', startedAt: bStartedAt,
+        finishedAt: Date.now(), phase: 'success', writtenCount: 1, writtenIds: ['rule_from_b'],
+        extractionOrigin: { projectId: 'project-1', conversationId: 'conv-2', runId: 'run-memory-b' } },
+    };
+    exposed.push(records[arrival === 'A-first' ? 'A' : 'B']);
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+    // A-first and B-first both exercise real message persistence. A queued
+    // implementation may defer B, but must never persist either card to the
+    // other conversation while awaiting its own record.
+    expect(puts.some(put => put.message.content.includes('A preference') && put.conversationId !== 'conv-1')).toBe(false);
+    expect(puts.some(put => put.message.content.includes('B preference') && put.conversationId !== 'conv-2')).toBe(false);
+    exposed.unshift(records[arrival === 'A-first' ? 'B' : 'A']);
+    // Two bounded retry intervals allow one serial window per tick; this is
+    // inside each original 12-poll budget, not a wait-until-success loop.
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+    expect(puts.map(put => ({ conversationId: put.conversationId, preference:
+      put.message.content.includes('A preference') ? 'A' : 'B' }))).toEqual(expect.arrayContaining([
+      { conversationId: 'conv-1', preference: 'A' },
+      { conversationId: 'conv-2', preference: 'B' },
+    ]));
+    expect(puts).toHaveLength(2);
+    expect(memoryMessages(stored.get('project-1:conv-1') ?? [])).toHaveLength(1);
+    expect(memoryMessages(stored.get('project-1:conv-2') ?? [])).toHaveLength(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(6_000); });
+    expect(puts).toHaveLength(2);
+  });
 });
