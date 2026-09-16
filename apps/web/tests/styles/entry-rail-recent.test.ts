@@ -136,4 +136,20 @@ describe('entry rail — 最近浏览过 rows', () => {
     expect(rename).toMatch(/border-radius:\s*12px/);
     expect(declarations('.entry-nav-rail__recent-rename:focus')).toMatch(/border-color:\s*var\(--border\)/);
   });
+  it('renders an HTML cover in the preview as the grid does: 1280px stage scaled to the plate, inert (OPEND-2766)', () => {
+    const plate = declarations('.entry-nav-rail__recent-preview-plate');
+    expect(plate).toMatch(/position:\s*relative/);
+    expect(plate).toMatch(/container-type:\s*inline-size/);
+
+    const frame = declarations('.entry-nav-rail__recent-preview-frame');
+    expect(frame).toMatch(/position:\s*absolute/);
+    expect(frame).toMatch(/width:\s*1280px/);
+    expect(frame).toMatch(/height:\s*800px/);
+    expect(frame).toMatch(/pointer-events:\s*none/);
+    expect(frame).toMatch(/transform:\s*scale\(calc\(100cqw \/ 1280px\)\)/);
+
+    const deck = declarations('.entry-nav-rail__recent-preview-frame.is-deck');
+    expect(deck).toMatch(/height:\s*720px/);
+    expect(deck).toMatch(/top:\s*50%/);
+  });
 });

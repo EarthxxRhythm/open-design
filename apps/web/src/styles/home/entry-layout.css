@@ -1104,6 +1104,47 @@
   background: var(--bg-subtle);
   display: grid;
   place-items: center;
+  /* The HTML frame below is absolute and scales against the plate's width
+     (`cqw`), so the plate is both its containing block and its container. */
+  position: relative;
+  container-type: inline-size;
+}
+/* A deck's cover slide is 16:9 in a 16:10 plate; the grid frames decks on
+   white, so the letterbox band above and below reads as the same white stage
+   rather than as a strip of tint. */
+.entry-nav-rail__recent-preview-plate.is-deck {
+  background: #fff;
+}
+/* An HTML cover, rendered the way the projects grid renders one
+   (`.recent-projects__thumb-iframe`): the document is laid out at a 1280px
+   desktop width and scaled down to the plate, so a page that would collapse
+   at 200px keeps its real composition. Inert twice over — the card itself
+   has no pointer events, and the frame repeats it so nothing inside the
+   document can ever be the hover target. Hidden (`visibility`) until its
+   document loads; the glyph keeps the plate meanwhile (see
+   `HoverHtmlCover`). */
+.entry-nav-rail__recent-preview-frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1280px;
+  /* 1280 × 800 = the plate's own 16:10, so a plain page fills it exactly. */
+  height: 800px;
+  border: 0;
+  background: #fff;
+  pointer-events: none;
+  transform-origin: 0 0;
+  transform: scale(calc(100cqw / 1280px));
+}
+/* The deck cover document fixes its stage at 1280 × 720 (`deckPreviewSrcDoc`),
+   so the frame takes that size and is centred in the 16:10 plate instead of
+   sitting on its top edge with the band all at the bottom. The translate is
+   half of the SCALED height: with the origin at 0 0 a percentage translate
+   would measure the unscaled 720. */
+.entry-nav-rail__recent-preview-frame.is-deck {
+  height: 720px;
+  top: 50%;
+  transform: translateY(calc(-360px * (100cqw / 1280px))) scale(calc(100cqw / 1280px));
 }
 .entry-nav-rail__recent-preview-plate img,
 .entry-nav-rail__recent-preview-plate video {
