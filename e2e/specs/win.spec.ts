@@ -11,6 +11,7 @@ import { promisify } from 'node:util';
 
 import { describe, expect, test } from 'vitest';
 
+import { T } from '@/timeouts';
 import { verifyPackagedThumbnail } from '@/vitest/packaged-thumbnail';
 
 import {
@@ -760,6 +761,10 @@ winDescribe('packaged windows runtime smoke', () => {
         verifyPackagedThumbnail({
           fixtureRoot: join(toolsPackDir, 'fixtures', `thumbnail-${randomUUID()}`),
           report: report.report,
+          diagnosticOwner: {
+            namespace, runtimeRoot: runtimeNamespaceRoot, daemonPid: inspect.daemonStatus?.pid ?? null,
+            readLogs: () => runToolsPackJsonForVersion<LogsResult>('logs', releaseVersion, [], T.medium),
+          },
           inspect: async (expression) => {
             const observed = await runToolsPackJson<WinInspectResult>('inspect', ['--expr', expression]);
             expect(observed.eval?.ok, 'real desktop inspect must execute the API/DOM probe').toBe(true);
@@ -1851,6 +1856,7 @@ async function runToolsPackJsonForVersion<T>(
   action: string,
   appVersion: string | null | undefined,
   extraArgs: string[] = [],
+  timeoutMs?: number,
 ): Promise<T> {
   const args = [
     toolsPackBin,
@@ -1868,6 +1874,7 @@ async function runToolsPackJsonForVersion<T>(
     cwd: workspaceRoot,
     env: process.env,
     maxBuffer: 20 * 1024 * 1024,
+    ...(timeoutMs === undefined ? {} : { timeout: timeoutMs, killSignal: 'SIGKILL' as const }),
   }).catch((error: unknown) => {
     if (isExecError(error)) {
       throw new Error(

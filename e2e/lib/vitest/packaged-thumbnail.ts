@@ -8,6 +8,7 @@ import { expect } from 'vitest';
 
 import { createFakeAgentRuntimes } from '../fake-agents.ts';
 import { T } from '../timeouts.ts';
+import { saveThumbnailFailureDiagnostics, type ThumbnailDiagnosticOwner } from './packaged-thumbnail-diagnostics.ts';
 import type { E2eReport } from './report.ts';
 import { PACKAGED_THUMBNAIL_HTML, PACKAGED_THUMBNAIL_PNG_A_BASE64, PACKAGED_THUMBNAIL_PNG_B_BASE64 } from '../../resources/packaged-thumbnail.ts';
 
@@ -20,6 +21,7 @@ export async function verifyPackagedThumbnail(input: {
   fixtureRoot: string;
   report: E2eReport;
   screenshot: (relpath: string) => Promise<void>;
+  diagnosticOwner: ThumbnailDiagnosticOwner;
 }): Promise<void> {
   const { inspect, report } = input;
   const originalHref = await inspect('location.href');
@@ -211,6 +213,10 @@ export async function verifyPackagedThumbnail(input: {
     const invocation = fake.codex.invocation;
     if (invocation) await cleanup('save CLI log', async () =>
       report.save(`${prefix}/cli-invocations.jsonl`, await readFile(invocation.path)));
+    if (hasPrimaryError && invocation) await cleanup('save owned failure diagnostics', () => saveThumbnailFailureDiagnostics({
+      owner: input.diagnosticOwner, run: lastRun, invocationPath: invocation.path, invocationNonce: invocation.nonce,
+      fixtureRoot: input.fixtureRoot, report,
+    }));
     await cleanup('restore app config', () => request('/api/app-config', original.config, 'PUT'));
     await cleanup('restore desktop route', async () => {
       await inspect(`(() => { setTimeout(() => location.assign(${JSON.stringify(originalHref)}), 0); return true; })()`);

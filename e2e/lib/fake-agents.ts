@@ -232,6 +232,10 @@ let prompt = '';
 let emitted = false;
 let emitTimer = null;
 recordInvocation('started');
+if (invocation) {
+  process.stdin.once('end', () => recordInvocation('stdin-end'));
+  process.once('exit', (code) => recordInvocation('process-exit', { code }));
+}
 if (codexAppServer) {
   const lines = require('node:readline').createInterface({ input: process.stdin });
   let initialized = false;
