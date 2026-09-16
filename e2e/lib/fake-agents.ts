@@ -308,8 +308,7 @@ async function emitRun(promptText) {
   if (emitted) return;
   emitted = true;
   if (promptText.includes('Create the packaged thumbnail filter SVG fixture')) {
-    const fixture = process.env.OD_E2E_PACKAGED_THUMBNAIL_FIXTURE;
-    if (!fixture) throw new Error('packaged thumbnail fixture directory is missing');
+    const fixture = join(__dirname, 'input');
     const dir = projectDir(promptText);
     await mkdir(join(dir, 'assets'), { recursive: true });
     await writeFileFs(join(dir, 'assets', 'a.png'), readFileSync(join(fixture, 'a.png')));
@@ -1149,6 +1148,7 @@ async function createOrbitLiveArtifact() {
 }
 
 function failUnhandled(error) {
+  recordInvocation('unhandled', { error: error && error.stack ? error.stack : String(error) });
   process.stderr.write((error && error.stack ? error.stack : String(error)) + '\\n');
   process.exitCode = 1;
   exitSoon(1);
