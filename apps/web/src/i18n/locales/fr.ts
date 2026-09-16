@@ -1133,6 +1133,7 @@ export const fr: Dict = {
   'recentProjects.teamMemberCreator': "Membre de l'équipe",
   'recentProjects.ownOnlyMutation': 'Seuls les projets que vous avez créés peuvent être modifiés ou supprimés.',
   'recentProjects.shareInProgress': 'Partage…',
+  'recentProjects.duplicateInProgress': 'Duplication…',
   'recentProjects.sharedInTeam': "Dans l'espace d'équipe",
   'recentProjects.moveToTeam': "Déplacer vers l'espace d'équipe",
   'recentProjects.moveToTeamDescPre': "Une fois déplacé dans l'espace d'équipe, ",

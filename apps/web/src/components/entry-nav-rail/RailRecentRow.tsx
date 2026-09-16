@@ -74,10 +74,11 @@ const POPUP_GAP_PX = 24;
 
 /**
  * The ⋮ mark (supplied artwork; Remix's `more-2-line`). Inlined rather than
- * added to the shared icon set: no `IconName` maps to that glyph today, and
- * this is the only place it appears.
+ * added to the shared icon set: no `IconName` maps to that glyph today. Shared
+ * with the project switcher's row menu (WorkspaceTabsBar), which is the same
+ * menu on another surface.
  */
-function MoreDotsMark() {
+export function MoreDotsMark() {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -96,9 +97,10 @@ function MoreDotsMark() {
 /**
  * Menu marks (supplied artwork). Inlined for the same reason as the ⋮ above:
  * neither glyph exists in the shared icon set — `pencil`/`trash` are close but
- * not these drawings, and product asked for these.
+ * not these drawings, and product asked for these. Shared with the switcher's
+ * row menu too.
  */
-function RenameMark() {
+export function RenameMark() {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -114,7 +116,7 @@ function RenameMark() {
   );
 }
 
-function DeleteMark() {
+export function DeleteMark() {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"

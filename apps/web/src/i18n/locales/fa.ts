@@ -1133,6 +1133,7 @@ export const fa: Dict = {
   'recentProjects.teamMemberCreator': 'Team member',
   'recentProjects.ownOnlyMutation': 'Only projects you created can be changed or deleted.',
   'recentProjects.shareInProgress': 'Sharing…',
+  'recentProjects.duplicateInProgress': 'در حال کپی…',
   'recentProjects.sharedInTeam': 'In team space',
   'recentProjects.moveToTeam': 'Move to team space',
   'recentProjects.moveToTeamDescPre': 'Once moved to the team space, ',

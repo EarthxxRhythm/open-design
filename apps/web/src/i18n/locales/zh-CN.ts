@@ -1148,6 +1148,7 @@ export const zhCN: Dict = {
   "recentProjects.teamMemberCreator": "团队成员",
   "recentProjects.ownOnlyMutation": "只能修改或删除自己创建的项目。",
   "recentProjects.shareInProgress": "分享中…",
+  "recentProjects.duplicateInProgress": "复制中…",
   "recentProjects.sharedInTeam": "已在团队空间",
   "recentProjects.moveToTeam": "转入团队空间",
   "recentProjects.moveToTeamDescPre": "转入团队空间后，",

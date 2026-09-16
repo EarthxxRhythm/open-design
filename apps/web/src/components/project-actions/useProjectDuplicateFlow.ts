@@ -14,6 +14,11 @@ export type ProjectDuplicateHandler = (id: string) => Promise<void> | void;
  * handler (which POSTs `/api/projects/:id/duplicate`, the same call
  * `od project duplicate` makes) and reports the outcome once, so both
  * surfaces tell one analytics story.
+ *
+ * Resolves `true` once the copy exists and `false` when the request failed —
+ * the failure is already logged and tracked here, so a caller only needs the
+ * boolean to decide whether its menu stays open to say so (the switcher's row
+ * menu does; the cards let the failure pass).
  */
 export function useProjectDuplicateFlow(input: {
   onDuplicate?: ProjectDuplicateHandler;
@@ -22,8 +27,8 @@ export function useProjectDuplicateFlow(input: {
 }) {
   const { onDuplicate, analyticsPage, workspaceContext } = input;
   const analytics = useAnalytics();
-  const duplicate = useCallback(async (project: Project): Promise<void> => {
-    if (!onDuplicate) return;
+  const duplicate = useCallback(async (project: Project): Promise<boolean> => {
+    if (!onDuplicate) return false;
     const startedAt = performance.now();
     const workspaceDimensions = workspaceAnalyticsDimensions(workspaceContext);
     try {
@@ -39,6 +44,7 @@ export function useProjectDuplicateFlow(input: {
         duration_ms: Math.round(performance.now() - startedAt),
         ...workspaceDimensions,
       });
+      return true;
     } catch (err) {
       console.warn('[useProjectDuplicateFlow] duplicate project failed:', err);
       trackWorkspaceProjectActionResult(analytics.track, {
@@ -53,6 +59,7 @@ export function useProjectDuplicateFlow(input: {
         error_code: 'request_failed',
         ...workspaceDimensions,
       });
+      return false;
     }
   }, [analytics.track, analyticsPage, onDuplicate, workspaceContext]);
   return { duplicate };

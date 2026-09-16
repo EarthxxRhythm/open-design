@@ -1150,6 +1150,7 @@ export const zhTW: Dict = {
   "recentProjects.teamMemberCreator": "團隊成員",
   "recentProjects.ownOnlyMutation": "只能修改或刪除自己建立的專案。",
   "recentProjects.shareInProgress": "分享中…",
+  "recentProjects.duplicateInProgress": "複製中…",
   "recentProjects.sharedInTeam": "已在團隊空間",
   "recentProjects.moveToTeam": "轉入團隊空間",
   "recentProjects.moveToTeamDescPre": "轉入團隊空間後，",

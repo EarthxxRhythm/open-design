@@ -1512,6 +1512,7 @@ export interface Dict {
   'recentProjects.teamMemberCreator': string;
   'recentProjects.ownOnlyMutation': string;
   'recentProjects.shareInProgress': string;
+  'recentProjects.duplicateInProgress': string;
   'recentProjects.sharedInTeam': string;
   'recentProjects.moveToTeam': string;
   'recentProjects.moveToTeamDescPre': string;
