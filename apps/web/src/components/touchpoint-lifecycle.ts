@@ -49,6 +49,9 @@ const elapsed = (start: Clock) => Math.max(0, performance.now() - start.monotoni
 const POLL_MS = 30_000;
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_TIMER_MS = 2_147_483_647;
+/** Only a failure carrying the server's own withdrawal may end a live lease. */
+const withdrawsDisplay = (error: unknown) =>
+	typeof error === "object" && error !== null && (error as { touchpointWithdrawal?: unknown }).touchpointWithdrawal === true;
 
 /**
  * One scheduling implementation for both runtime adapters. A response supplies
@@ -96,6 +99,23 @@ export function useTouchpointLifecycle<T>({ enabled, identity, load, onError }: 
 			++generation.current;
 			publish();
 		};
+		/**
+		 * A timeout or transport failure is not a revocation. Cancel the attempt
+		 * and keep display authority the server already granted; `armExpiry`
+		 * still retires it at its own deadline, so one poll may be missed and a
+		 * second consecutive failure lets the lease lapse on its own. A lease
+		 * already fenced by `wake` stays withdrawn: page recovery has no
+		 * evidence the activity is still live.
+		 */
+		const abandonAttempt = (error: unknown) => {
+			cancelRequest();
+			if (withdrawsDisplay(error) || !lease.current || elapsed(lease.current.start) >= lease.current.validForMs) {
+				revalidationLease = null;
+				status = "error";
+				revoke();
+			}
+			inputs.current.onError?.(error);
+		};
 		clearRef.current = () => { revalidationLease = null; revoke(); };
 		revoke();
 		if (!enabled || !identity) return () => { stopped = true; revoke(); };
@@ -119,10 +139,7 @@ export function useTouchpointLifecycle<T>({ enabled, identity, load, onError }: 
 			const ownsRequest = () => !stopped && request === controller && !controller.signal.aborted;
 			timeout = setTimeout(() => {
 				if (!ownsRequest()) return;
-				status = "error";
-				revalidationLease = null;
-				revoke();
-				inputs.current.onError?.(new Error("touchpoint_request_timeout"));
+				abandonAttempt(new Error("touchpoint_request_timeout"));
 			}, REQUEST_TIMEOUT_MS);
 			try {
 				const result = await load(controller.signal, lease.current?.value ?? revalidationLease?.value ?? null);
@@ -175,10 +192,7 @@ export function useTouchpointLifecycle<T>({ enabled, identity, load, onError }: 
 				armExpiry();
 			} catch (error) {
 				if (stopped || controller.signal.aborted) return;
-				status = "error";
-				revalidationLease = null;
-				revoke();
-				inputs.current.onError?.(error);
+				abandonAttempt(error);
 			} finally {
 				if (request === controller) {
 					request = null;
