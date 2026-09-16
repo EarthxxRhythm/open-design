@@ -163,13 +163,15 @@ describe('晚到的宿主卡不许把 API 模式的流式指示顶掉', () => {
     ).toBe(true);
   });
 
-  it('记忆卡自己照旧不转 —— OPEND-2745 不许跟着回来', () => {
+  it('历史记忆通知整行隐藏，真实 API 占位仍在运行', () => {
     renderChat(sequence(), true);
 
-    expect(
-      looksRunning('assistant-memory-card'),
-      '记忆卡画出了「进行中」,屏幕上同时有两个(OPEND-2745)',
-    ).toBe(false);
+    expect(document.querySelector('[data-assistant-message-id="assistant-memory-card"]')).toBeNull();
+    expect(document.querySelector('[data-od-card="memory-applied"]')).toBeNull();
+    expect(document.body.textContent).not.toContain('Remembered 1 preference');
+    expect(document.body.textContent).not.toContain('圆角统一 12px');
+    // Keep the positive owner witness: hiding both rows cannot satisfy this.
+    expect(looksRunning('assistant-api-placeholder')).toBe(true);
   });
 
   it('面板不在流时,占位不会凭空转起来', () => {

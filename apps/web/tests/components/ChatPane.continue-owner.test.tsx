@@ -47,7 +47,7 @@ function production(status: NonNullable<ChatMessage['runStatus']>, completedTodo
 }
 
 function memory(): ChatMessage {
-  // Same writer and absence of run fields as ProjectView's host-authored card.
+  // Persisted historical shape from ProjectView's former host notification writer.
   // This is not a fake stopped run or an AssistantMessage previousTodos prop.
   const content = memoryWrittenCardContent({
     key: 'memory-extraction', count: 1,
@@ -88,14 +88,13 @@ function show(messages: ChatMessage[], streaming = false) {
   return { ...rendered, message, onContinueRemainingTasks, onSubmitQuestionForm };
 }
 
-function openMemory(element: HTMLElement) {
-  const summary = within(element).getByText('Remembered 1 preference').closest('summary');
-  if (!summary || !(summary.parentElement instanceof HTMLDetailsElement)) {
-    throw new Error('Expected the real memory disclosure');
-  }
-  fireEvent.click(summary);
-  expect(summary.parentElement.open).toBe(true);
-  expect(element.textContent).toContain('Work profile');
+function expectMemoryNoticeHidden(view: ReturnType<typeof show>) {
+  // OPEND-2745 retires the notification row, while the actual run must still
+  // own its status and recovery controls. Keep message() strict for real runs.
+  expect(view.container.querySelector('#assistant-message-memory-notice')).toBeNull();
+  expect(view.container.querySelector('[data-od-card="memory-applied"]')).toBeNull();
+  expect(view.container.textContent).not.toContain('Remembered 1 preference');
+  expect(view.container.textContent).not.toContain('Work profile');
 }
 
 const unfinished = [
@@ -134,10 +133,11 @@ describe('OPEND-3012: continuing work belongs to a run, not a host memory notice
   it('does not offer Continue on a trailing host memory card while production still runs', () => {
     // The recorded sequence has an active production message, unfinished
     // TodoWrite, then a host card with no run/time/status fields. ChatPane must
-    // calculate previousTodos itself and still render both messages normally.
+    // calculate previousTodos itself and retain the production run when the
+    // historical host notification is hidden.
     const view = show(conversation(production('running'), memory()), true);
     expect(within(view.message('production')).getAllByText('Working').length).toBeGreaterThan(0);
-    openMemory(view.message('memory-notice'));
+    expectMemoryNoticeHidden(view);
     expect(within(view.container).queryByTestId('assistant-continue-remaining')).toBeNull();
     expect(view.onContinueRemainingTasks).not.toHaveBeenCalled();
   });
@@ -145,14 +145,15 @@ describe('OPEND-3012: continuing work belongs to a run, not a host memory notice
   it('does not offer Continue when todos completed but the same run is still finishing', () => {
     const view = show(conversation(production('running', true), memory()), true);
     expect(within(view.message('production')).getAllByText('Working').length).toBeGreaterThan(0);
-    openMemory(view.message('memory-notice'));
+    expectMemoryNoticeHidden(view);
     expect(within(view.container).queryByTestId('assistant-continue-remaining')).toBeNull();
     expect(view.onContinueRemainingTasks).not.toHaveBeenCalled();
   });
 
-  it('keeps the memory card without Continue after the run and all todos completed', () => {
+  it('hides the memory notice without Continue after the run and all todos completed', () => {
     const view = show(conversation(production('succeeded', true), memory()));
-    openMemory(view.message('memory-notice'));
+    expect(view.message('production').getAttribute('data-assistant-message-id')).toBe('production');
+    expectMemoryNoticeHidden(view);
     expect(within(view.container).queryByTestId('assistant-continue-remaining')).toBeNull();
     expect(view.onContinueRemainingTasks).not.toHaveBeenCalled();
   });
@@ -165,10 +166,10 @@ describe('OPEND-3012: continuing work belongs to a run, not a host memory notice
   it.each(['failed', 'canceled'] as const)('keeps recovery on the real %s run when a host memory card follows it', (status) => {
     const owner = production(status);
     const view = show(conversation(owner, memory()));
-    openMemory(view.message('memory-notice'));
+    expectMemoryNoticeHidden(view);
     // The host notification must not steal the action or make it disappear.
     expectContinueFor(view, owner);
-    expect(within(view.message('memory-notice')).queryByTestId('assistant-continue-remaining')).toBeNull();
+    expect(within(view.container).getAllByTestId('assistant-continue-remaining')).toHaveLength(1);
   });
 
   it('preserves the existing succeeded reply recovery when stale todos have no authenticated completion', () => {
