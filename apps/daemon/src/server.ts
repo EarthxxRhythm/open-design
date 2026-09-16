@@ -11853,10 +11853,19 @@ export async function startServer({
           invalidationReason: null,
         }
       : resolvedAgentResumeCtx;
+    // Same rule as the re-seed guard further down: a post-request OD Next turn
+    // blocks only when a cold start would lose the plan. Here the daemon holds
+    // no resumable handle at all — typically because the planning turn's stream
+    // ended abnormally (the OpenCode compaction continuation vela 0.0.35 #1847
+    // splits onto its own request). Whenever the plan contract is still on the
+    // task, starting fresh rebuilds the full transcript AND the plan, which is
+    // exactly the cold start every non-OpenCode harness takes on every turn.
+    // Only a task whose plan never reached the store is genuinely unrecoverable.
     if (
       strategyTaskAtStart
       && strategyTaskAtStart.inputStage !== 'request'
       && !agentResumeCtx.isResuming
+      && !strategyTaskAtStart.planContract
     ) {
       const blocked = blockAutomaticContinuation(db, { runId: run.id });
       if (blocked) run.strategyTask = projectStrategyTask(blocked, run.id);
