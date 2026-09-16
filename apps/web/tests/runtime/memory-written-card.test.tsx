@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 //
-// OPEND-2607 — 「记忆写入成功后未展示可展开的记忆卡片」
+// Legacy OPEND-2607 extraction payload compatibility; OPEND-2745 now retires its ChatPanel UI.
 //
 // 复现者那一轮真的写进去了:后台记忆从 22 涨到 25,三条 rule 都能按 id 查到;
 // ChatPanel 里却只有一段普通助手文本 —— 没有卡、没有条数、没有展开收起。
@@ -133,7 +133,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('OPEND-2607 a turn that wrote memory shows the memory card', () => {
+describe('historical memory extraction payloads remain usable after OPEND-2745 hides notifications', () => {
   it('turns a real extraction into the batch the card is built from', async () => {
     const { result, rerender } = mountHook();
     extractions = [successRecord(Date.now())];
@@ -147,7 +147,7 @@ describe('OPEND-2607 a turn that wrote memory shows the memory card', () => {
     expect(result.current.batch?.entries.map((e) => e.id)).toEqual(WRITTEN_IDS);
   });
 
-  it('reaches the screen as the draft draws it: collapsed count, expanded contents', async () => {
+  it('keeps historical extraction payload decodable without rendering a notification', async () => {
     const { result, rerender } = mountHook();
     extractions = [successRecord(Date.now())];
     await runOneTurn(rerender);
@@ -170,13 +170,12 @@ describe('OPEND-2607 a turn that wrote memory shows the memory card', () => {
     const { container } = render(
       <I18nProvider initial="zh-CN"><OdCardView card={card} /></I18nProvider>,
     );
-    const details = container.querySelector('details[data-od-card="memory-applied"]');
-    expect(details).not.toBeNull();
-    // Collapsed: one title row saying how many were remembered.
-    expect(details?.querySelector('summary')?.textContent).toContain('已记住 3 条偏好');
-    // Expanded: the three entries that were actually written, each prefixed 「·」.
-    const expanded = container.querySelector('details > div')?.textContent ?? '';
-    for (const name of WRITTEN_NAMES) expect(expanded).toContain(`· ${name}`);
+    expect(container.querySelector('[data-od-card="memory-applied"]')).toBeNull();
+    expect(container.textContent).not.toContain('已记住 3 条偏好');
+    for (const name of WRITTEN_NAMES) expect(container.textContent).not.toContain(name);
+    // Hiding the presentation must not rewrite the extraction or its payload.
+    expect(result.current.batch?.entries.map((entry) => entry.id)).toEqual(WRITTEN_IDS);
+    expect(card.kind).toBe('memory-applied');
   });
 
   it('does not appear when the turn wrote nothing', async () => {

@@ -218,19 +218,11 @@ describe('OPEND-2764 宿主补发的记忆卡不该改变下一步引导的去�
       hostMemoryCard(),
     ]);
 
-    // 卡确实渲染了(否则下面这条会因为「整条消息没画」而假绿)
-    expect(
-      document.querySelector('[data-od-card="memory-applied"]'),
-      '夹具坏了 —— 记忆卡根本没渲染',
-    ).not.toBeNull();
-
-    const cardRow = document.querySelector<HTMLElement>(
-      '[data-assistant-message-id="assistant-memory-card"]',
-    );
-    expect(
-      cardRow!.querySelector('[data-testid="next-step-suggestions"]'),
-      '引导跑到记忆卡那条消息上去了',
-    ).toBeNull();
+    // Historical memory messages no longer render, but still must not steal
+    // the real delivered turn's next-step ownership (OPEND-2745).
+    expect(document.querySelector('[data-od-card="memory-applied"]')).toBeNull();
+    expect(document.querySelector('[data-assistant-message-id="assistant-memory-card"]')).toBeNull();
+    expect(document.querySelector('[data-testid="next-step-suggestions"]')).not.toBeNull();
   });
 });
 

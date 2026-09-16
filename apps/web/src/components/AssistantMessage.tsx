@@ -1292,6 +1292,28 @@ function AssistantMessageImpl({
     return null;
   };
 
+  // Historical extraction notifications were persisted as standalone host
+  // messages. Hide that now-retired notification's empty row, but keep real
+  // runs, mixed prose, code examples and any other message-owned payload.
+  if (
+    assistantMessageNeverHadARun(message)
+    && !message.producedFiles?.length
+    && !message.artifactRefs?.length
+    && !message.attachments?.length
+    && !message.commentAttachments?.length
+    && !message.forkedInto
+    && (message.events ?? []).every((event) => event.kind === 'text')
+  ) {
+    const notificationText = [message.content, (message.events ?? [])
+      .map((event) => event.kind === 'text' ? event.text : '').join('')].join('\n');
+    const segments = splitShellCards(notificationText, false);
+    if (
+      segments.some((segment) => segment.kind === 'card' && segment.card.kind === 'memory-applied')
+      && segments.every((segment) => segment.kind === 'card'
+        ? segment.card.kind === 'memory-applied' : segment.text.trim().length === 0)
+    ) return null;
+  }
+
   return (
     <div
       id={`assistant-message-${message.id}`}

@@ -219,10 +219,6 @@ import {
 import { useSingleFlightCallback } from '../runtime/useSingleFlightCallback';
 import { useBrandReadyPrompt } from '../runtime/useBrandReadyPrompt';
 import {
-  memoryWrittenCardContent,
-  useMemoryWrittenCard,
-} from '../runtime/useMemoryWrittenCard';
-import {
   buildDesignSystemPackageAuditRepairPrompt,
   summarizeDesignSystemPackageAudit,
 } from '../runtime/design-system-package-audit';
@@ -5751,44 +5747,8 @@ export function ProjectView({
     t,
   ]);
 
-  // Memory the conversation itself wrote. Extraction runs out of band after the
-  // turn (the daemon queues it on child close), so there is no run event left to
-  // carry it — and until this landed, three rules could reach the store with the
-  // transcript showing nothing but prose (OPEND-2607). Same shape as the assist
-  // card above: one host-authored assistant message, persisted with the
-  // conversation, so the card is still there after a reload. A batch that wrote
-  // nothing never reaches here, so the block simply does not appear at 0 — the
-  // draft's rule for every "empty means gone" surface in the panel.
-  const {
-    batch: memoryWritten,
-    dismiss: dismissMemoryWritten,
-  } = useMemoryWrittenCard(memoryExtractionRunActive);
-  useEffect(() => {
-    if (!memoryWritten || !activeConversationId) return;
-    if (messagesConversationId !== activeConversationId) return;
-    const content = memoryWrittenCardContent(
-      memoryWritten,
-      t('chat.memoryWrittenSummary', { count: memoryWritten.count }),
-    );
-    appendConversationMessage(activeConversationId, {
-      id: randomUUID(),
-      role: 'assistant',
-      agentId: selectedAssistantIdentity.agentId,
-      agentName: selectedAssistantIdentity.agentName,
-      content,
-      events: [{ kind: 'text', text: content }],
-      createdAt: Date.now(),
-    });
-    dismissMemoryWritten();
-  }, [
-    memoryWritten,
-    dismissMemoryWritten,
-    activeConversationId,
-    appendConversationMessage,
-    messagesConversationId,
-    selectedAssistantIdentity,
-    t,
-  ]);
+  // OPEND-2745 retires ChatPanel memory notifications. The daemon's memory
+  // extraction and the run-activity notification above remain independent.
 
   const replaceConversationMessage = useCallback(
     (

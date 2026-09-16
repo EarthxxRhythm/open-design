@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+// OPEND-2745 subsequently retired the memory presentation; neighboring capabilities stay covered.
 import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/react';
 import type { OdCard } from '@open-design/contracts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -90,7 +91,8 @@ describe.each(['shell', 'prose'] as const)('opaque hidden card payloads in %s', 
     openExecution(container);
     await waitFor(() => expect(container.textContent).toContain(BEFORE));
     expect(container.textContent).toContain(AFTER);
-    expect(container.querySelector('[data-od-card="memory-applied"]')?.textContent).toContain(MEMORY.summary);
+    expect(container.querySelector('[data-od-card="memory-applied"]')).toBeNull();
+    expect(container.textContent).not.toContain(MEMORY.summary);
     expectOpaque(container);
   });
 
@@ -117,7 +119,8 @@ describe.each(['shell', 'prose'] as const)('opaque hidden card payloads in %s', 
     rerender(ui(chunks, lane, false));
     openExecution(container);
     await waitFor(() => expect(container.textContent).toContain(AFTER));
-    expect(container.querySelector('[data-od-card="memory-applied"]')?.textContent).toContain(MEMORY.summary);
+    expect(container.querySelector('[data-od-card="memory-applied"]')).toBeNull();
+    expect(container.textContent).not.toContain(MEMORY.summary);
     expectOpaque(container);
   });
 
@@ -178,7 +181,7 @@ it('retains the same legacy grammar as an actual form outside any card', async (
   expect(container.textContent).toContain(AFTER);
 });
 
-it('retains the actual Thinking disclosure and expandable memory independently of hidden cards', async () => {
+it('retains the actual Thinking disclosure while memory remains hidden', async () => {
   const { container } = render(ui([`${BEFORE}\n\n${markup(MEMORY)}\n\n${AFTER}`], 'prose', false, undefined, true));
   openExecution(container);
   const thoughts = await waitFor(() => within(container).getByText('Thoughts'));
@@ -190,10 +193,8 @@ it('retains the actual Thinking disclosure and expandable memory independently o
   }
   await waitFor(() => expect(details?.textContent).toContain('Retained real Thinking content.'));
   const memory = container.querySelector<HTMLDetailsElement>('[data-od-card="memory-applied"]');
-  expect(memory).not.toBeNull();
-  if (memory) {
-    memory.open = true;
-    fireEvent(memory, new Event('toggle', { bubbles: false }));
-  }
-  expect(memory?.textContent).toContain('Retained palette rule');
+  expect(memory).toBeNull();
+  expect(container.textContent).not.toContain('Retained palette rule');
+  expect(container.textContent).toContain(BEFORE);
+  expect(container.textContent).toContain(AFTER);
 });

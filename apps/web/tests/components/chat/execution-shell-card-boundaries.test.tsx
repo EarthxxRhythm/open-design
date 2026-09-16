@@ -48,10 +48,12 @@ afterEach(() => {
 });
 
 describe('execution shell card boundaries', () => {
-  it('renders memory while preserving neighboring Markdown', () => {
+  it('consumes retired memory while preserving neighboring Markdown', () => {
     const card = MEMORY_APPLIED;
     const { container } = render(show([{ kind: 'text', text: `**Before**\n\n${markup(card)}\n\nAfter` }]));
-    expect(container.querySelector(`[data-od-card="${card.kind}"]`)).not.toBeNull();
+    expect(container.querySelector(`[data-od-card="${card.kind}"]`)).toBeNull();
+    expect(container.textContent).not.toContain(card.summary);
+    expect(container.textContent).not.toContain('<od-card');
     expect(container.querySelector('strong')?.textContent).toBe('Before');
     expect(container.textContent).toContain('After');
   });
@@ -74,31 +76,31 @@ describe('execution shell card boundaries', () => {
     expect(container.querySelector('code')?.textContent).toContain(raw);
   });
 
-  it('keeps code examples and real cards in their original order', () => {
+  it('keeps code examples before trailing prose while consuming retired cards', () => {
     const raw = markup(TASK_BRIEF);
     const { container } = render(show([{ kind: 'text', text: `\`${raw}\`\n\n${markup(MEMORY_APPLIED)}\n\nTail` }]));
     const code = container.querySelector('code');
     const card = container.querySelector('[data-od-card="memory-applied"]');
     expect(code?.textContent).toBe(raw);
-    expect(card).not.toBeNull();
-    expect(code!.compareDocumentPosition(card!) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect(card).toBeNull();
+    expect(code!.compareDocumentPosition(screen.getByText('Tail')) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     expect(container.textContent).toContain('Tail');
   });
 
-  it('reveals a streamed card only after it closes and preserves terminal malformed text', () => {
+  it('consumes a streamed retired card after it closes and preserves terminal malformed text', () => {
     const raw = markup(MEMORY_APPLIED);
     const { container, rerender } = render(show([{ kind: 'text', text: `Before\n${raw.slice(0, -10)}` }]));
     expect(container.textContent).toContain('Before');
     expect(container.textContent).not.toContain('<od-card');
     rerender(show([{ kind: 'text', text: `Before\n${raw}\nAfter` }]));
-    expect(container.querySelector('[data-od-card="memory-applied"]')).not.toBeNull();
+    expect(container.querySelector('[data-od-card="memory-applied"]')).toBeNull();
     expect(container.textContent).toContain('After');
     const malformed = '<od-card type="task-brief">not JSON';
     rerender(<I18nProvider initial="en"><ExecutionShell shell={{ ...shell([{ kind: 'text', text: malformed }]), status: 'done' }} deferCollapsedBodies={false} /></I18nProvider>);
     expect(container.textContent).toContain(malformed);
   });
 
-  it('holds live opener prefixes without hiding earlier prose or losing the completed card', () => {
+  it('holds live opener prefixes and consumes the completed retired card without losing prose', () => {
     // Real ACP/SSE QA on 201ba003 exposed "<od-ca" in an expanded shell
     // after event 18, before the remainder of the same legitimate card arrived.
     const raw = markup(MEMORY_APPLIED);
@@ -112,8 +114,8 @@ describe('execution shell card boundaries', () => {
       expect(container.querySelector('[data-od-card]')).toBeNull();
     }
     rerender(show([{ kind: 'text', text: `D2 SSE before.\n${raw}\nD2 SSE after.` }]));
-    expect(container.querySelectorAll('[data-od-card="memory-applied"]')).toHaveLength(1);
-    expect(container.textContent).toContain(MEMORY_APPLIED.summary);
+    expect(container.querySelectorAll('[data-od-card="memory-applied"]')).toHaveLength(0);
+    expect(container.textContent).not.toContain(MEMORY_APPLIED.summary);
     expect(container.textContent).toContain('D2 SSE before.');
     expect(container.textContent).toContain('D2 SSE after.');
   });
@@ -151,26 +153,18 @@ describe('execution shell card boundaries', () => {
     }
   });
 
-  it('keeps memory disclosure local to each todo and preserves both cards on remount', () => {
+  it('keeps both todo records while memory stays hidden on remount and conversation change', () => {
     const raw = markup(MEMORY_APPLIED);
     const items = [todo('First step', raw), todo('Second step', raw)];
-    const first = render(show(items));
-    const cards = first.container.querySelectorAll<HTMLDetailsElement>('[data-od-card="memory-applied"]');
-    expect(cards).toHaveLength(2);
-    const [firstCard, secondCard] = cards;
-    if (!firstCard || !secondCard) throw new Error('Missing independent todo cards');
-    const summary = firstCard.querySelector('summary');
-    if (!summary) throw new Error('Missing memory disclosure control');
-    fireEvent.click(summary);
-    expect(firstCard.open).toBe(true);
-    expect(secondCard.open).toBe(false);
-    first.unmount();
-    const remount = render(show(items));
-    expect(remount.container.querySelectorAll('[data-od-card="memory-applied"]')).toHaveLength(2);
-    expect(remount.container.querySelectorAll('[data-od-card="memory-applied"][open]')).toHaveLength(0);
-    cleanup();
-    const other = render(show(items, 'another-conversation'));
-    expect(other.container.querySelectorAll('[data-od-card="memory-applied"]')).toHaveLength(2);
+    for (const scope of ['same-conversation', 'same-conversation', 'another-conversation']) {
+      const view = render(show(items, scope));
+      expect(view.container.textContent).toContain('First step');
+      expect(view.container.textContent).toContain('Second step');
+      expect(view.container.querySelectorAll('[data-od-card="memory-applied"]')).toHaveLength(0);
+      expect(view.container.textContent).not.toContain(MEMORY_APPLIED.summary);
+      expect(view.container.textContent).not.toContain('<od-card');
+      view.unmount();
+    }
   });
 
   it('hides retired browser assistance inside a todo without dropping its neighboring text', () => {

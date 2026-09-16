@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+// OPEND-2745 subsequently retired the memory presentation; neighboring capabilities stay covered.
 import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { OdCard } from '@open-design/contracts';
@@ -85,8 +86,8 @@ describe.each(['shell', 'prose'] as const)('hidden brand-browser-assist in %s', 
       await waitFor(() => expect(container.textContent).toContain('Visible before.'));
       expect(container.textContent).toContain('Visible after.');
       expect(container.querySelector('code')?.textContent).toBe('<od-demo>literal</od-demo>');
-      expect(container.querySelector('[data-od-card="memory-applied"]')).not.toBeNull();
-      expect(container.textContent).toContain(MEMORY.summary);
+      expect(container.querySelector('[data-od-card="memory-applied"]')).toBeNull();
+      expect(container.textContent).not.toContain(MEMORY.summary);
 
       expect(container.querySelector('[data-od-card="brand-browser-assist"]')).toBeNull();
       expect(within(container).queryByRole('button', { name: 'Open browser assist' })).toBeNull();
@@ -111,9 +112,9 @@ describe.each(['shell', 'prose'] as const)('hidden brand-browser-assist in %s', 
     const { container } = show(message(text, lane, false), true);
     await waitFor(() => expect(container.textContent).toContain('Visible before.'));
     expect(container.textContent).toContain('Visible after.');
-    expect(container.querySelector('[data-od-card="memory-applied"]')).not.toBeNull();
+    expect(container.querySelector('[data-od-card="memory-applied"]')).toBeNull();
     expect(container.querySelector('[data-od-card="verify-scorecard"]')).toBeNull();
-    expect(container.textContent).toContain(MEMORY.summary);
+    expect(container.textContent).not.toContain(MEMORY.summary);
     expect(container.textContent).not.toContain(SCORE.summary);
     expect(container.textContent).not.toContain('<od-card');
     expect(container.querySelector('[data-od-card="task-brief"]')).toBeNull();

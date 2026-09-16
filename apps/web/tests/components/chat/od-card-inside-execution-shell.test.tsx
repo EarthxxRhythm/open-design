@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 /**
- * Approved memory cards must render both before and after authenticated done.
+ * Retired memory cards must be consumed both before and after authenticated done.
  * D2 originally reproduced this lane gap with a task-brief. OPEND-2971 removes
- * task-brief/rule-proposal presentation, so memory-applied now keeps the same
+ * task-brief/rule-proposal presentation; OPEND-2745 also retires memory. Keep the same
  * live-shell, neighboring-prose, and outer-conclusion regression anchors.
  */
 import { cleanup, render } from '@testing-library/react';
@@ -84,14 +84,14 @@ describe('od-card 出现在执行壳内', () => {
     ).not.toContain('<od-card');
   });
 
-  it('渲染成 memory-applied 那张卡,而不是删掉', () => {
+  it('解析并隐藏已退役记忆卡，不漏出载荷', () => {
     const { container } = renderTurn(turnWithCardBeforeDone());
 
     expect(
       container.querySelector('[data-od-card="memory-applied"]'),
-      '卡片没渲染出来 —— 修复不许把 od-card 当噪音删掉',
-    ).not.toBeNull();
-    expect(container.textContent ?? '').toContain('狐假虎威');
+      'OPEND-2745 已明确隐藏记忆卡',
+    ).toBeNull();
+    expect(container.textContent ?? '').not.toContain('狐假虎威');
   });
 
   it('卡片之外的过程叙述照旧留在壳里', () => {
@@ -112,17 +112,17 @@ describe('od-card 出现在执行壳内', () => {
  * ⚠️ **对照锚点 —— 壳外那条原有通道**。
  *
  * `<od-done>` 之后发的卡片走的是 `AssistantMessage` 的 `prose-block`,那条通道
- * 的保留卡片显示也必须继续正常。
+ * 也须消耗已退役记忆卡，并保留真实正文。
  */
-describe('壳外那条原有通道不变', () => {
-  it('done 之后的 od-card 照旧渲染成卡片', () => {
+describe('壳外那条原有通道也消耗已退役卡', () => {
+  it('done 之后的记忆卡也隐藏，真实完成正文保留', () => {
     const { container } = renderTurn({
       id: 'assistant-card-after-done',
       role: 'assistant',
-      content: `完成。<od-done key="${KEY}"/>${MEMORY_CARD}`,
+      content: `完成。<od-done key="${KEY}"/>${MEMORY_CARD}\n交付正文。`,
       events: [
         { kind: 'done_key', key: KEY },
-        { kind: 'text', text: `完成。<od-done key="${KEY}"/>${MEMORY_CARD}` },
+        { kind: 'text', text: `完成。<od-done key="${KEY}"/>${MEMORY_CARD}\n交付正文。` },
       ],
       agentId: 'claude',
       agentName: 'Claude',
@@ -131,9 +131,13 @@ describe('壳外那条原有通道不变', () => {
       createdAt: 1_700_000_000_000,
       startedAt: 1_700_000_000_000,
       endedAt: 1_700_000_009_000,
-    } as ChatMessage);
+    } as ChatMessage, false);
 
-    expect(container.querySelector('[data-od-card="memory-applied"]')).not.toBeNull();
+    // The old fixture put 完成 before done (inside the collapsed shell) and
+    // defaulted streaming=true despite succeeded. Assert the actual outer
+    // conclusion first, on both baseline and candidate, then the retired UI.
+    expect(container.textContent ?? '').toContain('交付正文。');
+    expect(container.querySelector('[data-od-card="memory-applied"]')).toBeNull();
     expect(container.textContent ?? '').not.toContain('<od-card');
   });
 });

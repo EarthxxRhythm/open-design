@@ -641,7 +641,7 @@ const UNDERSTANDING: Cell[] = [
         ],
       }} />
     ),
-    notes: ['已按 D47 改成可折叠:收起只留一句,条目移进展开区(用户 2026-08-25 拍板)'],
+    notes: ['OPEND-2745 后续产品决定去掉记忆通知；保留历史格号，真实组件不再展示'],
   },
   {
     gid: 27, sub: '8-2', cmp: '记忆组件', state: '展开 · 查看被记忆的内容', family: '理解段',
@@ -658,8 +658,7 @@ const UNDERSTANDING: Cell[] = [
       }} />
     ),
     notes: [
-      '展开的就是原来铺在行内的那三条,没有新数据(D47)',
-      '**与稿子的一处不同**:我们保留了类型色点(项目 / 反馈 / 用户),稿子是纯「· 文字」—— 色点是产品已有的信息,稿子没建模,请确认去留',
+      'OPEND-2745 后续产品决定去掉记忆通知；不再提供展开态，保留记忆存储与其他入口',
     ],
   },
 ];
@@ -2298,6 +2297,13 @@ describe('镜像陈列页', () => {
     for (const cell of CELLS) {
       const html = renderCell(cell);
       if (cell.missing) continue;              // 出不来的格子只出说明,不断言实体
+      if (cell.gid === 26 || cell.gid === 27) {
+        // OPEND-2745 explicitly retires both memory states; keep their gallery
+        // identities and assert absence instead of claiming a missing component.
+        expect(html).not.toContain('data-od-card="memory-applied"');
+        expect(html).not.toContain('已记住');
+        continue;
+      }
       expect(html.length, `#${cell.gid} ${cell.sub} 渲染为空`).toBeGreaterThan(120);
       // 走事件流的那族必须出壳;挂现成组件的那族没有壳,只要不是空的就行
       if (cell.events) expect(html, `#${cell.gid} 没有壳`).toContain('details');
@@ -2319,7 +2325,8 @@ describe('镜像陈列页', () => {
     expect(renderCell(CELLS[9] as Cell)).toContain('生成配套插图');
     // 理解段挂的是产品里已有的组件,不是这次新写的
     expect(renderCell(CELLS[15] as Cell)).toContain('设置页要不要沿用列表页的商品卡组件');
-    expect(renderCell(CELLS[25] as Cell)).toContain('已记住 3 条偏好');
+    expect(renderCell(CELLS[25] as Cell)).not.toContain('已记住 3 条偏好');
+    expect(renderCell(CELLS[26] as Cell)).not.toContain('data-od-card="memory-applied"');
   });
 
   /**

@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+// OPEND-2745 subsequently retired the memory presentation; neighboring capabilities stay covered.
 import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { OdCard } from '@open-design/contracts';
@@ -81,8 +82,8 @@ describe.each(['shell', 'prose'] as const)('removed ChatPanel cards in %s', (lan
       await waitFor(() => expect(container.textContent).toContain(PROSE));
       expect(container.textContent).toContain('Visible trailing prose');
       expect(container.querySelector('code')?.textContent).toBe(CODE);
-      expect(container.querySelector('[data-od-card="memory-applied"]')).not.toBeNull();
-      expect(container.textContent).toContain('Retained memory');
+      expect(container.querySelector('[data-od-card="memory-applied"]')).toBeNull();
+      expect(container.textContent).not.toContain('Retained memory');
 
       expect(container.querySelector(`[data-od-card="${card.kind}"]`)).toBeNull();
       expect(container.textContent).not.toContain('UNDESIGNED_');
@@ -104,7 +105,7 @@ describe.each(['shell', 'prose'] as const)('removed ChatPanel cards in %s', (lan
     expect(container.querySelector('code')?.textContent).toBe(quoted);
     expect(container.querySelector('[data-od-card="task-brief"]')).toBeNull();
     expect(container.querySelector('[data-od-card="rule-proposal"]')).toBeNull();
-    expect(container.querySelector('[data-od-card="memory-applied"]')).not.toBeNull();
+    expect(container.querySelector('[data-od-card="memory-applied"]')).toBeNull();
   });
 });
 

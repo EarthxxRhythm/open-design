@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+// OPEND-2745 subsequently retired the memory presentation; neighboring capabilities stay covered.
 import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { OdCard } from '@open-design/contracts';
@@ -83,10 +84,9 @@ describe.each(['shell', 'prose'] as const)('hidden verification scorecards in %s
       await waitFor(() => expect(container.textContent).toContain(BEFORE));
       expect(container.textContent).toContain(AFTER);
       const memory = container.querySelector<HTMLDetailsElement>('[data-od-card="memory-applied"]');
-      expect(memory).not.toBeNull();
-      expect(memory?.textContent).toContain(MEMORY.summary);
-      openDetails(memory);
-      expect(memory?.textContent).toContain('Use the saved palette');
+      expect(memory).toBeNull();
+      expect(container.textContent).not.toContain(MEMORY.summary);
+      expect(container.textContent).not.toContain('Use the saved palette');
 
       expect(container.querySelector('[data-od-card="verify-scorecard"]')).toBeNull();
       expect(within(container).queryByRole('button', { name: /Self-check/ })).toBeNull();
@@ -119,7 +119,8 @@ describe('unrelated ChatPanel capabilities stay available', () => {
     expect(disclosure).not.toBeNull();
     openDetails(disclosure);
     await waitFor(() => expect(disclosure?.textContent).toContain('Thinking content remains visible.'));
-    expect(container.querySelector('[data-od-card="memory-applied"]')?.textContent).toContain(MEMORY.summary);
+    expect(container.querySelector('[data-od-card="memory-applied"]')).toBeNull();
+    expect(container.textContent).not.toContain(MEMORY.summary);
     expect(container.textContent).toContain(BEFORE);
     expect(container.textContent).toContain(AFTER);
   });

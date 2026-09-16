@@ -164,8 +164,8 @@ describe('OPEND-2644 记忆卡插在问卷后面', () => {
   it('问卷还没提交,后面来了一条独立助手消息 —— 它仍然可以填', () => {
     renderChat([formTurn(), memoryCardMessage()]);
 
-    // 记忆卡确实在(不是夹具没渲染出来,那样下面的断言会假绿)
-    expect(document.querySelector('[data-od-card="memory-applied"]')).not.toBeNull();
+    // 历史记忆消息仍在输入中，但 OPEND-2745 已退役展示；真实问卷必须仍可操作。
+    expect(document.querySelector('[data-od-card="memory-applied"]')).toBeNull();
 
     expect(formIsAnswerable(), '问卷被后来的助手消息锁住了(OPEND-2644)').toBe(true);
     expect(screen.queryByText(en['qf.answered'])).toBeNull();

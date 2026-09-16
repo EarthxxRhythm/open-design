@@ -65,11 +65,13 @@ describe('hidden reminder ownership across protocol boundaries', () => {
     });
   }
 
-  it('retains reminder-like text inside a real memory-card JSON string', () => {
+  it('keeps reminder-like memory payload opaque without consuming neighboring prose', () => {
     const summary = 'Literal <system-reminder>retained data</system-reminder> in memory';
     const card = `<od-card type="memory-applied">${JSON.stringify({ kind: 'memory-applied', summary, used: [] })}</od-card>`;
     const { container } = render(ui(`${BEFORE}\n\n${card}\n\n${AFTER}`, false));
-    expect(container.querySelector('[data-od-card="memory-applied"]')?.textContent).toContain(summary);
+    expect(container.querySelector('[data-od-card="memory-applied"]')).toBeNull();
+    expect(container.textContent).not.toContain(summary);
+    expect(container.textContent).not.toContain('<od-card');
     expect(container.textContent).toContain(BEFORE);
     expect(container.textContent).toContain(AFTER);
   });
