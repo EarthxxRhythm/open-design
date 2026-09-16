@@ -1,3 +1,4 @@
+import { readRetriedErrorSurface, retriedErrorSurfaceKey, writeRetriedErrorSurface } from '../runtime/chat/retried-error-surface';
 import {
   startTransition,
   useCallback,
@@ -327,7 +328,8 @@ import { persistCommentAnchors } from '../collab/comment-anchor-client';
 import type { AnchorWriteBack } from '../comments';
 import { PluginDetailsModal } from './PluginDetailsModal';
 import { DesignSystemPreviewModal } from './DesignSystemPreviewModal';
-import { ChatPane } from './ChatPane';
+import { ChatPane, foldStrategyTaskTurns } from './ChatPane';
+import { trailingMessageIgnoringHostCards } from '../runtime/chat/host-authored-message';
 import type { ChatSendMeta, ChatSendOutcome } from './ChatComposer';
 import {
   CritiqueTheaterMount,
@@ -844,6 +846,8 @@ interface Props {
   daemonLive: boolean;
   onModeChange: (mode: AppConfig['mode']) => void;
   onAgentChange: (id: string) => void;
+  /** Resolves only after the App configuration owner has persisted Cloud. */
+  onSwitchToCloud?: () => Promise<void>;
   onAgentModelChange: (
     id: string,
     choice: { model?: string; reasoning?: string; serviceTier?: string },
@@ -2147,6 +2151,7 @@ export function ProjectView({
   onRefreshAgents,
   onOpenSettings,
   onOpenAmrSettings,
+  onSwitchToCloud,
   onOpenMcpSettings,
   onBrowsePlugins,
   onOpenConnectors,
@@ -2642,7 +2647,11 @@ export function ProjectView({
   const activeSessionMode = activeConversation?.sessionMode ?? 'design';
   const [messagesConversationId, setMessagesConversationId] = useState<string | null>(null);
   const [failedMessagesConversationId, setFailedMessagesConversationId] = useState<string | null>(null);
-  const [conversationLoadError, setConversationLoadError] = useState<string | null>(null);
+  const [conversationLoadFailure, setConversationLoadFailure] = useState<{
+    message: string;
+    source: 'read' | 'create';
+  } | null>(null);
+  const conversationLoadError = conversationLoadFailure?.message ?? null;
   const conversationMaterializationRecoveryRef =
     useRef<ConversationMaterializationRecovery | null>(null);
   const conversationMaterializationGenerationControllerRef =
@@ -2735,6 +2744,24 @@ export function ProjectView({
   const committedFilesRefreshKeyRef = useRef(committedFilesRefreshKey);
   committedFilesRefreshKeyRef.current = committedFilesRefreshKey;
   const projectFilesRef = useRef<ProjectFile[]>([]);
+  // A workspace manual save is explicit caller evidence, not a property of
+  // every browser POST (chat artifact persistence uses that API too).
+  const manualFileWritesByRunRef = useRef(new Map<AbortController, {
+    projectId: string;
+    authorityKey: string;
+    conversationId: string;
+    runId: string | null;
+    detached: boolean;
+    files: Map<string, ProjectFile>;
+    dispose: () => void;
+  }>());
+  useEffect(() => () => {
+    for (const run of manualFileWritesByRunRef.current.values()) {
+      if (run.projectId === project.id && run.authorityKey === projectRunAuthorityKey) {
+        run.dispose();
+      }
+    }
+  }, [project.id, projectRunAuthorityKey]);
   const projectFilesRequestSeqRef = useRef(0);
   const [liveArtifacts, setLiveArtifacts] = useState<LiveArtifactSummary[]>([]);
   const [liveArtifactEvents, setLiveArtifactEvents] = useState<LiveArtifactEventItem[]>([]);
@@ -3184,7 +3211,7 @@ export function ProjectView({
   /**
    * 正在等服务端确认的那一次重试(OPEND-2758)。
    *
-   * `failedAssistantId` 是报错卡的主,重试期间卡钉在它身上;
+   * `failedAssistantId` 只识别被接管的旧失败，错误卡不再固定在它身上;
    * `replacementAssistantId` 是这一发新画出去的助手消息 —— 它拿到 `runId`
    * (也就是 `POST /api/runs` 回来了)才算「服务端确认」,宣告到那一刻才撤。
    */
@@ -3193,6 +3220,27 @@ export function ProjectView({
     failedAssistantId: string;
     replacementAssistantId: string;
   } | null>(null);
+  // A ref closes the same-render double-click window before React paints busy.
+  const retryLocksRef = useRef(new Map<string, string>());
+  const [retriedErrorSurfaces, setRetriedErrorSurfaces] = useState<Record<string, readonly string[]>>({});
+  const retriedErrorKey = activeConversationId
+    ? retriedErrorSurfaceKey(project.id, activeConversationId)
+    : null;
+  const supersededErrorAssistantIds = retriedErrorKey
+    ? retriedErrorSurfaces[retriedErrorKey] ?? readRetriedErrorSurface(retriedErrorKey) ?? []
+    : [];
+  const supersedeRetriedError = useCallback((
+    conversationId: string,
+    displayedAssistantId: string,
+    physicalAssistantId: string,
+  ) => {
+    const key = retriedErrorSurfaceKey(project.id, conversationId);
+    // A folded strategy turn displays its request ID but owns the final run's
+    // diagnostic. Both identities belong to this one validated retry target.
+    const assistantIds = [...new Set([displayedAssistantId, physicalAssistantId])];
+    writeRetriedErrorSurface(key, assistantIds);
+    setRetriedErrorSurfaces((current) => ({ ...current, [key]: assistantIds }));
+  }, [project.id]);
   /** 这次重试的替补助手消息**曾经**上过屏 —— 见下面那个 effect 的第三条出路。 */
   const retryPendingPaintedRef = useRef<string | null>(null);
   const [autoAuditRepairSeed, setAutoAuditRepairSeed] =
@@ -3582,6 +3630,19 @@ export function ProjectView({
     ),
   });
   const currentConversationActionDisabled = currentConversationActionBlockReason !== null;
+  // Keep the broad mutation gate above: pending authority/materialization also
+  // forbids sending, but only a settled denial can claim view-only permission.
+  let currentConversationAccessError: 'messages-unavailable' | 'read-only' | null = null;
+  if (
+    conversationLoadFailure?.source === 'read'
+    || (activeConversationId && failedMessagesConversationId === activeConversationId)
+  ) {
+    currentConversationAccessError = 'messages-unavailable';
+  } else if (projectCollab.writerAuthority === 'denied') {
+    currentConversationAccessError = 'read-only';
+  }
+  const currentConversationActionDisabledRef = useRef(currentConversationActionDisabled);
+  currentConversationActionDisabledRef.current = currentConversationActionDisabled;
   // Directory and project scope may project different roles for the same
   // principal. Only defer comparison while that scope is still unresolved.
   const amrAuthRetryAuthorityPending = Boolean(
@@ -3630,7 +3691,7 @@ export function ProjectView({
     const requestWorkspaceContext = projectRunWorkspaceContextRef.current;
     conversationMaterializationRecoveryRef.current = null;
     setPendingEmptyConversationSeed(null);
-    setConversationLoadError(null);
+    setConversationLoadFailure(null);
     setError(null);
     if (!revalidatingCurrentProject) {
       setConversations([]);
@@ -3709,7 +3770,7 @@ export function ProjectView({
           setConversations([]);
           setActiveConversationId(null);
         }
-        setConversationLoadError(message);
+        setConversationLoadFailure({ message, source: 'read' });
         setError(message);
       }
     })();
@@ -3757,7 +3818,7 @@ export function ProjectView({
       if (projectRunAuthorityKeyRef.current !== recovery.authorityKey) return;
 
       conversationMaterializationRecoveryRef.current = null;
-      setConversationLoadError(null);
+      setConversationLoadFailure(null);
       setError((current) => (
         current === recovery.errorMessage ? null : current
       ));
@@ -3795,7 +3856,7 @@ export function ProjectView({
       const message = err instanceof Error
         ? err.message
         : 'Could not load conversations for this project.';
-      setConversationLoadError(message);
+      setConversationLoadFailure({ message, source: 'read' });
       setError((current) => reconcileConversationRecoveryGlobalError(
         current,
         recovery.errorMessage,
@@ -3852,7 +3913,7 @@ export function ProjectView({
             ? err.message
             : 'Could not create a conversation for this project.';
         setPendingEmptyConversationSeed(null);
-        setConversationLoadError(message);
+        setConversationLoadFailure({ message, source: 'create' });
         setError(message);
       }
     })();
@@ -4490,6 +4551,63 @@ export function ProjectView({
     return nextFiles;
   }, [refreshLiveArtifacts, refreshProjectFiles]);
 
+  const recordManualFileWrite = useCallback((file: ProjectFile) => {
+    for (const [controller, run] of manualFileWritesByRunRef.current) {
+      if ((run.detached || !controller.signal.aborted) && run.projectId === project.id
+        && run.authorityKey === projectRunAuthorityKey) {
+        run.files.set(file.name, { ...file });
+      }
+    }
+  }, [project.id, projectRunAuthorityKey]);
+
+  const findDetachedManualFileWrites = useCallback((conversationId: string, runId: string) => {
+    for (const run of manualFileWritesByRunRef.current.values()) {
+      if (run.detached && run.projectId === project.id
+        && run.authorityKey === projectRunAuthorityKey
+        && run.conversationId === conversationId && run.runId === runId) return run;
+    }
+    return undefined;
+  }, [project.id, projectRunAuthorityKey]);
+
+  const registerManualFileWrites = useCallback((
+    controller: AbortController,
+    files: Map<string, ProjectFile>,
+    conversationId: string,
+    runId: string | null = null,
+  ) => {
+    const previous = runId ? findDetachedManualFileWrites(conversationId, runId) : undefined;
+    if (previous) {
+      for (const [name, file] of previous.files) files.set(name, file);
+      previous.dispose();
+    }
+    const dispose = () => {
+      manualFileWritesByRunRef.current.delete(controller);
+      controller.signal.removeEventListener('abort', dispose);
+    };
+    const entry = {
+      projectId: project.id, authorityKey: projectRunAuthorityKey,
+      conversationId, runId, detached: false, files, dispose,
+    };
+    manualFileWritesByRunRef.current.set(controller, entry);
+    controller.signal.addEventListener('abort', dispose, { once: true });
+    return {
+      bindRun: (nextRunId: string) => {
+        // A strategy successor can reuse the assistant and transport, but its
+        // physical run must not inherit a predecessor's ownership receipts.
+        if (entry.runId && entry.runId !== nextRunId) files.clear();
+        entry.runId = nextRunId;
+      },
+      release: (recoverable = false) => {
+        if (recoverable && entry.runId && !controller.signal.aborted) {
+          // Keep observing real writes between transports, including during
+          // the status probe/backoff. Only the same scoped physical run adopts it.
+          entry.detached = true;
+          controller.signal.removeEventListener('abort', dispose);
+        } else dispose();
+      },
+    };
+  }, [project.id, projectRunAuthorityKey, findDetachedManualFileWrites]);
+
   const refreshFileWorkspace = useCallback(async (
     options?: { fresh?: boolean },
   ): Promise<FileRefreshResult> => {
@@ -4584,6 +4702,9 @@ export function ProjectView({
     );
     if (!primaryFile) return;
     hasAppliedInitialPrimaryOpenRef.current = true;
+    // This default is a host selection, just like requestOpenFile. Persisting
+    // it must not turn an automatically opened search image into a user veto.
+    lastHostRequestedOpenRef.current = primaryFile.name;
     persistTabsState({ tabs: [primaryFile.name], active: primaryFile.name });
   }, [
     openTabsState.active,
@@ -4816,7 +4937,7 @@ export function ProjectView({
         return { ok: false as const, error: message };
       }
     },
-    [project.id, projectDesignSystemId, project.skillId, requestOpenFile],
+    [project.id, projectDesignSystemId, project.skillId, projectRunWorkspaceContext, requestOpenFile],
   );
 
   const artifactFromStandaloneHtml = useCallback(
@@ -6042,8 +6163,8 @@ export function ProjectView({
       const commentConversationId = activeConversationId ?? routeConversationId;
       if (!commentConversationId) {
         setProjectActionsToast({
-          message: t('project.previewCommentSaveFailed'),
-          details: null,
+          message: t('project.previewCommentSaveFailedTitle'),
+          details: t('project.previewCommentSaveFailedDescription'),
           tone: 'error',
           ttlMs: 5000,
         });
@@ -6063,8 +6184,8 @@ export function ProjectView({
         );
         if (result.uploaded.length !== images.length) {
           setProjectActionsToast({
-            message: t('project.previewCommentSaveFailed'),
-            details: null,
+            message: t('project.previewCommentSaveFailedTitle'),
+            details: t('project.previewCommentSaveFailedDescription'),
             tone: 'error',
             ttlMs: 5000,
           });
@@ -6092,8 +6213,8 @@ export function ProjectView({
         // workspace context 401s here with zero prior UI feedback, and the
         // popover otherwise just closes as if the comment had saved.
         setProjectActionsToast({
-          message: t('project.previewCommentSaveFailed'),
-          details: null,
+          message: t('project.previewCommentSaveFailedTitle'),
+          details: t('project.previewCommentSaveFailedDescription'),
           tone: 'error',
           ttlMs: 5000,
         });
@@ -6414,6 +6535,8 @@ export function ProjectView({
           ?? await fetchChatRunStatus(runId, projectRunWorkspaceContext);
         if (cancelled) return;
         if (!physicalStatus) {
+          // A local retry seal is not a daemon terminal verdict. Keep this
+          // run's receipts for the existing manual reconnect action.
           // `fetchChatRunStatus` returns null on ANY non-OK response or fetch
           // exception (providers/daemon.ts:686), not only when the daemon has
           // permanently forgotten the run.  For a spuriously-failed pending
@@ -6462,6 +6585,9 @@ export function ProjectView({
         const reattachRunId = taskRunAdvanced && projectedActiveRunId
           ? projectedActiveRunId
           : runId;
+        if (taskRunAdvanced) {
+          findDetachedManualFileWrites(reattachConversationId, runId)?.dispose();
+        }
         const projectedTaskStatus: ChatMessage['runStatus'] =
           physicalStatus.strategyTask?.terminal === true
             ? physicalStatus.strategyTask.outcome === 'canceled'
@@ -6512,6 +6638,7 @@ export function ProjectView({
             );
           }
           completedReattachRunsRef.current.add(runId);
+          findDetachedManualFileWrites(reattachConversationId, runId)?.dispose();
           continue;
         }
         if (
@@ -6531,6 +6658,7 @@ export function ProjectView({
           && (!status.strategyTask || status.strategyTask.terminal)
         ) {
           completedReattachRunsRef.current.add(runId);
+          findDetachedManualFileWrites(reattachConversationId, runId)?.dispose();
           continue;
         }
         if (status.strategyTask?.taskExecutionId) {
@@ -6566,6 +6694,7 @@ export function ProjectView({
           genericDisconnectRetriesRef.current.delete(runId);
           genericDisconnectBackoffUntilRef.current.delete(runId);
           completedReattachRunsRef.current.add(runId);
+          findDetachedManualFileWrites(reattachConversationId, runId)?.dispose();
           continue;
         }
         if (spuriouslyFailedPending && status.status === 'canceled') {
@@ -6591,6 +6720,7 @@ export function ProjectView({
           genericDisconnectRetriesRef.current.delete(runId);
           genericDisconnectBackoffUntilRef.current.delete(runId);
           completedReattachRunsRef.current.add(runId);
+          findDetachedManualFileWrites(reattachConversationId, runId)?.dispose();
           continue;
         }
         if (spuriouslyFailedPending && status.status === 'succeeded') {
@@ -6662,7 +6792,9 @@ export function ProjectView({
               { telemetryFinalized: true },
             );
 
-            let nextFiles = await refreshProjectFiles();
+            // A terminal run's artifact paths must resolve against a post-run
+            // read, not a shared file-list result cached before its last write.
+            let nextFiles = await refreshProjectFiles({ fresh: true });
             const beforeFileNames = new Set(
               message.preTurnFileNames ?? nextFiles.map((f) => f.name),
             );
@@ -6704,19 +6836,25 @@ export function ProjectView({
                 nextFiles = await refreshProjectFiles();
               }
             }
+            const touchedFilePaths = extractTouchedFilePathsFromEvents(message.events);
+            const recoveredManualFileWrites = findDetachedManualFileWrites(reattachConversationId, runId);
+            const ownedFiles = attributableRunFiles(
+              nextFiles, recoveredManualFileWrites?.files ?? new Map<string, ProjectFile>(),
+              [...touchedFilePaths, ...(status.artifactPaths ?? [])], project.id, projectDetail.resolvedDir,
+              artifactPersistenceSucceeded ? savedArtifactRef.current : null,
+            );
             const diff = computeProducedFiles(
               beforeFileNames,
-              nextFiles,
+              ownedFiles,
               status.artifactPaths,
               project.id,
               projectDetail.resolvedDir,
             ) ?? [];
             const produced = mergeRecoveredArtifact(diff, recoveredExistingArtifact);
-            const touchedFilePaths = extractTouchedFilePathsFromEvents(message.events);
             const traceObjectFiles = mergeRecoveredTraceObjectFile(
               computeTraceObjectFiles(
                 beforeFileNames,
-                nextFiles,
+                ownedFiles,
                 [...touchedFilePaths, ...(status.artifactPaths ?? [])],
                 project.id,
                 projectDetail.resolvedDir,
@@ -6738,7 +6876,7 @@ export function ProjectView({
                 projectDetail.resolvedDir,
               ),
             });
-            if (turnArtifacts.focused) {
+            if (turnArtifacts.focused && !userTookOverPreviewRef.current) {
               requestOpenTurnArtifacts(turnArtifacts.open, turnArtifacts.focused);
             }
             const deliveryOutcome = resolveDesignDeliveryOutcome({
@@ -6776,6 +6914,7 @@ export function ProjectView({
             transientFailedRetriesRef.current.delete(runId);
             genericDisconnectRetriesRef.current.delete(runId);
             completedReattachRunsRef.current.add(runId);
+            findDetachedManualFileWrites(reattachConversationId, runId)?.dispose();
             onProjectsRefresh();
             continue;
           }
@@ -6783,6 +6922,11 @@ export function ProjectView({
 
         const controller = new AbortController();
         const cancelController = new AbortController();
+        const manualFileWrites = new Map<string, ProjectFile>();
+        const manualFileWriteRegistration = registerManualFileWrites(
+          controller, manualFileWrites, reattachConversationId, reattachRunId,
+        );
+        let keepManualFileWritesForRecovery = false;
         const ownedReattachRunIds = new Set<string>();
         const claimReattachRun = (claimedRunId: string) => {
           ownedReattachRunIds.add(claimedRunId);
@@ -6800,6 +6944,7 @@ export function ProjectView({
           }
         };
         const completeReattachRuns = () => {
+          keepManualFileWritesForRecovery = false;
           for (const claimedRunId of ownedReattachRunIds) {
             completedReattachRunsRef.current.add(claimedRunId);
           }
@@ -7013,6 +7158,7 @@ export function ProjectView({
             );
           },
           onRunCreated: (nextRunId, strategyTask) => {
+            manualFileWriteRegistration.bindRun(nextRunId);
             activeReattachRunId = nextRunId;
             claimReattachRun(nextRunId);
             textBuffer.flush();
@@ -7161,7 +7307,9 @@ export function ProjectView({
               if (latestReattachRunStatus === 'canceled') return;
               void (async () => {
                 const preTurn = message.preTurnFileNames;
-                let nextFiles = await refreshProjectFiles();
+                // Match live completion: the terminal artifact list can be
+                // newer than the GET coalescer's last successful file read.
+                let nextFiles = await refreshProjectFiles({ fresh: true });
                 let artifactPersistenceSucceeded = false;
                 let artifactPersistenceError: string | undefined;
                 // Use the turn-start snapshot when available so reload
@@ -7204,21 +7352,27 @@ export function ProjectView({
                     nextFiles = await refreshProjectFiles();
                   }
                 }
+                const touchedFilePaths = extractTouchedFilePathsFromEvents(
+                  needsFullReplay ? replayedEvents : message.events,
+                );
+                const ownedFiles = attributableRunFiles(
+                  nextFiles, manualFileWrites,
+                  [...touchedFilePaths, ...(authoritativeReattachArtifactPaths ?? [])],
+                  project.id, projectDetail.resolvedDir,
+                  artifactPersistenceSucceeded ? savedArtifactRef.current : undefined,
+                );
                 const diff = computeProducedFiles(
                   beforeFileNames,
-                  nextFiles,
+                  ownedFiles,
                   authoritativeReattachArtifactPaths,
                   project.id,
                   projectDetail.resolvedDir,
                 ) ?? [];
                 const produced = mergeRecoveredArtifact(diff, recoveredExistingArtifact);
-                const touchedFilePaths = extractTouchedFilePathsFromEvents(
-                  needsFullReplay ? replayedEvents : message.events,
-                );
                 const traceObjectFiles = mergeRecoveredTraceObjectFile(
                   computeTraceObjectFiles(
                     beforeFileNames,
-                    nextFiles,
+                    ownedFiles,
                     [
                       ...touchedFilePaths,
                       ...(authoritativeReattachArtifactPaths ?? []),
@@ -7245,7 +7399,7 @@ export function ProjectView({
                     projectDetail.resolvedDir,
                   ),
                 });
-                if (turnArtifacts.focused) {
+                if (turnArtifacts.focused && !userTookOverPreviewRef.current) {
                   requestOpenTurnArtifacts(turnArtifacts.open, turnArtifacts.focused);
                 }
                 const deliveryContent = needsFullReplay ? replayedContent : message.content;
@@ -7297,6 +7451,8 @@ export function ProjectView({
               // banner or re-finalize its message over the replacement run.
               const runMayFinalize =
                 !supersededRunsRef.current.has(controller);
+              keepManualFileWritesForRecovery = genericDisconnect && runMayFinalize;
+              if (keepManualFileWritesForRecovery) manualFileWriteRegistration.release(true);
               textBuffer.flush();
               textBuffer.cancel();
               unregisterTextBuffer();
@@ -7367,7 +7523,12 @@ export function ProjectView({
                         { minMtime: runStartedAt },
                       );
                     }
-                    const diff = computeProducedFiles(beforeFileNames, nextFiles) ?? [];
+                    const ownedFiles = attributableRunFiles(
+                      nextFiles, manualFileWrites,
+                      [...extractTouchedFilePathsFromEvents(replayedEvents), ...(latestRunStatus?.artifactPaths ?? [])],
+                      project.id, projectDetail.resolvedDir, recoveredExistingArtifact?.name,
+                    );
+                    const diff = computeProducedFiles(beforeFileNames, ownedFiles) ?? [];
                     const produced = mergeRecoveredArtifact(diff, recoveredExistingArtifact);
                     if (produced.length > 0) {
                       recoveredArtifactMessagesRef.current.add(message.id);
@@ -7571,6 +7732,7 @@ export function ProjectView({
                 genericDisconnectBackoffUntilRef.current.delete(runId);
                 completeReattachRuns();
               }
+              manualFileWriteRegistration.release(keepManualFileWritesForRecovery);
               releaseReattachRuns();
               clearCurrentRunStreamingMarker(reattachConversationId, controller, cancelController);
               if (!skipFinalPersistNow) persistNow({ telemetryFinalized: true });
@@ -7639,6 +7801,7 @@ export function ProjectView({
           },
         })
           .catch((err) => {
+            keepManualFileWritesForRecovery = false;
             // Skip AbortError (expected on interrupt) and any error from a run
             // that was tagged superseded by a send-now interrupt — it must not
             // surface a global failure over the replacement.
@@ -7657,6 +7820,7 @@ export function ProjectView({
             }
           })
           .finally(() => {
+            manualFileWriteRegistration.release(keepManualFileWritesForRecovery);
             textBuffer.flush();
             textBuffer.cancel();
             unregisterTextBuffer();
@@ -7737,6 +7901,8 @@ export function ProjectView({
     clearCurrentRunStreamingMarker,
     clearProjectTimeout,
     refreshProjectFiles,
+    registerManualFileWrites,
+    findDetachedManualFileWrites,
     readProjectHtml,
     persistArtifact,
     requestOpenFile,
@@ -7851,7 +8017,17 @@ export function ProjectView({
             );
           }
           if (cancelled) return;
-          const diff = computeProducedFiles(beforeFileNames, nextFiles) ?? [];
+          const recoveredManualFileWrites = findDetachedManualFileWrites(activeConversationId, runId);
+          const manualWrites = recoveredManualFileWrites?.files ?? new Map<string, ProjectFile>();
+          const agentPaths = [
+            ...extractTouchedFilePathsFromEvents(message.events),
+            ...(latestRunStatus?.artifactPaths ?? []),
+          ];
+          const ownedFiles = attributableRunFiles(
+            nextFiles, manualWrites, agentPaths, project.id, projectDetail.resolvedDir,
+            recoveredExistingArtifact?.name,
+          );
+          const diff = computeProducedFiles(beforeFileNames, ownedFiles) ?? [];
           const produced = mergeRecoveredArtifact(diff, recoveredExistingArtifact);
           if (produced.length === 0) {
             continue;
@@ -7878,6 +8054,14 @@ export function ProjectView({
               ...prev,
               content: sourceText,
               producedFiles: produced,
+              // Keep this recovery path's existing optional trace surface;
+              // only remove unchanged files proven to be manual writes.
+              ...(prev.traceObjectFiles ? {
+                traceObjectFiles: attributableRunFiles(
+                  prev.traceObjectFiles, manualWrites, agentPaths,
+                  project.id, projectDetail.resolvedDir, recoveredExistingArtifact?.name,
+                ),
+              } : {}),
               resultDeliveryState: 'delivered',
               runStatus:
                 latestRunStatus?.status === 'succeeded'
@@ -7888,6 +8072,7 @@ export function ProjectView({
             true,
             { telemetryFinalized: true },
           );
+          recoveredManualFileWrites?.dispose();
           await auditDesignSystemWorkspaceAfterRun(message.id);
           scheduleConversationMessageRefresh(activeConversationId);
           onProjectsRefresh();
@@ -7911,6 +8096,8 @@ export function ProjectView({
     config.mode,
     activeConversationId,
     project.id,
+    projectDetail.resolvedDir,
+    findDetachedManualFileWrites,
     currentConversationHasRecoverableArtifact,
     artifactFromStandaloneHtml,
     refreshProjectFiles,
@@ -8225,6 +8412,11 @@ export function ProjectView({
         return meta?.acceptDurableQueue === true;
       }
       const runConversationId = activeConversationId;
+      // This is the accepted retry boundary: all synchronous refusal paths are
+      // above it. A later preflight/POST failure supplies its own current surface.
+      if (retryTarget && meta?.retryOfAssistantId) {
+        supersedeRetriedError(runConversationId, meta.retryOfAssistantId, retryTarget.failedAssistant.id);
+      }
       setError(null);
       /*
        * 【和上屏同一批】`chatSeed?.id` 是 `ChatPane` 的 `key` 的一部分 —— 清它会把
@@ -8529,6 +8721,21 @@ export function ProjectView({
             // 只对「余额耗尽」出卡。被登出也走这条硬拦截,但那张卡说的是钱的事,
             // 摆一个 $0.00 去解释一次登录过期是在误导 —— 那一档交给弹窗。
             if (gate.reason === 'insufficient') {
+              // This rejected composer Send has its own visible answer (the
+              // quota card). Restoring its pre-send transcript must not revive
+              // the previous failure's actions. Keep both history identities,
+              // including a folded task's displayed head and physical tail.
+              if (meta?.composerOwnedDraft && !retryTarget) {
+                const physicalFailure = trailingMessageIgnoringHostCards(historyBase);
+                const displayedFailure = trailingMessageIgnoringHostCards(foldStrategyTaskTurns(historyBase));
+                if (
+                  physicalFailure && displayedFailure
+                  && isRetryableAssistantTerminalFailure(physicalFailure)
+                  && isRetryableAssistantTerminalFailure(displayedFailure)
+                ) {
+                  supersedeRetriedError(runConversationId, displayedFailure.id, physicalFailure.id);
+                }
+              }
               // **没有轮次可锚。** 这一档下面紧跟着 `rejectBlockedSend()`,而它会
               // `retractPaintedTurn()` 把刚画出去的那一轮收回 —— 没有 run,也就
               // 没有「那一轮」可挂。锚点给 `null`,读数照旧落在流水末尾(T61)。
@@ -8783,6 +8990,7 @@ export function ProjectView({
       // consuming a replacement run's colliding tool id.
       const pendingWrites = new Map<string, string>();
       const traceTouchedFilePaths = new Set<string>();
+      const manualFileWrites = new Map<string, ProjectFile>();
       // Per-write file-list reads are intentionally fire-and-forget so a file
       // can open while the run is still streaming. Once terminal completion
       // has selected a turn-level artifact, however, an older Write refresh
@@ -8792,7 +9000,8 @@ export function ProjectView({
       // A new run gets a clean slate: taking the preview over during the last
       // turn says nothing about this one.
       userTookOverPreviewRef.current = false;
-      const clearTraceTouchedFilePaths = () => {
+      const clearTraceTouchedFilePaths = (recoverable = false) => {
+        manualFileWriteRegistration.release(recoverable);
         pendingWrites.clear();
         traceTouchedFilePaths.clear();
       };
@@ -9083,6 +9292,9 @@ export function ProjectView({
       sendTextBufferRef.current = textBuffer;
 
       const controller = new AbortController();
+      const manualFileWriteRegistration = registerManualFileWrites(
+        controller, manualFileWrites, runConversationId,
+      );
       const cancelController = new AbortController();
       let authoritativeArtifactPaths: string[] | undefined;
       abortRef.current = controller;
@@ -9299,9 +9511,15 @@ export function ProjectView({
                   nextFiles = await refreshProjectFiles({ fresh: true });
                 }
               }
+              const ownedFiles = attributableRunFiles(
+                nextFiles, manualFileWrites,
+                [...traceTouchedFilePaths, ...(authoritativeArtifactPaths ?? [])],
+                project.id, projectDetail.resolvedDir,
+                artifactPersistenceSucceeded ? savedArtifactRef.current : undefined,
+              );
               const produced = computeProducedFiles(
                 beforeFileNames,
-                nextFiles,
+                ownedFiles,
                 authoritativeArtifactPaths,
                 project.id,
                 projectDetail.resolvedDir,
@@ -9330,7 +9548,7 @@ export function ProjectView({
               }
               const traceObjectFiles = computeTraceObjectFiles(
                 beforeFileNames,
-                nextFiles,
+                ownedFiles,
                 [
                   ...traceTouchedFilePaths,
                   ...(authoritativeArtifactPaths ?? []),
@@ -9461,6 +9679,9 @@ export function ProjectView({
           // tagged superseded. See the onDone above for the ownership rationale.
           const runMayFinalize =
             !supersededRunsRef.current.has(controller);
+          if (currentRunId && runMayFinalize && isGenericDaemonDisconnect(err)) {
+            manualFileWriteRegistration.release(true);
+          }
           textBuffer.flush();
           textBuffer.cancel();
           cancelSendTextBuffer();
@@ -9504,6 +9725,7 @@ export function ProjectView({
                 void patchAttachedStatuses(runCommentAttachments, 'failed');
               }
             }
+            clearTraceTouchedFilePaths();
             clearCurrentRunStreamingMarker(
               runConversationId,
               controller,
@@ -9696,16 +9918,19 @@ export function ProjectView({
           void (async () => {
             const nextFiles = await refreshProjectFiles({ fresh: true });
             if (authoritativeArtifactPaths === undefined) return;
+            const ownedFiles = attributableRunFiles(
+              nextFiles, manualFileWrites, authoritativeTouchedPaths, project.id, projectDetail.resolvedDir,
+            );
             const produced = computeProducedFiles(
               beforeFileNames,
-              nextFiles,
+              ownedFiles,
               authoritativeArtifactPaths,
               project.id,
               projectDetail.resolvedDir,
             ) ?? [];
             const traceObjectFiles = computeTraceObjectFiles(
               beforeFileNames,
-              nextFiles,
+              ownedFiles,
               authoritativeTouchedPaths,
               project.id,
               projectDetail.resolvedDir,
@@ -9716,10 +9941,28 @@ export function ProjectView({
               true,
               { telemetryFinalized: true },
             );
+            // An accepted output ends recovery; otherwise an inline artifact
+            // can still need the sibling recovery effect's real file POST.
+            if (produced.length > 0 && !isGenericDaemonDisconnect(err)) manualFileWriteRegistration.release();
           })().catch(() => {
             // Retain the last accepted file list while the daemon recovers.
           });
-          clearTraceTouchedFilePaths();
+          clearTraceTouchedFilePaths(Boolean(
+            currentRunId && runMayFinalize && (
+              (isGenericDaemonDisconnect(err) && !completedReattachRunsRef.current.has(currentRunId))
+              // A terminal strategy error can precede browser artifact
+              // persistence. Retain this scoped run's receipts until that
+              // recovery accepts an output, rather than losing writer proof.
+              || hasRecoverableArtifactMessage({
+                ...latestAssistantMsg,
+                runId: currentRunId,
+                // React may not have committed the final text updater yet;
+                // this transport's accumulator already has every delta.
+                content: streamedText || latestAssistantMsg.content,
+                runStatus: 'failed',
+              })
+            ),
+          ));
         },
       };
 
@@ -9894,6 +10137,7 @@ export function ProjectView({
             };
             latestAssistantMsg = pinnedAssistant;
             currentRunId = runId;
+            manualFileWriteRegistration.bindRun(runId);
             // The view may already be on a different project/conversation;
             // pin the daemon run to the original row so returning can reattach.
             void saveMessage(project.id, runConversationId, pinnedAssistant, {
@@ -9946,7 +10190,10 @@ export function ProjectView({
             if (isTerminalRunStatus(runStatus)) {
               clearCurrentRunStreamingMarker(runConversationId, controller, cancelController);
               scheduleConversationMessageRefresh(runConversationId);
-              if (runStatus !== 'succeeded') clearTraceTouchedFilePaths();
+              // Transport exhaustion reports failed before its generic error.
+              // Keep receipts until onError distinguishes that recoverable
+              // disconnect from an authoritative failure; cancel still forgets.
+              if (runStatus !== 'succeeded') clearTraceTouchedFilePaths(runStatus === 'failed');
             }
           },
           /*
@@ -10095,6 +10342,7 @@ export function ProjectView({
             recoveryActionInstanceId: taskAnalytics.recoveryActionInstanceId,
           },
           onRunCreated: (runId, strategyTask) => {
+            manualFileWriteRegistration.bindRun(runId);
             textBuffer.flush();
             const resolvedTaskAnalytics = {
               ...taskAnalytics,
@@ -10183,6 +10431,7 @@ export function ProjectView({
     },
     [
       attachedComments,
+      supersedeRetriedError,
       activeConversationId,
       activeSessionMode,
       currentConversationBusy,
@@ -10224,6 +10473,8 @@ export function ProjectView({
       byokImageModelOptionsPV,
       byokVideoModelOptionsPV,
       byokSpeechModelOptionsPV,
+      projectRunAuthorityKey,
+      registerManualFileWrites,
       projectRunPreflightContext,
       projectRunWorkspaceContext,
       projectRunHasBillableAmrPrincipal,
@@ -10576,101 +10827,76 @@ export function ProjectView({
     setModelPickerOpenSignal((n) => n + 1);
   }, []);
 
-  /**
-   * 〔重试〕。
-   *
-   * ⚠️ 这里**不只是**转发给 `handleSend`。`handleSend` 为了不让用户对着 1–2 秒
-   * 没反应的界面(OPEND-2614)会先把新一轮画出去,而画出去的那一刻队尾就换了人:
-   * `retryableAssistantMessage` 立刻返回 null,报错卡在**服务端还没确认这一发**
-   * 的时候当场消失。用户既判断不出重试有没有被接收,也读不到原来的失败原因和
-   * 别的出路 —— OPEND-2758 说的就是这一段。
-   *
-   * 所以按下去先立一份「这一轮正在重试」的宣告:卡靠它钉在原来那条失败消息上,
-   * 按钮靠它进加载态并锁住。宣告只在两种情况下撤:新 run 拿到了 id(下面那个
-   * effect),或者这一发压根没起来(`handleSend` 回 false —— 只读、空转录、
-   * 预检拒绝都走这条)。
-   *
-   * `assistantMessageId` 是**先定后发**的:新那条助手消息的 id 由这里生成,
-   * 否则宣告没法认出「哪条消息拿到 runId 才算这一次重试确认了」。
-   */
+  /** A retry consumes the current error surface, but never the failed history. */
   const handleRetry = useCallback(
     (
       assistantMessage: ChatMessage,
       recoveryActionType: TrackingRunRecoveryActionType = 'manual_retry',
     ) => {
-      if (currentConversationActionDisabled) return;
       const retryConversationId = activeConversationId;
-      if (!retryConversationId) return;
+      if (
+        currentConversationActionDisabledRef.current
+        || !retryConversationId
+        || activeConversationIdRef.current !== retryConversationId
+        || retryLocksRef.current.has(retryConversationId)
+        || !resolveRetryTarget(messages, assistantMessage.id)
+      ) return;
       const replacementAssistantId = randomUUID();
+      retryLocksRef.current.set(retryConversationId, replacementAssistantId);
       setRetryPending({
         conversationId: retryConversationId,
         failedAssistantId: assistantMessage.id,
         replacementAssistantId,
       });
       void (async () => {
-        const started = await handleSend('', [], [], {
-          retryOfAssistantId: assistantMessage.id,
-          assistantMessageId: replacementAssistantId,
-          taskAnalytics: buildRecoveryTaskAnalytics(
-            messages,
-            assistantMessage,
-            recoveryActionType,
-          ),
-        });
-        if (started) return;
-        // 这一发没有起来:把宣告收回,原失败卡和它那一排动作跟着回来。
-        setRetryPending((current) =>
-          current?.replacementAssistantId === replacementAssistantId ? null : current,
-        );
+        let started = false;
+        try {
+          started = await handleSend('', [], [], {
+            retryOfAssistantId: assistantMessage.id,
+            assistantMessageId: replacementAssistantId,
+            taskAnalytics: buildRecoveryTaskAnalytics(messages, assistantMessage, recoveryActionType),
+          });
+        } finally {
+          if (!started) {
+            if (retryLocksRef.current.get(retryConversationId) === replacementAssistantId) {
+              retryLocksRef.current.delete(retryConversationId);
+            }
+            setRetryPending((current) =>
+              current?.replacementAssistantId === replacementAssistantId ? null : current,
+            );
+          }
+        }
       })();
     },
-    [activeConversationId, currentConversationActionDisabled, handleSend, messages],
+    [activeConversationId, handleSend, messages],
   );
 
-  /**
-   * 宣告的另一半:**服务端确认了就撤**(OPEND-2758 ②)。
-   *
-   * 判据是那条新助手消息拿到了 `runId` —— 它由 `onRunCreated` 写进来,而
-   * `onRunCreated` 正是 `POST /api/runs` 带着 run id 回来的那一刻。用它而不是
-   * 「流式开始了」:后者在提前上屏之后立刻为真,等于没等。
-   *
-   * 另外两条出路:那条消息已经不在活跃态了(run 没建成就报错,或者被停掉),
-   * 以及会话被切走。两者都说明这一次重试不再有人等着确认。
-   *
-   * ⚠️ API / BYOK 模式没有 daemon run 可确认(`runStatus` 一直是 undefined),
-   * 于是这条 effect 会在上屏的同一批里撤掉宣告 —— 那一档保持原有行为,
-   * 本来也没有「服务端确认」这个环节。
-   */
+  // Release only the request we witnessed. Old responses must not unlock a
+  // later attempt; accepting or rejecting it must not revive its old error card.
   useEffect(() => {
     if (!retryPending) {
       retryPendingPaintedRef.current = null;
       return;
     }
+    const release = () => {
+      if (retryLocksRef.current.get(retryPending.conversationId) === retryPending.replacementAssistantId) {
+        retryLocksRef.current.delete(retryPending.conversationId);
+      }
+      setRetryPending((current) =>
+        current?.replacementAssistantId === retryPending.replacementAssistantId ? null : current,
+      );
+    };
     if (retryPending.conversationId !== activeConversationId) {
-      setRetryPending(null);
+      release();
       return;
     }
-    const replacement = messages.find(
-      (message) => message.id === retryPending.replacementAssistantId,
-    );
+    const replacement = messages.find((message) => message.id === retryPending.replacementAssistantId);
     if (replacement) {
       retryPendingPaintedRef.current = retryPending.replacementAssistantId;
-      if (replacement.runId || !isActiveRunStatus(replacement.runStatus)) {
-        setRetryPending(null);
-      }
+      if (replacement.runId || !isActiveRunStatus(replacement.runStatus)) release();
       return;
     }
-    /*
-     * 画出去过、现在又不见了 = 这一发被收回了。`POST /api/runs` 自己失败时
-     * `onError` 会把这条占位助手消息整条删掉、把失败记回用户那一行
-     * (「没有 run 存在过」),于是上面那两条判据一条都够不着。
-     *
-     * 「画出去过」这个记号是必须的:预检那一路在画之前先 await,那一段里
-     * 这条消息本来就还不存在 —— 不区分的话宣告会在刚立起来的下一帧就被撤掉。
-     */
-    if (retryPendingPaintedRef.current === retryPending.replacementAssistantId) {
-      setRetryPending(null);
-    }
+    if (retryPendingPaintedRef.current === retryPending.replacementAssistantId) release();
   }, [activeConversationId, messages, retryPending]);
 
   // "Continue" on a resumable failed run: send a fresh turn in the same
@@ -10696,49 +10922,54 @@ export function ProjectView({
     [currentConversationActionDisabled, handleSend, messages],
   );
 
-  // "Switch to AMR & retry" crosses the Settings route, which intentionally
-  // unmounts this ProjectView. Arm the exact failed turn in App before any
-  // config or navigation write; a fresh ProjectView may consume it only after
-  // re-proving the same project, conversation and Workspace authority.
-  const handleSwitchToAmrAndRetry = useCallback(
-    (failedAssistant: ChatMessage) => {
-      if (currentConversationActionDisabled) return;
-      if (
-        activeConversationId
-        && amrAuthRetryMountIdRef.current
-        && onArmAmrAuthRetryContinuation
-      ) {
-        onArmAmrAuthRetryContinuation({
-          projectId: project.id,
-          conversationId: activeConversationId,
-          assistantId: failedAssistant.id,
-          workspaceIdentityKey: projectRunAuthorityKey,
-          workspacePrincipal: projectRunWorkspaceContext
-            ? {
-                workspaceId: projectRunWorkspaceContext.workspaceId,
-                workspaceType: projectRunWorkspaceContext.workspaceType,
-                workspaceMemberId: projectRunWorkspaceContext.workspaceMemberId,
-              }
-            : null,
-          originMountId: amrAuthRetryMountIdRef.current,
-        });
-      }
-      onModeChange('daemon');
-      onAgentChange('amr');
-      onOpenAmrSettings?.();
-    },
-    [
-      activeConversationId,
-      currentConversationActionDisabled,
-      onAgentChange,
-      onArmAmrAuthRetryContinuation,
-      onModeChange,
-      onOpenAmrSettings,
-      project.id,
-      projectRunAuthorityKey,
-      projectRunWorkspaceContext,
-    ],
-  );
+  // OPEND-3205 supersedes the Settings-return automatic retry for this action.
+  // Preserve the failed turn; selecting Cloud does not submit another task.
+  const cloudSwitchInFlightRef = useRef(false);
+  const handleSwitchConversationToCloud = useCallback(async (
+    conversationId: string,
+    failedAssistant: ChatMessage,
+  ) => {
+    if (
+      cloudSwitchInFlightRef.current
+      || !onSwitchToCloud
+      || projectMutationReadOnly
+      || !projectRunHasBillableAmrPrincipal
+      || !conversations.some((conversation) =>
+        conversation.id === conversationId && conversation.projectId === project.id)
+      || !isRetryableAssistantTerminalFailure(failedAssistant)
+      || (conversationId === activeConversationId && currentConversationActionDisabled)
+    ) return;
+    const sourceProjectId = project.id;
+    const sourceAuthority = projectRunAuthorityKey;
+    const sourcePrimaryConversationId = activeConversationId;
+    const stillOwnsView = () => mountedRef.current
+      && projectIdRef.current === sourceProjectId
+      && projectRunAuthorityKeyRef.current === sourceAuthority
+      && activeConversationIdRef.current === sourcePrimaryConversationId;
+    cloudSwitchInFlightRef.current = true;
+    try {
+      await onSwitchToCloud();
+      if (!stillOwnsView()) return;
+      setProjectActionsToast({
+        message: t('chat.amrCard.switchedResend'), details: null, tone: 'success',
+      });
+    } catch {
+      if (!stillOwnsView()) return;
+      setProjectActionsToast({
+        message: t('settings.autosaveError'), details: null, tone: 'error',
+      });
+    } finally {
+      cloudSwitchInFlightRef.current = false;
+    }
+  }, [
+    activeConversationId, conversations, currentConversationActionDisabled,
+    onSwitchToCloud, project.id, projectMutationReadOnly, projectRunAuthorityKey,
+    projectRunHasBillableAmrPrincipal, t,
+  ]);
+  const handleSwitchToAmrAndRetry = useCallback((failedAssistant: ChatMessage) => {
+    if (!activeConversationId) return;
+    void handleSwitchConversationToCloud(activeConversationId, failedAssistant);
+  }, [activeConversationId, handleSwitchConversationToCloud]);
   // PR #3157: Antigravity's `agy -p` cannot complete OAuth on its own,
   // so the auth banner offers a one-click "Sign in via terminal"
   // button that POSTs to the daemon. The daemon opens a system
@@ -11293,7 +11524,7 @@ export function ProjectView({
     }
     creatingConversationRef.current = true;
     setCreatingConversation(true);
-    setConversationLoadError(null);
+    setConversationLoadFailure(null);
     try {
       const fresh = await createConversation(project.id, undefined, {
         workspaceContext: projectRunWorkspaceContext,
@@ -11331,7 +11562,7 @@ export function ProjectView({
       setError(null);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not create a conversation for this project.';
-      setConversationLoadError(message);
+      setConversationLoadFailure({ message, source: 'create' });
       setError(message);
     } finally {
       creatingConversationRef.current = false;
@@ -11360,7 +11591,7 @@ export function ProjectView({
     setStreamingConversationId(null);
     setMessagesConversationId(null);
     setFailedMessagesConversationId(null);
-    setConversationLoadError(null);
+    setConversationLoadFailure(null);
     messagesConversationIdRef.current = null;
     messagesAuthorityKeyRef.current = null;
     setActiveConversationId(id);
@@ -11535,7 +11766,7 @@ export function ProjectView({
       };
       trackConversationForkClick(analytics.track, forkContext, { requestId });
       setForkingMessageId(assistantMessage.id);
-      setConversationLoadError(null);
+      setConversationLoadFailure(null);
       let emptyResponse = false;
       try {
         const forkFallbackPredecessorMessageId = forkIndex < 0
@@ -11633,7 +11864,7 @@ export function ProjectView({
           { requestId },
         );
         const message = err instanceof Error ? err.message : t('chat.forkConversationFailed');
-        setConversationLoadError(message);
+        setConversationLoadFailure({ message, source: 'create' });
         setError(message);
       } finally {
         setForkingMessageId(null);
@@ -11795,6 +12026,10 @@ export function ProjectView({
               conversationLoadError ? null : errorSourceAssistantId,
             onSend: handleComposerSend,
             onRetry: handleRetry,
+            recoveryActionsBlockedReason: currentConversationActionBlockReason,
+            retryPendingAssistantId: retryPending?.conversationId === activeConversationId
+              ? retryPending.failedAssistantId : null,
+            supersededErrorAssistantIds,
             onStop: handleStop,
             onRemoveQueuedSend: removeQueuedChatSend,
             onUpdateQueuedSend: updateQueuedChatSend,
@@ -11810,6 +12045,9 @@ export function ProjectView({
       activeConversationId,
       conversationLoadError,
       currentConversationActionDisabled,
+      currentConversationActionBlockReason,
+      retryPending,
+      supersededErrorAssistantIds,
 	      currentConversationQueuedItems,
 	      currentConversationSendDisabled,
 	      currentConversationLoading,
@@ -12174,6 +12412,7 @@ export function ProjectView({
     Boolean(activeConversationId || conversationLoadError);
   const projectActionsToastNode = projectActionsToast ? (
     <Toast
+      portalToBody={!projectActionsToastInChatPane}
       message={projectActionsToast.message}
       details={projectActionsToast.details}
       code={projectActionsToast.code}
@@ -13400,6 +13639,8 @@ export function ProjectView({
               onRetry={handleRetry}
               // 这一刻接不接得住恢复动作,以及接不住时该说哪句话(OPEND-2821)。
               recoveryActionsBlockedReason={currentConversationActionBlockReason}
+              accessError={currentConversationAccessError}
+              supersededErrorAssistantIds={supersededErrorAssistantIds}
               // 哪一轮的重试还在等服务端确认(OPEND-2758)。会话对不上就不算 ——
               // 宣告是按会话认领的,别的会话的卡不该被它钉住。
               retryPendingAssistantId={
@@ -13711,6 +13952,7 @@ export function ProjectView({
           filesRefreshKey={committedFilesRefreshKey}
           filesGeneration={committedFilesGeneration}
           onRefreshFiles={refreshFileWorkspace}
+          onManualFileWritten={recordManualFileWrite}
           isDeck={isDeck}
           streaming={currentConversationActionDisabled}
           commentQueueOnSend={commentQueueOnSend}
@@ -13783,6 +14025,15 @@ export function ProjectView({
           onConversationSessionModeChange={handleConversationSessionModeChange}
           onNewConversation={handleNewConversation}
           activeConversationChat={activeConversationChatState}
+          onSwitchConversationToCloud={
+            onSwitchToCloud ? handleSwitchConversationToCloud : undefined
+          }
+          chatRecoveryActionsBlockedReason={resolveRecoveryActionBlockReason({
+            readOnly: Boolean(projectMutationReadOnly),
+            messagesUnavailable: false,
+            billingPrincipalResolved: Boolean(projectRunHasBillableAmrPrincipal),
+            conversationBusy: false,
+          })}
           onActiveContextChange={handleActiveWorkspaceContextChange}
           onWorkspaceContextsChange={handleWorkspaceContextsChange}
           messages={messages}
@@ -14605,6 +14856,29 @@ function applyDesignDeliveryOutcome(
     detail,
     'ARTIFACT_NOT_FOUND',
   );
+}
+
+function attributableRunFiles(
+  files: ProjectFile[],
+  manualWrites: ReadonlyMap<string, ProjectFile>,
+  agentPaths: Iterable<string>,
+  projectId: string,
+  projectRoot: string | null | undefined,
+  persistedArtifactName?: string | null,
+): ProjectFile[] {
+  const provenNames = new Set<string>();
+  for (const path of agentPaths) {
+    const file = findTouchedProjectFile(path, files, projectId, projectRoot);
+    if (file) provenNames.add(file.name);
+  }
+  if (persistedArtifactName) provenNames.add(persistedArtifactName);
+  return files.filter((file) => {
+    const manual = manualWrites.get(file.name);
+    // Only an unchanged, explicit manual-write receipt is excluded. Unknown
+    // later changes retain the existing fallback, without assigning an actor.
+    return !manual || provenNames.has(file.name)
+      || manual.mtime !== file.mtime || manual.size !== file.size;
+  });
 }
 
 export function computeProducedFiles(
