@@ -131,6 +131,7 @@ type RunStatus = {
   errorCode?: string | null;
   strategyTask?: {
     taskExecutionId: string;
+    runMappings?: Array<{ runId: string; taskRunIndex: number }>;
     inputStage: string;
     outcome: string;
     terminal: boolean;
@@ -1829,6 +1830,7 @@ describe('OD Next automatic production through the real server', () => {
 
     queueFixtureIds(fixture);
     const created = await postRun(started!.url, body);
+    expect(created.strategyTask?.runMappings).toEqual([{ runId: fixture.initialRunId, taskRunIndex: 0 }]);
     expect(created).toMatchObject({
       runId: fixture.initialRunId,
       taskExecutionId: fixture.taskExecutionId,
@@ -1917,6 +1919,18 @@ describe('OD Next automatic production through the real server', () => {
       outcome: 'completed',
       terminal: true,
     });
+    // These are the actual source end events, not a later GET projection.
+    // Every advertised handoff must already carry the successor's persisted
+    // identity when the web subscribes; mapping it later would miss live UI.
+    for (let index = 0; index < terminal.runs.length - 1; index += 1) {
+      const source = terminal.runs[index]!;
+      const successor = terminal.runs[index + 1]!;
+      expect(watchedEnds[index]?.data.strategyTask?.runMappings).toEqual(expect.arrayContaining([
+        { runId: source.runId, taskRunIndex: source.taskRunIndex },
+        { runId: successor.runId, taskRunIndex: successor.taskRunIndex },
+      ]));
+    }
+
 
     const invocations = await readProjectInvocations(fixture.logPath, fixture.projectId);
     expect(invocations).toHaveLength(3);

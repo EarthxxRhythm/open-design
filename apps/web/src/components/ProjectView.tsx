@@ -76,6 +76,7 @@ import { requestAmrArtifactUpgrade } from '../runtime/amr-artifact-upgrade';
 import {
   resolveQuestionFormStrategyTaskExecutionId,
   strategySettledMessageFields,
+  strategyTaskRunIndex,
 } from '../runtime/strategy-question-continuation';
 import {
   isTodoWriteToolName,
@@ -10113,7 +10114,10 @@ export function ProjectView({
               runId,
               runStatus: 'queued' as const,
               taskAnalytics: resolvedTaskAnalytics,
-              ...(strategyTaskExecutionId ? { strategyTaskExecutionId } : {}),
+              ...(strategyTaskExecutionId ? {
+                strategyTaskExecutionId,
+                strategyTaskRunIndex: strategyTaskRunIndex(strategyTask, runId),
+              } : {}),
               ...(isTaskSuccessor
                 ? {
                     strategyTaskPrefixLength: latestAssistantMsg.content.length,
@@ -10135,7 +10139,10 @@ export function ProjectView({
               runId,
               runStatus: 'queued',
               taskAnalytics: resolvedTaskAnalytics,
-              ...(strategyTaskExecutionId ? { strategyTaskExecutionId } : {}),
+              ...(strategyTaskExecutionId ? {
+                strategyTaskExecutionId,
+                strategyTaskRunIndex: strategyTaskRunIndex(strategyTask, runId),
+              } : {}),
               ...(isTaskSuccessor
                 ? {
                     strategyTaskPrefixLength: prev.content.length,
@@ -10347,7 +10354,10 @@ export function ProjectView({
               runId,
               runStatus: 'queued' as const,
               taskAnalytics: resolvedTaskAnalytics,
-              ...(strategyTaskExecutionId ? { strategyTaskExecutionId } : {}),
+              ...(strategyTaskExecutionId ? {
+                strategyTaskExecutionId,
+                strategyTaskRunIndex: strategyTaskRunIndex(strategyTask, runId),
+              } : {}),
               ...(isTaskSuccessor
                 ? {
                     strategyTaskPrefixLength: latestAssistantMsg.content.length,
@@ -10365,7 +10375,10 @@ export function ProjectView({
               runId,
               runStatus: 'queued',
               taskAnalytics: resolvedTaskAnalytics,
-              ...(strategyTaskExecutionId ? { strategyTaskExecutionId } : {}),
+              ...(strategyTaskExecutionId ? {
+                strategyTaskExecutionId,
+                strategyTaskRunIndex: strategyTaskRunIndex(strategyTask, runId),
+              } : {}),
               ...(isTaskSuccessor
                 ? {
                     strategyTaskPrefixLength: prev.content.length,
