@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 /**
  * OPEND-2944, pill-only: a host memory message is not a new planning turn.
- * Uses real ChatPane and the persisted legacy memory content shape.
- * This suite focuses on turn ownership around historical host memory notifications;
+ * Uses real ChatPane and an explicitly stamped host memory message.
+ * This suite focuses on turn ownership around new host memory notifications;
  * retained memory visibility is verified separately in root's real Chrome acceptance. Rerender and
  * remount exercise component message input, not daemon persistence or layout.
  * Avatar placement / message ordering remain separate, unproven QA claims.
@@ -50,13 +50,15 @@ function runningTurn(): ChatMessage {
   };
 }
 
-function hostMemory(): ChatMessage {
+type OriginMessage = ChatMessage & { messageOrigin?: 'host_memory' };
+
+function hostMemory(): OriginMessage {
   const content = memoryWrittenCardContent({
     key: 'memory-extraction-2944', count: 1,
     entries: [{ id: 'rule-lesson', name: 'Keep illustrations simple', type: 'rule' }],
   }, 'Remembered the lesson preference');
   return {
-    id: 'host-memory', role: 'assistant', content, createdAt: 3000,
+    id: 'host-memory', role: 'assistant', content, createdAt: 3000, messageOrigin: 'host_memory',
     events: [{ kind: 'text', text: content }],
   };
 }
@@ -92,12 +94,21 @@ function nextPlaceholder(api = false): ChatMessage {
 }
 
 describe('OPEND-2944 current plan survives a trailing host memory message', () => {
-  it('keeps the current pill when a persisted legacy memory message is appended', () => {
+  it('keeps the current pill when a stamped host memory message is appended', () => {
     const turn = runningTurn();
     const view = render(pane([user, turn]));
     expectPlan(2);
     view.rerender(pane([user, turn, hostMemory()]));
     expectPlan(2);
+  });
+
+  it.each([false, true])('keeps an unmarked legacy card visible without borrowing a plan (events omitted=%s)', (omitEvents) => {
+    const legacy = hostMemory();
+    delete legacy.messageOrigin;
+    if (omitEvents) delete legacy.events;
+    render(pane([user, runningTurn(), legacy]));
+    expect(screen.getByText('Remembered the lesson preference')).toBeTruthy();
+    expect(screen.queryByTestId('chat-plan-pill')).toBeNull();
   });
 
   it('reads an updated TodoWrite from the same run while memory remains last', () => {

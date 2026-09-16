@@ -435,12 +435,65 @@ describe('current turn plan ownership around host memory', () => {
   const expectedOlder = [{
     content: 'Older current task', status: 'in_progress', activeForm: undefined,
   }];
-  function tail(content = memory, extra: Partial<ChatMessage> = {}): ChatMessage {
+  type OriginMessage = ChatMessage & { messageOrigin?: 'host_memory' };
+  function tail(content = memory, extra: Partial<OriginMessage> = {}): OriginMessage {
     return {
-      id: 'tail', role: 'assistant', content, createdAt: 2,
+      id: 'tail', role: 'assistant', content, createdAt: 2, messageOrigin: 'host_memory',
       events: [{ kind: 'text', text: content }], ...extra,
     };
   }
+
+  // A new user request is persisted turn ownership. Do not infer authorship
+  // from a standalone card whose legacy row has no run/timing metadata.
+  const newRequest: ChatMessage = {
+    id: 'new-user-request', role: 'user', content: 'Use my saved preference.', createdAt: 2,
+  };
+
+  it.each([
+    ['omitted events', undefined],
+    ['matching text events', [{ kind: 'text', text: memory }] as AgentEvent[]],
+  ])('does not revive a previous plan across a new user request with %s', (_label, events) => {
+    const legacyReply = tail(memory, { id: 'later-reply', createdAt: 3, events, messageOrigin: undefined });
+    expect(todosDeclaredByLatestTurn([older, newRequest, legacyReply])).toEqual([]);
+  });
+
+  it('does not borrow the previous plan while the new user request awaits an assistant row', () => {
+    expect(todosDeclaredByLatestTurn([older, newRequest])).toEqual([]);
+  });
+
+  it('keeps a same-turn host notification compatible when the request precedes its plan', () => {
+    const currentPlan = { ...older, id: 'current-plan', createdAt: 3 };
+    expect(todosDeclaredByLatestTurn([
+      newRequest, currentPlan, tail(memory, { createdAt: 4 }),
+    ])).toEqual(expectedOlder);
+  });
+
+  it('uses the plan explicitly re-emitted after the new user request', () => {
+    const currentPlan: ChatMessage = {
+      ...older, id: 'new-plan', createdAt: 3, runId: 'run-new',
+      events: [{ kind: 'tool_use', id: 'new-todo', name: 'TodoWrite', input: {
+        todos: [{ content: 'New requested task', status: 'pending' }],
+      } }],
+    };
+    expect(todosDeclaredByLatestTurn([
+      older, newRequest, currentPlan, tail(memory, { createdAt: 4 }),
+    ])).toEqual([{ content: 'New requested task', status: 'pending', activeForm: undefined }]);
+  });
+
+  it.each([
+    ['omitted events', undefined],
+    ['matching text events', [{ kind: 'text', text: memory }] as AgentEvent[]],
+  ])('retains an unmarked legacy model memory reply as a boundary with %s', (_label, events) => {
+    expect(todosDeclaredByLatestTurn([
+      older, tail(memory, { messageOrigin: undefined, events }),
+    ])).toEqual([]);
+  });
+
+  it('does not infer host authorship from an unsupported origin', () => {
+    expect(todosDeclaredByLatestTurn([
+      older, tail(memory, { messageOrigin: 'unrecognized_source' as never }),
+    ])).toEqual([]);
+  });
 
   it('passes a standalone valid host memory notification without losing the current plan', () => {
     expect(todosDeclaredByLatestTurn([older, tail()])).toEqual(expectedOlder);

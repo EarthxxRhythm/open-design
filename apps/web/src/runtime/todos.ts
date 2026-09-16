@@ -147,8 +147,9 @@ function messageEndedByAskingUser(
 /**
  * The task list the CURRENT turn declared — the plan pill's one source.
  *
- * It stops at the newest assistant turn, skipping only standalone host memory
- * notifications. A turn that re-listed nothing returns `[]`, and the pill is gone. That is the
+ * It stops at the newest assistant turn or user request, skipping standalone
+ * host memory notifications only within that request. A turn that re-listed
+ * nothing returns `[]`, and the pill is gone. That is the
  * same rule the transcript card has always followed (D24, every turn shows only
  * its own content), and it is deliberate rather than incidental — recall hands
  * an earlier plan back to the AGENT as a fact it decides about, and the client
@@ -173,6 +174,8 @@ export function todosDeclaredByLatestTurn(
   if (!messages || messages.length === 0) return [];
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const message = messages[i];
+    // A new request owns its own plan, even before its assistant row arrives.
+    if (message?.role === 'user') return [];
     if (!message || message.role !== 'assistant') continue;
     if (isStandaloneHostMemoryNotification(message)) continue;
     return latestTodosFromEvents(message.events);
@@ -180,12 +183,13 @@ export function todosDeclaredByLatestTurn(
   return [];
 }
 
-/** Host memory is appended outside its run. Missing run metadata alone does
- * not identify it: legacy replies and real TodoWrite snapshots can lack that
- * metadata too. Require the whole body to be the existing memory protocol,
- * with no non-text events; literal examples and ordinary replies stay turns.
+/** Only the producer's persisted provenance identifies a host notification.
+ * Unmarked legacy cards remain visible, but cannot prove whose turn they belong
+ * to. Content and event guards keep mixed replies from being skipped even if
+ * a stale marker is present; actual run identity always takes precedence.
  */
 function isStandaloneHostMemoryNotification(message: ChatMessage): boolean {
+  if (message.messageOrigin !== 'host_memory') return false;
   if (!assistantMessageNeverHadARun(message)) return false;
   if (message.events?.some((event) => event.kind !== 'text')) return false;
   if (!isOnlyMemoryCard(message.content)) return false;

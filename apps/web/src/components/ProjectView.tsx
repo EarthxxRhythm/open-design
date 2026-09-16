@@ -5773,6 +5773,7 @@ export function ProjectView({
     appendConversationMessage(activeConversationId, {
       id: randomUUID(),
       role: 'assistant',
+      messageOrigin: 'host_memory',
       agentId: selectedAssistantIdentity.agentId,
       agentName: selectedAssistantIdentity.agentName,
       content,
