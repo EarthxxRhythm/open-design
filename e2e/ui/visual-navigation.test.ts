@@ -14,7 +14,6 @@ test('[P2] captures the projects page surface', async ({ page }) => {
 
   await ensureRailOpen(page);
   const legacyProjectsNav = page.getByTestId('entry-nav-projects');
-  const teamProjectsNav = page.getByTestId('entry-nav-all-projects');
   if (await legacyProjectsNav.isVisible().catch(() => false)) {
     await legacyProjectsNav.click();
     await expect(page).toHaveURL(/\/projects$/);
@@ -22,17 +21,12 @@ test('[P2] captures the projects page surface', async ({ page }) => {
     await expect(projects.getByRole('heading', { name: 'Projects' })).toBeVisible();
     await expect(projects.getByText('Launchpad dashboard').first()).toBeVisible();
   } else {
-    if (await teamProjectsNav.isVisible().catch(() => false)) {
-      await teamProjectsNav.click();
-      await expect(page.getByRole('heading', { name: /all projects|全部项目/i })).toBeVisible();
-    } else {
-      // The local shell's 项目 destination (OPEND-3140): the same page a
-      // personal workspace's 项目 item opens, listing every local project.
-      await page.getByTestId('entry-nav-drafts').click();
-      await expect(page).toHaveURL(/\/drafts$/);
-      await expect(page.getByTestId('recent-projects-strip')).toBeVisible();
-      await expect(page.getByText('Launchpad dashboard').first()).toBeVisible();
-    }
+    // The 全部项目 destination (OPEND-3108): one page in every workspace,
+    // listing every local project on its opening 最近浏览过 tab.
+    await page.getByTestId('entry-nav-drafts').click();
+    await expect(page).toHaveURL(/\/drafts$/);
+    await expect(page.getByTestId('recent-projects-strip')).toBeVisible();
+    await expect(page.getByText('Launchpad dashboard').first()).toBeVisible();
   }
   await waitForVisualFonts(page);
 
@@ -45,7 +39,6 @@ test('[P2] captures the projects kanban surface', async ({ page }) => {
 
   await ensureRailOpen(page);
   const legacyProjectsNav = page.getByTestId('entry-nav-projects');
-  const teamProjectsNav = page.getByTestId('entry-nav-all-projects');
   if (await legacyProjectsNav.isVisible().catch(() => false)) {
     await legacyProjectsNav.click();
     const projects = page.getByTestId('entry-view-projects');
@@ -53,17 +46,12 @@ test('[P2] captures the projects kanban surface', async ({ page }) => {
     await expect(projects.getByTestId('designs-view-kanban')).toHaveAttribute('aria-pressed', 'true');
     await expect(projects.getByText('Launchpad dashboard').first()).toBeVisible();
   } else {
-    if (await teamProjectsNav.isVisible().catch(() => false)) {
-      await teamProjectsNav.click();
-      await expect(page.getByRole('heading', { name: /all projects|全部项目/i })).toBeVisible();
-    } else {
-      // The local shell's 项目 destination (OPEND-3140): the same page a
-      // personal workspace's 项目 item opens, listing every local project.
-      await page.getByTestId('entry-nav-drafts').click();
-      await expect(page).toHaveURL(/\/drafts$/);
-      await expect(page.getByTestId('recent-projects-strip')).toBeVisible();
-      await expect(page.getByText('Launchpad dashboard').first()).toBeVisible();
-    }
+    // The 全部项目 destination (OPEND-3108): one page in every workspace,
+    // listing every local project on its opening 最近浏览过 tab.
+    await page.getByTestId('entry-nav-drafts').click();
+    await expect(page).toHaveURL(/\/drafts$/);
+    await expect(page.getByTestId('recent-projects-strip')).toBeVisible();
+    await expect(page.getByText('Launchpad dashboard').first()).toBeVisible();
   }
   await waitForVisualFonts(page);
 

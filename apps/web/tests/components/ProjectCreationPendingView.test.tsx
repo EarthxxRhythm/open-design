@@ -54,10 +54,12 @@ function renderPending(overrides: Partial<Parameters<typeof ProjectCreationPendi
 }
 
 describe('ProjectCreationPendingView', () => {
-  it('shows the sent prompt and the project name from the creation record alone', () => {
+  it('shows the sent prompt from the creation record alone, with no project-name header row', () => {
     renderPending();
 
-    expect(screen.getByTestId('pending-project-title').textContent).toBe('Coffee shop landing page');
+    // The name is shown once, in the switcher above the card (OPEND-3128).
+    expect(screen.queryByTestId('pending-project-title')).toBeNull();
+    expect(document.querySelector('.chat-project-header')).toBeNull();
     expect(screen.getByText('Make a landing page for a coffee shop')).toBeTruthy();
     expect(screen.getByText('Preparing...')).toBeTruthy();
   });

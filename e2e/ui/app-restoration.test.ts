@@ -2453,7 +2453,9 @@ async function runDesignSystemSelectionFlow(
   await page.getByTestId('create-project').click();
 
   await expect(page).toHaveURL(/\/projects\//);
-  await expect(page.getByTestId('project-meta')).toContainText('Nexu Soft Tech');
+  // The chat card carries no type / design-system meta line any more
+  // (OPEND-3128); the composer's design-system picker names the pick.
+  await expect(page.getByTestId('project-ds-picker-trigger')).toContainText('Nexu Soft Tech');
   await expect(page.getByTestId('chat-composer')).toBeVisible();
 }
 
@@ -2468,8 +2470,9 @@ async function runExampleUsePromptFlow(
   await expect(page).toHaveURL(/\/projects\//);
   await expect(page.getByTestId('chat-composer')).toBeVisible();
   await expect(page.getByTestId('chat-composer-input')).toHaveText(entry.prompt);
-  await expect(page.getByTestId('project-title')).toContainText('Warm Utility Example');
-  await expect(page.getByTestId('project-meta')).toContainText('Warm Utility Example');
+  // The project is named once, in the switcher docked above the chat card
+  // (OPEND-3128); the card itself carries no title row.
+  await expect(page.getByTestId('workspace-tabs-dropdown-trigger')).toContainText('Warm Utility Example');
 }
 
 async function runGenerationDoesNotCreateExtraFileFlow(
@@ -2748,8 +2751,8 @@ function uniqueProjectName(base: string): string {
  * Assert we are on a surface that lists the workspace's projects.
  *
  * Home lists the catalogue in the rail's 最近项目 section on both branches
- * (OPEND-2683 / OPEND-3140), and the rail's 项目 item opens the browsable page;
- * a signed-in team workspace answers with the 全部项目 grid instead.
+ * (OPEND-2683 / OPEND-3140), and the rail's 全部项目 item opens the browsable
+ * page (OPEND-3108: 最近浏览过 / 个人项目 / 团队项目 tabs on one page).
  */
 async function expectProjectsView(page: Page) {
   const legacyProjectsToolbar = page.locator('.tab-panel-toolbar');
@@ -2757,13 +2760,8 @@ async function expectProjectsView(page: Page) {
 
   await ensureRailOpen(page);
   await expect(page.getByTestId('entry-nav-recent-toggle')).toBeVisible();
-  const allProjectsNav = page.getByTestId('entry-nav-all-projects');
-  if (await allProjectsNav.isVisible().catch(() => false)) {
-    await allProjectsNav.click();
-    await expect(page.getByRole('heading', { name: /all projects|全部项目/i })).toBeVisible();
-    return;
-  }
-
+  // One 全部项目 entry in every workspace (OPEND-3108); a team workspace
+  // reaches its shared projects through the page's 团队项目 tab.
   await page.getByTestId('entry-nav-drafts').click();
   await expect(page.getByTestId('recent-projects-strip')).toBeVisible();
 }

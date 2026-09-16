@@ -2086,23 +2086,25 @@ test('[P1] a disabled project design system is omitted from the next run request
   expect(runRequestBodies[0]?.designSystemId).toBeNull();
 });
 
-test('[P1] project title rename persists after reload and ignores blank titles', async ({ page }) => {
+test('[P1] project rename from the switcher persists after reload and ignores blank titles', async ({ page }) => {
   await page.goto('/');
   await createProject(page, 'Original rename title');
   await expectWorkspaceReady(page);
 
-  const title = page.getByTestId('project-title');
-  await renameProjectTitle(page, title, 'Renamed persistent title');
-  await expect(title).toContainText('Renamed persistent title');
+  // The chat card carries no inline title any more (OPEND-3128); the project
+  // is renamed through the switcher's row menu (K2 #8183).
+  const switcher = page.getByTestId('workspace-tabs-dropdown-trigger');
+  await renameProjectFromSwitcher(page, 'Original rename title', 'Renamed persistent title');
+  await expect(switcher).toContainText('Renamed persistent title');
 
   await page.reload();
   await expectWorkspaceReady(page);
-  await expect(page.getByTestId('project-title')).toContainText('Renamed persistent title');
+  await expect(switcher).toContainText('Renamed persistent title');
 
-  await renameProjectTitle(page, page.getByTestId('project-title'), '   ');
+  await renameProjectFromSwitcher(page, 'Renamed persistent title', '   ');
   await page.reload();
   await expectWorkspaceReady(page);
-  await expect(page.getByTestId('project-title')).toContainText('Renamed persistent title');
+  await expect(switcher).toContainText('Renamed persistent title');
 
   const project = await fetchCurrentProject(page);
   expect(project.name).toBe('Renamed persistent title');
@@ -3411,7 +3413,7 @@ test('[P1] projects kanban cards open projects and support delete cancel and con
 
   await kanbanCard.click();
   await expect(page).toHaveURL(new RegExp(`/projects/${projectId}(/conversations/[^/]+)?$`));
-  await expect(page.getByTestId('project-title')).toContainText(projectName);
+  await expect(page.getByTestId('workspace-tabs-dropdown-trigger')).toContainText(projectName);
   const openedProject = await fetchCurrentProject(page);
   expect(openedProject.name).toBe(projectName);
 
@@ -3699,7 +3701,7 @@ test('[P1] projects page shows live artifact cards, supports search, and opens t
 
   await liveCard.click();
   await expect(page).toHaveURL(/\/projects\/proj-live\/files\/live%3Aartifact-1$/);
-  await expect(page.getByTestId('project-title')).toContainText('Orbit Daily Digest');
+  await expect(page.getByTestId('workspace-tabs-dropdown-trigger')).toContainText('Orbit Daily Digest');
 });
 
 test('[P2] General settings updates the custom companion draft', async ({ page }) => {
@@ -4260,7 +4262,7 @@ async function expectWorkspaceReady(page: Page) {
   await expect(page).toHaveURL(/\/projects\//);
   await page.getByText('Loading OpenDesign…').waitFor({ state: 'hidden', timeout: T.long }).catch(() => {});
   await dismissPrivacyDialog(page);
-  await expect(page.getByTestId('project-title')).toBeVisible();
+  await expect(page.getByTestId('workspace-tabs-dropdown-trigger')).toBeVisible();
   await expect(page.getByTestId('chat-composer')).toBeVisible();
   await expect(page.getByTestId('chat-composer-input')).toBeVisible();
   await expect(page.locator('.chat-loading-state')).toHaveCount(0, { timeout: T.medium });
@@ -4313,19 +4315,31 @@ async function dismissPrivacyDialog(page: Page) {
   }
 }
 
-async function renameProjectTitle(
+/**
+ * Renames a project through the switcher's row menu (K2 #8183): open the
+ * dropdown, ⋮ on the project's row, 重命名, type, Enter. The chat card carries
+ * no inline title to edit any more (OPEND-3128).
+ */
+async function renameProjectFromSwitcher(
   page: Page,
-  title: Locator,
+  currentName: string,
   nextName: string,
 ) {
-  await title.click();
-  await page.keyboard.press('Meta+A');
-  const selected = await page.evaluate(() => window.getSelection()?.toString() ?? '');
-  if (selected.length === 0) {
-    await page.keyboard.press('Control+A');
-  }
-  await page.keyboard.type(nextName);
-  await page.keyboard.press('Enter');
+  await page.getByTestId('workspace-tabs-dropdown-trigger').click();
+  const row = page
+    .locator('.workspace-tabs-dropdown__row')
+    .filter({ hasText: currentName })
+    .first();
+  await row.hover();
+  await row.getByTestId('workspace-tabs-dropdown-row-more').click();
+  await page
+    .getByTestId('workspace-tabs-dropdown-row-menu')
+    .getByRole('menuitem', { name: 'Rename' })
+    .click();
+  const input = page.getByRole('textbox', { name: 'Rename' });
+  await input.fill(nextName);
+  await input.press('Enter');
+  await page.locator('.workspace-tabs-dropdown__backdrop').click({ position: { x: 4, y: 4 } });
 }
 
 async function uploadTinyHtml(

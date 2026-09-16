@@ -442,6 +442,15 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--spacing-8);
+  /* OPEND-3201 — two-step degradation when the row is short of room: first
+     the creator ellipsises (see .recent-projects__card-creator), and when
+     even avatar + time cannot sit beside the kind chip, the chip wraps under
+     the row instead of clipping the time. The time row's 96px flex-basis
+     is what the wrap decision measures — roughly avatar + separator + the
+     longest relative-time string — so a chip only drops when the time really
+     would not fit whole. */
+  flex-wrap: wrap;
+  row-gap: var(--spacing-4);
   min-width: 0;
   padding: 0 var(--spacing-8);
 }
@@ -480,8 +489,26 @@
   align-items: center;
   gap: 4px;
   min-width: 0;
-  flex: 1 1 auto;
+  /* Basis, not `auto`: with `auto` the wrap test would measure the full
+     creator text and drop the chip long before the creator had a chance to
+     ellipsise (OPEND-3201). */
+  flex: 1 1 96px;
   overflow: hidden;
+  white-space: nowrap;
+}
+/* OPEND-3201: when the footer is short of room the CREATOR ellipsises and the
+   TIME stays whole. Both used to be flex children with no shrink rule (the
+   time a loose text node, which cannot even be given one), so the row clipped
+   the time's tail against the kind chip. */
+.recent-projects__card-creator {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recent-projects__card-when {
+  flex: 0 0 auto;
   white-space: nowrap;
 }
 .recent-projects__card-sep {
@@ -697,6 +724,89 @@
 .recent-projects__head {
   align-items: center;
 }
+/* 全部项目 page head (OPEND-3108, Demo 877980fb17): the title on row 1, the
+   最近浏览过 / 个人项目 / 团队项目 tabs and the toolbar cluster on row 2. */
+.recent-projects__head--personal {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  justify-content: stretch;
+  column-gap: var(--spacing-16);
+  /* The one row seam in this header: this IS the title-to-tabs gap — 24 per
+     product. Column gap stays 16; it separates the tabs from the toolbar
+     cluster, not the rows. */
+  row-gap: var(--spacing-24);
+  width: 100%;
+}
+.recent-projects__head--personal .recent-projects__title-block {
+  grid-column: 1 / -1;
+  grid-row: 1;
+}
+.recent-projects__collection-switch {
+  grid-column: 1;
+  grid-row: 2;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  justify-self: start;
+}
+.recent-projects__collection-option {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* 12px on all four sides (per product). `height: auto` is load-bearing:
+     primitives.css's bare `button { height: 36px }` would otherwise pin the
+     box and swallow the vertical padding. */
+  height: auto;
+  padding: var(--spacing-12);
+  border: var(--stroke-thin) solid transparent;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--font-size-13);
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-ultra-fast) var(--curve-easy-ease),
+    border-color var(--duration-ultra-fast) var(--curve-easy-ease),
+    color var(--duration-ultra-fast) var(--curve-easy-ease),
+    transform var(--duration-faster) var(--curve-easy-ease);
+}
+/* Hover and selected are ONE state visually (per product): the same
+   `--bg-subtle` fill, no ring on either. One rule for both selectors so the
+   two cannot drift, and so `:hover:not(:disabled)` cannot out-specify
+   `[aria-checked]` and repaint the SELECTED tab as a deselect. */
+.recent-projects__collection-option:hover:not(:disabled),
+.recent-projects__collection-option[aria-checked="true"] {
+  border-color: transparent;
+  background: var(--bg-subtle);
+  color: var(--text-strong);
+}
+.recent-projects__collection-option:active:not(:disabled) {
+  background: var(--bg-muted);
+  transform: translateY(1px);
+}
+.recent-projects__collection-option:focus-visible {
+  outline: var(--stroke-thin) solid var(--blue);
+  outline-offset: 2px;
+}
+.recent-projects__head--personal .recent-projects__controls {
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: end;
+}
+/* An empty tab explains itself where the grid would be. */
+.recent-projects__collection-empty {
+  margin: 0;
+  padding: var(--spacing-24) 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
 .recent-projects__tabs {
   display: flex;
   gap: 2px;
@@ -737,6 +847,7 @@
 .recent-projects__controls {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--spacing-8);
 }
 .recent-projects__select-toggle {

@@ -312,7 +312,7 @@ test('[P0] @critical home hero submit creates a project and lands on a usable wo
   expect(typeof projectBody.metadata?.kind).toBe('string');
 
   await expect(page).toHaveURL(/\/projects\//, { timeout: 15_000 });
-  await expect(page.getByTestId('project-title')).toBeVisible();
+  await expect(page.getByTestId('workspace-tabs-dropdown-trigger')).toBeVisible();
   await expect(page.getByTestId('chat-composer')).toBeVisible();
   await expect(page.getByTestId('chat-composer-input')).toBeVisible();
   await expect(page.getByTestId('file-workspace')).toBeVisible();

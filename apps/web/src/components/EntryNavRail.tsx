@@ -2429,8 +2429,13 @@ export function EntryNavRail({
 
         {context ? (
           <div className="entry-nav-rail__team-section">
+            {/* 全部项目 is the ONE project destination (OPEND-3108): the page
+                splits into 最近浏览过 / 个人项目 / 团队项目 tabs, so a team
+                workspace no longer gets a second 团队项目 entry here. The
+                legacy `all-projects` view (the `/all-projects` deep link)
+                opens that page on its 团队项目 tab, so it lights this item. */}
             <NavButton
-              active={view === 'drafts'}
+              active={view === 'drafts' || view === 'all-projects'}
               ariaLabel={t('entry.navDrafts')}
               label={t('workspaceSwitcher.draftsTooltip')}
               onClick={() => selectView('drafts')}
@@ -2438,23 +2443,6 @@ export function EntryNavRail({
             >
               <Icon name="file" size={16} />
             </NavButton>
-            {isTeam ? (
-              // All-projects is a TEAM-scoped grid (EntryShell.tsx feeds it from
-              // `teamProjects`, not the personal project list) — a personal
-              // workspace has no team catalog to show here at all. Rendering it
-              // unconditionally left the item clickable in a personal workspace,
-              // landing on a "还没有团队项目" empty state that names a concept
-              // (团队项目) the current workspace cannot have.
-              <NavButton
-                active={view === 'all-projects'}
-                ariaLabel={t('entry.navAllProjects')}
-                label={t('workspaceSwitcher.allProjectsTooltip')}
-                onClick={() => selectView('all-projects')}
-                testId="entry-nav-all-projects"
-              >
-                <Icon name="grid" size={16} />
-              </NavButton>
-            ) : null}
             <NavButton
               active={view === 'design-systems'}
               ariaLabel={t('entry.navDesignSystems')}

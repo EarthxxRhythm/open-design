@@ -668,8 +668,9 @@ async function runExampleUsePromptFlow(
   await expect(page).toHaveURL(/\/projects\//);
   await expect(page.getByTestId('chat-composer')).toBeVisible();
   await expect(page.getByTestId('chat-composer-input')).toHaveText(entry.prompt);
-  await expect(page.getByTestId('project-title')).toContainText('Warm Utility Example');
-  await expect(page.getByTestId('project-meta')).toContainText('Warm Utility Example');
+  // The project is named once, in the switcher docked above the chat card
+  // (OPEND-3128); the card itself carries no title row.
+  await expect(page.getByTestId('workspace-tabs-dropdown-trigger')).toContainText('Warm Utility Example');
 }
 
 async function runHyperframesProjectRoutingFlow(

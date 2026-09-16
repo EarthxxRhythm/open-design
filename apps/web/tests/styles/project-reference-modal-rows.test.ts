@@ -39,6 +39,18 @@ describe('project reference modal — rows', () => {
     expect(item).toMatch(/border:\s*1px solid transparent/);
   });
 
+  it('never lets the scrolling list shrink a row below its content (OPEND-2787, second pass)', () => {
+    // `.list` is a column flexbox capped at 380px. With `min-height: 0` on the
+    // row (needed against the button primitive) every row became a shrinkable
+    // flex item, so a list of 15 projects squeezed each row to ~31px — the
+    // two lines overflowed the box and the selected border cut through them
+    // again, exactly the 09-15 QA capture. The row must opt out of shrinking
+    // and let the list scroll instead.
+    const item = declarations('.item');
+    expect(item).toMatch(/flex(?:-shrink)?:\s*(?:0 0 auto|0)\s*;/);
+    expect(declarations('.list')).toMatch(/overflow:\s*auto/);
+  });
+
   it('keeps hover and selected on the same box as the resting row', () => {
     for (const selector of ['.item:hover', '.item:focus-visible', '.itemSelected']) {
       const state = declarations(selector);

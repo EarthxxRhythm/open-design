@@ -139,6 +139,13 @@ interface Props {
    *  'recent' (home). 'team' hides the per-card 共享 badge since every card
    *  there is already a team-shared project. */
   space?: SpaceKind;
+  /** The collection tab the 全部项目 page opens on (drafts space only):
+   *  最近浏览过 (every project the rail lists) / 个人项目 (the caller's un-shared
+   *  projects) / 团队项目 (what {@link isSharedProject} says is shared). Pass it
+   *  to control the tab from the host — the legacy `/all-projects` route opens
+   *  the 团队项目 tab this way; leave it out and the strip owns the state. */
+  collection?: ProjectCollectionScope;
+  onCollectionChange?: (collection: ProjectCollectionScope) => void;
   /** projectId → the sharing member's workspaceMemberId, for team-shared
    *  projects (from the team hub). Used to resolve the creator name against the
    *  member directory; a project absent from this map is a local project owned
@@ -161,21 +168,23 @@ interface Props {
 const EMPTY_DESIGN_SYSTEMS: DesignSystemSummary[] = [];
 /** Fallback for a caller with no sharing surface (no workspace, no grids). */
 const NOTHING_SHARED: SharedProjectPredicate = () => false;
-/** The chip a design-system project wears. Product name, not a translated
- *  string — shared by the card tag and the type filter so both read alike. */
+/** The chip a design-system project wears on its card. Product name, not a
+ *  translated string. The type filter names the same type through the
+ *  localized `dsManager.tabDesignSystem` noun (设计体系), per OPEND-3107. */
 const DESIGN_SYSTEM_TAG_LABEL = 'Design System';
 
 type DictKey = Parameters<ReturnType<typeof useT>>[0];
 
 type OwnerFilter = 'all' | 'mine' | 'others';
-/** The type filter offers the six product types (OPEND-3107), resolved per
- *  project by {@link projectKindFilterCategory}. That resolver is derived from
- *  the chip vocabulary ({@link projectCardCategory}) so the dropdown can never
- *  name a type no project resolves to, but it is not identical to it: Document
- *  and Image are split out of the Prototype / Media chips, and Live Artifact
- *  folds back into Prototype. */
+/** The type filter lists every creation type on its own (OPEND-3107, 2026-09-16
+ *  定稿), resolved per project by {@link projectKindFilterCategory} from the
+ *  creation metadata the Home chips stamp — so a project files under the type
+ *  the user picked to create it, not under the storage kind it happens to use
+ *  (a HyperFrames project is stored as a video, a WebGL one as a prototype). */
 type ProjectKindFilter = 'all' | ProjectKindFilterCategory;
 type ProjectSort = 'updatedDesc' | 'updatedAsc' | 'nameAsc';
+/** The three collection tabs of the 全部项目 page (OPEND-3108). */
+export type ProjectCollectionScope = 'recent' | 'personalProjects' | 'teamProjects';
 
 const OWNER_FILTER_OPTIONS: Array<{ id: OwnerFilter; labelKey: DictKey }> = [
   { id: 'all', labelKey: 'recentProjects.ownerAll' },
@@ -187,20 +196,32 @@ type KindFilterOption =
   | { id: ProjectKindFilter; labelKey: DictKey; label?: undefined }
   | { id: ProjectKindFilter; label: string; labelKey?: undefined };
 
-// The six product types, in the order product specified (OPEND-3107):
-// Prototype, Slides, Document, Image, Website clone, Design System. Prototype
-// and Website clone reuse their card chip's key so the two labels cannot
-// drift; Slides / Document / Image are the filter's own nouns (the Slide chip
-// stays singular on the card). Live Artifact and Media are deliberately not
-// offered — see `projectKindFilterCategory` for where those projects go.
+// The twelve entries, in the order product specified (OPEND-3107, 2026-09-16):
+// 任何类型、原型、幻灯片、文档、图片、HyperFrames、网站克隆、视频、音频、实时产物、
+// WebGL、设计体系. Every creation type reuses the Home type chip's own label key
+// (home-hero/chip-labels.ts) so the filter names a type exactly the way the
+// user picked it; Design system is the same noun the project page's type
+// label uses. Media (the merged video / audio bucket) is gone: video, audio
+// and HyperFrames are listed on their own.
 const KIND_FILTER_OPTIONS: KindFilterOption[] = [
   { id: 'all', labelKey: 'recentProjects.kindAll' },
-  { id: 'prototype', labelKey: 'designs.tagPrototype' },
-  { id: 'slide', labelKey: 'recentProjects.kindSlides' },
-  { id: 'document', labelKey: 'recentProjects.kindDocument' },
-  { id: 'image', labelKey: 'recentProjects.kindImage' },
-  { id: 'web-clone', labelKey: 'designs.tagWebClone' },
-  { id: 'design-system', label: DESIGN_SYSTEM_TAG_LABEL },
+  { id: 'prototype', labelKey: 'homeHero.chip.prototype' },
+  { id: 'slide', labelKey: 'homeHero.chip.deck' },
+  { id: 'document', labelKey: 'homeHero.chip.document' },
+  { id: 'image', labelKey: 'homeHero.chip.image' },
+  { id: 'hyperframes', labelKey: 'homeHero.chip.hyperframes' },
+  { id: 'web-clone', labelKey: 'homeHero.chip.webClone' },
+  { id: 'video', labelKey: 'homeHero.chip.video' },
+  { id: 'audio', labelKey: 'homeHero.chip.audio' },
+  { id: 'live-artifact', labelKey: 'homeHero.chip.liveArtifact' },
+  { id: 'webgl', labelKey: 'homeHero.chip.webgl' },
+  { id: 'design-system', labelKey: 'dsManager.tabDesignSystem' },
+];
+
+const COLLECTION_OPTIONS: Array<{ id: ProjectCollectionScope; labelKey: DictKey }> = [
+  { id: 'recent', labelKey: 'recentProjects.collectionRecent' },
+  { id: 'personalProjects', labelKey: 'recentProjects.collectionPersonalProjects' },
+  { id: 'teamProjects', labelKey: 'recentProjects.collectionTeamProjects' },
 ];
 
 function kindFilterLabel(option: KindFilterOption, t: ReturnType<typeof useT>): string {
@@ -356,6 +377,8 @@ export function RecentProjectsStrip({
   onProjectShareFailed,
   onProjectUnshared,
   space = 'recent',
+  collection: controlledCollection,
+  onCollectionChange,
   projectOwnerMemberIds,
   openingProjectId = null,
   collaborationEnabled,
@@ -426,6 +449,16 @@ export function RecentProjectsStrip({
   const hasRecentProjects = projects.length > 0;
   const fullPageGrid = heading !== undefined || description !== undefined || space !== 'recent';
   const showOwnerFilter = space !== 'drafts';
+  // The 全部项目 page (drafts space) splits its one catalog into three tabs; the
+  // team space and the home rail have no such split.
+  const showCollectionTabs = space === 'drafts';
+  const [uncontrolledCollection, setUncontrolledCollection] =
+    useState<ProjectCollectionScope>('recent');
+  const collection = controlledCollection ?? uncontrolledCollection;
+  const selectCollection = (next: ProjectCollectionScope) => {
+    if (controlledCollection === undefined) setUncontrolledCollection(next);
+    onCollectionChange?.(next);
+  };
   const [view, setView] = useState<'grid' | 'list'>('grid');
   const [ownerFilter, setOwnerFilter] = useState<OwnerFilter>('all');
   const [kindFilter, setKindFilter] = useState<ProjectKindFilter>('all');
@@ -549,18 +582,27 @@ export function RecentProjectsStrip({
     () => sortedProjects
       .map((project) => ({ project, creator: resolveCreator(project.id) }))
       .filter(({ project, creator }) => {
+        // 最近浏览过 is the whole catalog; the other two tabs split it by the one
+        // shared-state answer the grids and the card badge already agree on.
+        const collectionMatches =
+          !showCollectionTabs ||
+          collection === 'recent' ||
+          (collection === 'personalProjects' ? !isShared(project.id) : isShared(project.id));
         const ownerMatches =
           !showOwnerFilter ||
           ownerFilter === 'all' ||
           (ownerFilter === 'mine' && creator.ownedBySelf) ||
           (ownerFilter === 'others' && !creator.ownedBySelf);
         const kindMatches = kindFilter === 'all' || projectKindFilterCategory(project) === kindFilter;
-        return ownerMatches && kindMatches;
+        return collectionMatches && ownerMatches && kindMatches;
       })
       .slice(0, resolvedLimit),
     [
+      collection,
+      isShared,
       kindFilter,
       ownerFilter,
+      showCollectionTabs,
       projectOwnerMemberIds,
       resolveMember,
       resolvedLimit,
@@ -629,8 +671,15 @@ export function RecentProjectsStrip({
   const bulkMutationTitle = selectionHasForeignProject
     ? t('recentProjects.ownOnlyMutation')
     : selectedProjects.map(({ project }) => project.name).join('、') || undefined;
-  const canBulkMoveToTeam = collaborationAvailable && space !== 'team';
-  const canBulkMoveToPersonal = collaborationAvailable && space !== 'drafts';
+  // A tab that can only hold one side of the share offers only the move that
+  // leaves it: 团队项目 cannot move anything TO the team, 个人项目 nothing OUT.
+  const canBulkMoveToTeam =
+    collaborationAvailable &&
+    space !== 'team' &&
+    !(showCollectionTabs && collection === 'teamProjects');
+  const canBulkMoveToPersonal =
+    collaborationAvailable &&
+    (space !== 'drafts' || (showCollectionTabs && collection !== 'personalProjects'));
 
   useEffect(() => {
     setSelectedProjectIds((current) => {
@@ -1145,15 +1194,41 @@ export function RecentProjectsStrip({
   return (
     <section className="recent-projects" data-testid="recent-projects-strip">
       {fullPageGrid ? (
-        <header className="recent-projects__head">
+        <header
+          className={`recent-projects__head${showCollectionTabs ? ' recent-projects__head--personal' : ''}`}
+        >
           <div className="recent-projects__title-block">
             <h2 className="recent-projects__heading">{heading ?? t('recentProjects.title')}</h2>
             {description ? (
               <p className="recent-projects__description">{description}</p>
             ) : null}
           </div>
+          {showCollectionTabs ? (
+            <div
+              className="recent-projects__collection-switch"
+              role="radiogroup"
+              aria-label={heading ?? t('entry.navDrafts')}
+            >
+              {COLLECTION_OPTIONS.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={collection === option.id}
+                  className="recent-projects__collection-option"
+                  data-testid={`recent-projects-collection-${option.id}`}
+                  onClick={() => selectCollection(option.id)}
+                >
+                  {t(option.labelKey)}
+                </button>
+              ))}
+            </div>
+          ) : null}
           <div className="recent-projects__controls">
-            {space === 'team' &&
+            {/* The invite CTA belongs to the team collection: the team space
+                grid, and the 团队项目 tab of 全部项目 that replaced the rail's
+                team entry (OPEND-3108). */}
+            {(space === 'team' || (showCollectionTabs && collection === 'teamProjects')) &&
             canAccessInviteFlow &&
             inviteTarget.kind !== 'unavailable' ? (
               <button
@@ -1425,6 +1500,18 @@ export function RecentProjectsStrip({
           </div>
         </div>
       ) : null}
+      {showCollectionTabs && visibleProjects.length === 0 && collection !== 'recent' ? (
+        // A tab with nothing in it says why (the same copy the page-level
+        // blank state uses), and keeps the tabs + toolbar so the user can
+        // leave it — an empty grid alone read as a broken page.
+        <p className="recent-projects__collection-empty">
+          {t(
+            collection === 'teamProjects'
+              ? 'entry.blankAllProjectsDescription'
+              : 'entry.blankDraftsDescription',
+          )}
+        </p>
+      ) : null}
       <div
         ref={rowRef}
         className={`recent-projects__row${fullPageGrid ? ` recent-projects__row--${view}` : ''}${menuOpenId ? ' recent-projects__row--menu-open' : ''}${selectionMode ? ' is-selecting' : ''}`}
@@ -1633,9 +1720,17 @@ export function RecentProjectsStrip({
                           />
                         ) : null}
                       </span>
-                      <span>{t('recentProjects.creatorLine', { name: creator.name })}</span>
+                      {/* OPEND-3201: the creator is the part that gives way
+                          when the row is short of room; the time keeps its
+                          own non-shrinking box so it is never clipped by the
+                          kind chip on the right. */}
+                      <span className="recent-projects__card-creator">
+                        {t('recentProjects.creatorLine', { name: creator.name })}
+                      </span>
                       <span className="recent-projects__card-sep" aria-hidden>·</span>
-                      {relativeTime(project.updatedAt, t)}
+                      <span className="recent-projects__card-when">
+                        {relativeTime(project.updatedAt, t)}
+                      </span>
                     </div>
                     <div className="design-card-tag-row">
                       {designSystemProject ? (
@@ -2258,44 +2353,60 @@ export function projectCardCategory(project: Project): ProjectCardCategory {
   return isDesignSystemProject(project) ? 'design-system' : projectCategory(project);
 }
 
-/** The six types the project list's type filter offers (OPEND-3107). */
+/** The eleven creation types the project list's type filter offers
+ *  (OPEND-3107), in the product order. */
 export type ProjectKindFilterCategory =
   | 'prototype'
   | 'slide'
   | 'document'
   | 'image'
+  | 'hyperframes'
   | 'web-clone'
+  | 'video'
+  | 'audio'
+  | 'live-artifact'
+  | 'webgl'
   | 'design-system';
 
 /**
- * The type-filter bucket a project falls into, or `null` when the offered
- * list names none of it (video and audio projects, since Media is no longer
- * offered). Built on top of {@link projectCardCategory} so the filter stays
- * anchored to what the card shows, with three deliberate differences:
- * - a Document project (`intent: 'document'`, created by the Home Document
- *   chip) wears the Prototype chip but filters as Document, not Prototype;
- * - an Image project (`kind: 'image'`) wears the Media chip but filters as
- *   Image;
- * - a Live Artifact project (`kind: 'prototype'`) filters as Prototype, so it
- *   stays reachable now that Live Artifact is not an option.
+ * The type-filter bucket a project falls into: the type the user picked to
+ * create it. Every project resolves to exactly one bucket. The creation
+ * `intent` the Home chips stamp (home-hero/chips.ts) outranks the storage
+ * `kind`, because two intents share a kind with something else — HyperFrames
+ * is stored as a video, WebGL and Document as prototypes — and a bare kind
+ * then names the four media / deck / design-system buckets; whatever is left
+ * is a blank prototype. This deliberately differs from the card chip
+ * ({@link projectCardCategory}), which still folds video / audio into one
+ * Media chip and shows no Document, HyperFrames or WebGL chip at all.
  */
-export function projectKindFilterCategory(project: Project): ProjectKindFilterCategory | null {
-  switch (projectCardCategory(project)) {
-    case 'design-system':
-      return 'design-system';
-    case 'slide':
-      return 'slide';
+export function projectKindFilterCategory(project: Project): ProjectKindFilterCategory {
+  if (isDesignSystemProject(project) || project.metadata?.kind === 'brand') return 'design-system';
+  switch (project.metadata?.intent) {
+    case 'document':
+      return 'document';
+    case 'hyperframes':
+      return 'hyperframes';
     case 'web-clone':
       return 'web-clone';
-    case 'media':
-      return project.metadata?.kind === 'image' ? 'image' : null;
-    case 'prototype':
+    case 'webgl-experience':
+      return 'webgl';
     case 'live-artifact':
-      return project.metadata?.intent === 'document' ? 'document' : 'prototype';
-    case 'brand':
-      // Unreachable in practice: projectCardCategory resolves brand-kind
-      // projects to 'design-system' first.
-      return null;
+      return 'live-artifact';
+    default:
+      break;
+  }
+  if (project.skillId === 'live-artifact') return 'live-artifact';
+  switch (project.metadata?.kind) {
+    case 'deck':
+      return 'slide';
+    case 'image':
+      return 'image';
+    case 'video':
+      return 'video';
+    case 'audio':
+      return 'audio';
+    default:
+      return 'prototype';
   }
 }
 

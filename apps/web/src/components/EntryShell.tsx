@@ -128,7 +128,7 @@ import {
 import { HomeView, seedHomeComposerPrompt } from './HomeView';
 import { entryStrategyRoutingFields } from './entry-strategy-routing';
 import { EntryBlankState } from './EntryBlankState';
-import { RecentProjectsStrip } from './RecentProjectsStrip';
+import { RecentProjectsStrip, type ProjectCollectionScope } from './RecentProjectsStrip';
 import {
   createPluginAuthoringHandoff,
   createPluginUseHandoff,
@@ -1014,6 +1014,17 @@ export function EntryShell({
   // placeholder, then ProjectView opens while the daemon materializes content in
   // the background. The placeholder stamp keeps every content writer fail-closed.
   const [pullingProjectId, setPullingProjectId] = useState<string | null>(null);
+  // The 全部项目 page's collection tab (OPEND-3108). The legacy `all-projects`
+  // view is a deep link to the 团队项目 tab; every other entry keeps whatever
+  // tab the user last picked.
+  const [projectsCollection, setProjectsCollection] = useState<ProjectCollectionScope>('recent');
+  useEffect(() => {
+    // Entering the page from the rail opens 最近浏览过 (the Demo's strip
+    // remounts on every visit, so it never carries a tab over); the legacy
+    // `/all-projects` view is the one deep link that lands on 团队项目.
+    if (view === 'all-projects') setProjectsCollection('teamProjects');
+    else if (view === 'drafts') setProjectsCollection('recent');
+  }, [view]);
   async function handleOpenAllProjects(id: string): Promise<boolean> {
     // The grid already reconciled the local row with the authoritative team
     // catalog (notably the owner's current project name). Carry its title and
@@ -2044,12 +2055,20 @@ export function EntryShell({
                 view is provided by another lane (B = members/board, D = team
                 project spaces / workspace settings), rendered as a placeholder
                 until those land. */}
-            {view === 'drafts' ? (
-              projectsLoading ? (
+            {view === 'drafts' || view === 'all-projects' ? (
+              // 全部项目 (OPEND-3108): ONE catalog — the same list the rail's
+              // 最近浏览过 shows — split by the strip's 最近浏览过 / 个人项目 /
+              // 团队项目 tabs. The legacy `all-projects` view (the
+              // `/all-projects` deep link) is this page opened on its 团队项目
+              // tab. The team half of the catalog comes from `teamProjects`,
+              // which has its own loading state and restarts from empty
+              // whenever the entry shell remounts (e.g. returning from a
+              // project); wait for BOTH reads before calling the page empty.
+              projectsLoading || (projectSearchProjects.length === 0 && teamProjects.loading) ? (
                 <div className="entry-section">
                   <CenteredLoader label={t('common.loading')} />
                 </div>
-              ) : draftProjectsList.length === 0 ? (
+              ) : projectSearchProjects.length === 0 ? (
                 <EntryBlankState
                   heading={t('entry.navDrafts')}
                   description={t('entry.blankDraftsDescription')}
@@ -2059,56 +2078,21 @@ export function EntryShell({
               ) : (
                 <div className="entry-section">
                   <RecentProjectsStrip
-                    projects={draftProjectsList}
+                    projects={projectSearchProjects}
                     designSystems={designSystems}
                     limit={1000}
                     heading={t('entry.navDrafts')}
                     space="drafts"
-                    isSharedProject={isSharedProject}
-                    onProjectShared={markProjectShared}
-                    onProjectShareFailed={markProjectShareFailed}
-                    onProjectUnshared={markProjectUnshared}
-                    projectOwnerMemberIds={teamProjectOwnerMemberIds}
-                    onOpen={(id) => onOpenProject(id)}
-                    onViewAll={() => {}}
-                    onDelete={onDeleteProject}
-                    onDuplicate={onDuplicateProject}
-                    onRename={onRenameProject}
-                  />
-                </div>
-              )
-            ) : null}
-            {view === 'all-projects' ? (
-              // The all-projects grid is fed by `teamProjects`, which has its own
-              // loading state and restarts from empty whenever the entry shell
-              // remounts (e.g. returning from a project). Gating only on
-              // `projectsLoading` flashed the "还没有团队项目" empty state during
-              // that team read; wait for BOTH before deciding the grid is empty.
-              projectsLoading || teamProjects.loading ? (
-                <div className="entry-section">
-                  <CenteredLoader label={t('common.loading')} />
-                </div>
-              ) : allProjectsList.length === 0 ? (
-                <EntryBlankState
-                  heading={t('entry.navAllProjects')}
-                  description={t('entry.blankAllProjectsDescription')}
-                  actionLabel={t('entry.blankCreate')}
-                  onCreate={() => startBlankProjectFromRail()}
-                />
-              ) : (
-                <div className="entry-section">
-                  <RecentProjectsStrip
-                    projects={allProjectsList}
-                    designSystems={designSystems}
-                    limit={1000}
-                    heading={t('entry.navAllProjects')}
-                    space="team"
+                    collection={projectsCollection}
+                    onCollectionChange={setProjectsCollection}
                     isSharedProject={isSharedProject}
                     onProjectShared={markProjectShared}
                     onProjectShareFailed={markProjectShareFailed}
                     onProjectUnshared={markProjectUnshared}
                     projectOwnerMemberIds={teamProjectOwnerMemberIds}
                     openingProjectId={pullingProjectId}
+                    // Pull-first opener: a 团队项目 row that is not local yet
+                    // materializes before it opens, like the old team grid.
                     onOpen={handleOpenAllProjects}
                     onViewAll={() => {}}
                     onDelete={onDeleteProject}

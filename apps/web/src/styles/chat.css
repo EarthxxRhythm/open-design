@@ -1,8 +1,11 @@
 /* -------- Chat project header (single row) --------------------------
-   The former standalone chrome header row was removed. This single row
-   now carries: back button, design-system picker, editable project
-   title, and (right-aligned) the session-history trigger. position:
-   relative anchors the absolutely-positioned history popover. */
+   Rendered only for hosts with no tabs dock to portal the history control
+   into (side chat, design-system flow). On the project page the card has no
+   header row at all: the project name lives once, in the switcher docked
+   above the card (OPEND-3128 / OPEND-3258), and the history trigger portals
+   beside it. Where it does render, the row carries the back / collapse
+   button and the session-history trigger; position: relative anchors the
+   absolutely-positioned history popover. */
 .chat-project-header {
   display: flex;
   align-items: center;
@@ -49,61 +52,6 @@
      uses flex:1, so this margin parks the picker + session button as a
      pair at the trailing edge. */
   margin-inline-start: auto;
-}
-.chat-project-header-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  flex: 1 1 auto;
-  overflow: hidden;
-}
-.chat-project-header-title .title {
-  color: var(--text-strong);
-  font-size: 13px;
-  line-height: 18px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex: 0 1 auto;
-  min-width: 0;
-  /* Editable inline rename: a calm padded chip rather than a hard outline
-     box, so the contentEditable focus ring reads as a field, not brackets.
-     No negative margin — the parent clips overflow, which would shave the
-     left edge of the focus ring. */
-  padding: 4px 8px;
-  border-radius: var(--radius-sm);
-  outline: none;
-  caret-color: var(--accent);
-  box-shadow: none;
-  transition: background 120ms cubic-bezier(0.23, 1, 0.32, 1);
-}
-.chat-project-header-title .title:hover {
-  background: color-mix(in srgb, var(--text) 4%, transparent);
-}
-.chat-project-header-title .title.readonly {
-  cursor: default;
-  color: var(--text-strong);
-}
-.chat-project-header-title .title.readonly:hover {
-  background: transparent;
-}
-.chat-project-header-title .title:focus,
-.chat-project-header-title .title:focus-visible {
-  background: color-mix(in srgb, var(--text) 5%, transparent);
-  box-shadow: none;
-}
-.chat-project-header-title .meta {
-  color: var(--text-muted);
-  font-size: 12px;
-  line-height: 16px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-  flex: 0 1 auto;
 }
 /* Right-aligned session-history trigger. Collapses the former
    name + history + new-session controls into one icon button; clicking

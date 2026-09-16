@@ -979,10 +979,11 @@ interface Props {
    *  the tabs dock row) — suppresses the header's collapse/back slot. */
   collapseControlLifted?: boolean;
   backLabel?: string;
-  projectHeader?: ReactNode;
   // Host element for the conversation history control. When set (the project
-  // route's toolbar dock) the trigger + dropdown portal there; otherwise they
-  // render in place at the end of the card header.
+  // route's toolbar dock) the trigger + dropdown portal there and the card
+  // renders NO header row of its own — the project name lives once, in the
+  // switcher above the card (OPEND-3128 / OPEND-3258). Otherwise the control
+  // renders in a title-less row at the top of the card.
   historyPortalTarget?: HTMLElement | null;
   /**
    * The pane is laid out but parked out of sight under the creation hand-off
@@ -1450,7 +1451,6 @@ export function ChatPane({
   onCollapse,
   collapseControlLifted,
   backLabel,
-  projectHeader,
   historyPortalTarget,
   composerLayerHidden = false,
   designSystemPicker,
@@ -4391,40 +4391,41 @@ export function ChatPane({
        抹在 .pane 自己身上、**不另外包一层**:包一层会打断 `.split-chat-slot > .pane`
        这类子选择器(全仓 11 条),聊天卡的圆角 / 白底 / backdrop-filter 会集体失效。 */
     <div {...chatSeam('pane')}>
-        <div className="chat-project-header">
-          {collapseControlLifted ? null : onCollapse ? (
-            <button
-              type="button"
-              className="chat-project-back od-tooltip"
-              onClick={onCollapse}
-              title={t('chat.collapsePane')}
-              aria-label={t('chat.collapsePane')}
-              data-tooltip={t('chat.collapsePane')}
-              data-tooltip-placement="bottom"
-              data-testid="chat-collapse-toggle"
-            >
-              <Icon name="panel-left" size={16} />
-            </button>
-          ) : onBack ? (
-            <button
-              type="button"
-              className="chat-project-back"
-              onClick={onBack}
-              title={backLabel}
-              aria-label={backLabel}
-            >
-              <Icon name="arrow-left" size={16} />
-            </button>
-          ) : null}
-          {projectHeader ? (
-            <span className="chat-project-header-title">{projectHeader}</span>
-          ) : null}
-          {historyPortalTarget
-            /* The dock host lives outside the chat tree, so the portal
-               re-applies the --chat-* seam for the control's own styles. */
-            ? createPortal(<div {...chatSeam()}>{historyControl}</div>, historyPortalTarget)
-            : historyControl}
-        </div>
+        {historyPortalTarget ? (
+          /* The dock host lives outside the chat tree, so the portal
+             re-applies the --chat-* seam for the control's own styles. No
+             header row here: the project name is shown once, in the
+             switcher docked above the card (OPEND-3128 / OPEND-3258). */
+          createPortal(<div {...chatSeam()}>{historyControl}</div>, historyPortalTarget)
+        ) : (
+          <div className="chat-project-header">
+            {collapseControlLifted ? null : onCollapse ? (
+              <button
+                type="button"
+                className="chat-project-back od-tooltip"
+                onClick={onCollapse}
+                title={t('chat.collapsePane')}
+                aria-label={t('chat.collapsePane')}
+                data-tooltip={t('chat.collapsePane')}
+                data-tooltip-placement="bottom"
+                data-testid="chat-collapse-toggle"
+              >
+                <Icon name="panel-left" size={16} />
+              </button>
+            ) : onBack ? (
+              <button
+                type="button"
+                className="chat-project-back"
+                onClick={onBack}
+                title={backLabel}
+                aria-label={backLabel}
+              >
+                <Icon name="arrow-left" size={16} />
+              </button>
+            ) : null}
+            {historyControl}
+          </div>
+        )}
         {tab === 'chat' ? (
           <>
             <div className={`chat-log-wrap${chatLogTray ? ' has-chat-log-tray' : ''}`}>

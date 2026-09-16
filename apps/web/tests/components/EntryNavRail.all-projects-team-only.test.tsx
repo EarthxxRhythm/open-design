@@ -1,14 +1,13 @@
 // @vitest-environment jsdom
 //
-// Regression for 飞书 "personal workspace 展示了全部项目入口，提示没有团队项目".
-// All-projects is fed by EntryShell.tsx's `teamProjects` — a TEAM-scoped
-// catalog with no personal-workspace equivalent — but the nav item rendered
-// for any workspace context, landing a personal-workspace user on a
-// "还没有团队项目" empty state that names a concept their workspace cannot have.
+// OPEND-3108: the rail has ONE project destination, 全部项目 (`entry-nav-drafts`),
+// in every workspace. 团队项目 is a tab inside that page, so the second
+// `entry-nav-all-projects` entry a team workspace used to render is gone —
+// this withdraws the earlier "show all-projects for a team workspace" spec.
 
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { WorkspaceCollabContext } from '@open-design/contracts';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { EntryNavRail } from '../../src/components/EntryNavRail';
 import { I18nProvider } from '../../src/i18n';
@@ -26,37 +25,51 @@ function contextFor(workspaceType: 'team' | 'personal'): WorkspaceCollabContext 
   } as unknown as WorkspaceCollabContext;
 }
 
-function renderRail(workspaceType: 'team' | 'personal') {
-  return render(
+function renderRail(
+  workspaceType: 'team' | 'personal',
+  view: React.ComponentProps<typeof EntryNavRail>['view'] = 'home',
+) {
+  const onViewChange = vi.fn();
+  render(
     <I18nProvider initial="en">
       <EntryNavRail
-        view="home"
-        onViewChange={() => {}}
+        view={view}
+        onViewChange={onViewChange}
         onNewProject={() => {}}
         open
         context={contextFor(workspaceType)}
       />
     </I18nProvider>,
   );
+  return { onViewChange };
 }
 
 afterEach(() => {
   cleanup();
 });
 
-describe('EntryNavRail all-projects visibility', () => {
-  it('shows the all-projects nav item for a team workspace', () => {
-    renderRail('team');
-    expect(screen.queryByTestId('entry-nav-all-projects')).toBeTruthy();
+describe('EntryNavRail project destinations (OPEND-3108)', () => {
+  it.each(['team', 'personal'] as const)(
+    '%s workspace: one 全部项目 entry, no separate 团队项目 entry',
+    (workspaceType) => {
+      renderRail(workspaceType);
+      const drafts = screen.getByTestId('entry-nav-drafts');
+      expect(drafts.textContent).toContain('All projects');
+      expect(drafts.getAttribute('aria-label')).toBe('All projects');
+      expect(screen.queryByTestId('entry-nav-all-projects')).toBeNull();
+    },
+  );
+
+  it('routes the entry to the projects page', () => {
+    const { onViewChange } = renderRail('team');
+    fireEvent.click(screen.getByTestId('entry-nav-drafts'));
+    expect(onViewChange).toHaveBeenCalledWith('drafts');
   });
 
-  it('hides the all-projects nav item for a personal workspace', () => {
-    renderRail('personal');
-    expect(screen.queryByTestId('entry-nav-all-projects')).toBeNull();
-  });
-
-  it('still shows drafts for a personal workspace', () => {
-    renderRail('personal');
-    expect(screen.queryByTestId('entry-nav-drafts')).toBeTruthy();
+  it('reads as the current destination while the legacy /all-projects view is open', () => {
+    // The team-tab deep link keeps its URL; the rail must not lose its
+    // highlight because the route names the old view.
+    renderRail('team', 'all-projects');
+    expect(screen.getByTestId('entry-nav-drafts').getAttribute('aria-current')).toBe('page');
   });
 });

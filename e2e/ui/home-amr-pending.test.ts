@@ -206,7 +206,7 @@ test('[P0] AMR send from Home enters the pending frame before the balance gate a
   await expect(pending).toBeVisible({ timeout: T.short });
   expect(billing.held(), 'the balance gate was in flight').toBe(true);
   expect(create.requested(), 'no project was created before the verdict').toBe(false);
-  await expect(page.getByTestId('pending-project-title')).toBeVisible();
+  await expect(page.getByTestId('project-creation-pending-chat')).toBeVisible();
   expect(await readHandoffFrames(page)).toBeLessThanOrEqual(1);
 
   // The verdict lands → the create leaves → the run starts, all behind the

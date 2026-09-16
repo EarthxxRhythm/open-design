@@ -165,7 +165,7 @@ describe('EntryNavRail local (signed-out) shell', () => {
   it('reaches the 项目 destination from the rail', () => {
     const { onViewChange } = renderLocalRail();
     const drafts = screen.getByTestId('entry-nav-drafts');
-    expect(drafts.textContent).toContain('Projects');
+    expect(drafts.textContent).toContain('All projects');
     fireEvent.click(drafts);
     expect(onViewChange).toHaveBeenCalledWith('drafts');
     // Still no team catalogue without a workspace.

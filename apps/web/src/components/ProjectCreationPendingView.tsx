@@ -121,26 +121,9 @@ export function ProjectCreationPendingChat({
       data-testid="project-creation-pending-chat"
       data-creation-handoff=""
     >
-      <div className="chat-project-header">
-        <span className="chat-project-header-title">
-          <span className="chat-project-title-line">
-            <span className="title" data-testid="pending-project-title">
-              {projectName}
-            </span>
-          </span>
-        </span>
-        <div className="chat-history-wrap chat-session-switcher">
-          <button
-            type="button"
-            className="chat-session-trigger icon-only"
-            disabled
-            tabIndex={-1}
-            aria-hidden="true"
-          >
-            <Icon name="comment" size={16} />
-          </button>
-        </div>
-      </div>
+      {/* No project-name header: the name is shown once, in the switcher
+          docked above this card, exactly as the real chat card it hands off
+          to (OPEND-3128). */}
       <div className="chat-log-wrap">
         <div className="chat-log" aria-busy="true">
           {prompt || cards.length > 0 ? (

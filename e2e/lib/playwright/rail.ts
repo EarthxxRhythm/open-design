@@ -97,6 +97,16 @@ export async function ensureRailOpen(page: Page): Promise<void> {
  * wired but unreachable — the same gap `e2e/ui/entry-chrome-flows.test.ts`
  * documents. Drive the `/projects` route directly until an entry returns.
  */
+/**
+ * Opens 全部项目 from the rail and switches it to the 团队项目 tab (OPEND-3108).
+ * The former `entry-nav-all-projects` destination is this tab now; the rail
+ * has one project entry in every workspace.
+ */
+export async function openTeamProjectsTab(page: Page): Promise<void> {
+  await page.getByTestId('entry-nav-drafts').click();
+  await page.getByTestId('recent-projects-collection-teamProjects').click();
+}
+
 export async function openNewProjectModal(page: Page): Promise<void> {
   if (await page.getByTestId('new-project-panel').isVisible().catch(() => false)) return;
   // Chrome parity only, never a functional step: the rail carries no

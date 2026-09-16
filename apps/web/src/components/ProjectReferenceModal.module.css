@@ -127,6 +127,11 @@
      it, so nothing shifts when a row is picked. */
   height: auto;
   min-height: 0;
+  /* `.list` is a column flexbox capped at 380px, and `min-height: 0` above
+     makes the row a shrinkable flex item — with a dozen projects every row
+     was squeezed to ~31px and the two lines spilled out again (OPEND-2787,
+     second pass). The row keeps its content height; the list scrolls. */
+  flex: 0 0 auto;
   padding: 8px 10px;
   border: 1px solid transparent;
   border-radius: var(--radius);

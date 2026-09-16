@@ -866,6 +866,11 @@ interface Props {
   onClearPendingPrompt: () => void;
   onTouchProject: () => void;
   onProjectChange: (next: Project) => void;
+  /** Rename fences from the era of the inline title rename in the chat card.
+   *  The card no longer renders a title (OPEND-3128: the project is named once,
+   *  in the switcher, whose row menu renames through App's own projection
+   *  fence), so this view invokes neither; the props stay for App's wiring
+   *  until that plumbing is retired. */
   onProjectRenameStarted?: (optimistic: Project) => ProjectRenameFenceToken | null;
   onProjectRenameSettled?: (
     token: ProjectRenameFenceToken | null,
@@ -2171,8 +2176,6 @@ export function ProjectView({
   onClearPendingPrompt,
   onTouchProject,
   onProjectChange,
-  onProjectRenameStarted,
-  onProjectRenameSettled,
   onProjectsRefresh,
   onDeleteProject,
   onChangeDefaultDesignSystem,
@@ -2521,9 +2524,6 @@ export function ProjectView({
     detailedProject,
     authoritativeProjectName,
   );
-  let projectTitleTooltip = currentProject.name;
-  if (readonlyNoticeText) projectTitleTooltip = readonlyNoticeText;
-  if (projectCollab.materializationPending) projectTitleTooltip = t('designFiles.syncing');
   const resolvedProjectDesignSystemId = resolveProjectDesignSystemId(currentProject);
   // A project can outlive a Design System being disabled in Settings. Keep the
   // persisted project value intact for recovery, but do not inject a disabled
@@ -11843,128 +11843,6 @@ export function ProjectView({
     ],
   );
 
-  const projectRenameStatesRef = useRef<Map<string, {
-    key: string;
-    generation: number;
-    confirmed: Project;
-    pending: number;
-    tail: Promise<void>;
-  }>>(new Map());
-  const handleProjectRename = useCallback(
-    (newName: string) => {
-      if (projectMutationReadOnly) return;
-      const trimmed = newName.trim();
-      if (!trimmed || trimmed === project.name) return;
-      const previousName = project.name;
-      const renameContext = projectRunWorkspaceContextRef.current;
-      const renameWorkspaceIdentity = workspaceIdentityCacheKey(renameContext);
-      const renameKey = JSON.stringify([
-        project.id,
-        project.workspaceId ?? null,
-        renameWorkspaceIdentity,
-      ]);
-      let renameState = projectRenameStatesRef.current.get(renameKey);
-      if (!renameState || renameState.pending === 0) {
-        renameState = {
-          key: renameKey,
-          generation: 0,
-          confirmed: project,
-          pending: 0,
-          tail: Promise.resolve(),
-        };
-        projectRenameStatesRef.current.set(renameKey, renameState);
-      }
-      const renameGeneration = ++renameState.generation;
-      renameState.pending += 1;
-      const metadata = project.metadata
-        ? { ...project.metadata, nameSource: 'user' as const }
-        : undefined;
-      const updated: Project = {
-        ...project,
-        name: trimmed,
-        ...(metadata ? { metadata } : {}),
-        updatedAt: Date.now(),
-      };
-      const renameFenceToken = onProjectRenameStarted?.(updated) ?? null;
-      onProjectChange(updated);
-      const runRename = async () => {
-        const persisted = await patchProject(project.id, {
-          name: trimmed,
-          ...(metadata ? { metadata } : {}),
-        }, renameContext);
-        if (persisted) renameState.confirmed = persisted;
-        const isLatestQueuedRename =
-          projectRenameStatesRef.current.get(renameKey) !== renameState
-          ? false
-          : renameState.generation === renameGeneration;
-        if (!isLatestQueuedRename) return;
-        const settledProject = persisted ?? renameState.confirmed;
-        onProjectRenameSettled?.(renameFenceToken, settledProject);
-        if (
-          projectRef.current.id !== project.id
-          || workspaceIdentityCacheKey(projectRunWorkspaceContextRef.current)
-            !== renameWorkspaceIdentity
-          || (
-            projectRef.current.name !== previousName
-            && projectRef.current.name !== trimmed
-          )
-        ) return;
-        if (!persisted) {
-          if (projectRef.current.name === trimmed) {
-            const rollback = {
-              ...projectRef.current,
-              name: renameState.confirmed.name,
-              metadata: renameState.confirmed.metadata,
-              updatedAt: renameState.confirmed.updatedAt,
-            };
-            onProjectChange(rollback);
-            try {
-              await onProjectsRefresh();
-            } catch {
-              // The rollback is already projected locally. A later list read
-              // closes the stale-request fence if this refresh is unavailable.
-            }
-          }
-          return;
-        }
-        const confirmed = {
-          ...projectRef.current,
-          name: persisted.name,
-          metadata: persisted.metadata,
-          updatedAt: persisted.updatedAt,
-        };
-        onProjectChange(confirmed);
-        try {
-          await onProjectsRefresh();
-        } catch {
-          // The rename is already persisted. Existing list retry/reconnect
-          // paths will reconcile a transient projection refresh failure.
-        }
-      };
-      const queued = renameState.tail.then(runRename, runRename);
-      renameState.tail = queued.then(
-        () => undefined,
-        () => undefined,
-      ).finally(() => {
-        renameState.pending -= 1;
-        if (
-          renameState.pending === 0
-          && projectRenameStatesRef.current.get(renameKey) === renameState
-        ) {
-          projectRenameStatesRef.current.delete(renameKey);
-        }
-      });
-    },
-    [
-      onProjectChange,
-      onProjectRenameSettled,
-      onProjectRenameStarted,
-      onProjectsRefresh,
-      project,
-      projectMutationReadOnly,
-    ],
-  );
-
   const activeConversationChatState = useMemo(
     () =>
       activeConversationId
@@ -12099,37 +11977,6 @@ export function ProjectView({
       projectRunWorkspaceContext,
     ],
   );
-
-  // Canonical project-type chip shown next to the editable title. We label
-  // by the resolved skill/template `mode` (the real type taxonomy) rather
-  // than the skill's display name, so every project kind — prototype, deck,
-  // template, image, video, audio, design system — reads as one consistent,
-  // short type just like "Design system". Returns null for freeform projects
-  // (no resolvable type), which hides the chip.
-  const projectTypeLabel = useMemo<string | null>(() => {
-    if (projectIsDesignSystemProject) return t('dsManager.tabDesignSystem');
-    const summary =
-      skills.find((s) => s.id === project.skillId) ??
-      designTemplates.find((s) => s.id === project.skillId);
-    switch (summary?.mode) {
-      case 'prototype':
-        return t('project.typePrototype');
-      case 'deck':
-        return t('project.typeDeck');
-      case 'template':
-        return t('project.typeTemplate');
-      case 'design-system':
-        return t('dsManager.tabDesignSystem');
-      case 'image':
-        return t('project.typeImage');
-      case 'video':
-        return t('project.typeVideo');
-      case 'audio':
-        return t('project.typeAudio');
-      default:
-        return null;
-    }
-  }, [projectIsDesignSystemProject, skills, designTemplates, project.skillId, t]);
 
   const activeDesignSystemSummary = useMemo(() => {
     if (!projectDesignSystemId) return null;
@@ -13844,34 +13691,6 @@ export function ProjectView({
               collapseControlLifted={!workspaceFocused}
               backLabel={t('project.backToProjects')}
               composerFooterAccessory={executionControls}
-              projectHeader={(
-                <span className="chat-project-title-line">
-                  <span
-                    className={`title${projectMutationReadOnly ? ' readonly' : ' editable'}`}
-                    data-testid="project-title"
-                    title={projectTitleTooltip}
-                    tabIndex={projectMutationReadOnly ? -1 : 0}
-                    role={projectMutationReadOnly ? undefined : 'textbox'}
-                    suppressContentEditableWarning
-                    contentEditable={!projectMutationReadOnly}
-                    onBlur={(e) => {
-                      if (projectMutationReadOnly) return;
-                      handleProjectRename(e.currentTarget.textContent ?? '');
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        (e.currentTarget as HTMLElement).blur();
-                      }
-                    }}
-                  >
-                    {currentProject.name}
-                  </span>
-                  {projectTypeLabel ? (
-                    <span className="meta" data-testid="project-meta">{projectTypeLabel}</span>
-                  ) : null}
-                </span>
-              )}
               designSystemPicker={(
                 <DesignSystemPicker
                   variant="home"

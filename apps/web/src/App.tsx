@@ -65,6 +65,7 @@ import {
   type ProjectNameAuthorityResolution,
 } from './components/ProjectView';
 import { ProjectCreationPendingView } from './components/ProjectCreationPendingView';
+import { projectsForWorkspaceChrome } from './runtime/workspace-chrome-projects';
 import { AmrArtifactUpgradeGate } from './components/AmrArtifactUpgradeGate';
 import { AmrArtifactUpgradeHomeCard } from './components/AmrArtifactUpgradeHomeCard';
 import { ExperienceSurvey } from './components/ExperienceSurvey';
@@ -4669,6 +4670,18 @@ function AppInner() {
           )
         ]
       : undefined;
+  // The switcher names the open project once (OPEND-3128), so it reads the
+  // same catalog-title authority ProjectView reconciles the record with; a
+  // deep-linked row the ambient list lacks is appended for its tab only.
+  const workspaceChromeProjects = useMemo(
+    () => projectsForWorkspaceChrome({
+      projects,
+      activeProject,
+      activeProjectId: route.kind === 'project' ? route.projectId : null,
+      authoritativeProjectName: activeAuthoritativeProjectName,
+    }),
+    [projects, activeProject, route, activeAuthoritativeProjectName],
+  );
   const activeProjectAuthorizationKey =
     route.kind === 'project'
       ? projectViewAuthorizationLifetimeKey(
@@ -5671,11 +5684,7 @@ function AppInner() {
           // selected Workspace) while a deep-linked project is already open.
           // Supply only that route-owned row to chrome; never insert it into
           // the ambient Home catalogue.
-          projects={
-            activeProject && !projects.some((project) => project.id === activeProject.id)
-              ? [...projects, activeProject]
-              : projects
-          }
+          projects={workspaceChromeProjects}
           activeProjectWorkspaceId={
             route.kind === 'project' && activeProject
               ? activeProject.workspaceId ?? null

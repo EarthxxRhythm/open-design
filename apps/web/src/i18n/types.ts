@@ -1504,6 +1504,8 @@ export interface Dict {
   'recentProjects.sortName': string;
   /** Heading of the rail's recent-projects disclosure (最近浏览过). */
   'recentProjects.collectionRecent': string;
+  'recentProjects.collectionPersonalProjects': string;
+  'recentProjects.collectionTeamProjects': string;
   'recentProjects.viewList': string;
   'recentProjects.sharedBadge': string;
   'recentProjects.sharedProjectFallbackName': string;
