@@ -361,6 +361,60 @@ describe('ProjectView auto-open of a finished turn (OPEND-2588)', () => {
     });
   }
 
+  it.each(['single-focus', 'newer-focus', 'newer-image-focus'] as const)(
+    'keeps the latest explicit focus while its run is still active: %s (OPEND-2815)',
+    async (scenario) => {
+      prepareFocusScenario();
+      loadTabs.mockResolvedValue({ tabs: [notes.name], active: notes.name, hasSavedState: true });
+      fetchProjectFiles.mockResolvedValue([notes]);
+      let handlers!: Handlers;
+      streamViaDaemon.mockImplementation(async (options: any) => {
+        options.onRunCreated('run-focus');
+        handlers = options.handlers;
+        return new Promise<void>(() => {});
+      });
+      renderProjectView();
+      await waitFor(() => expect(workspaceHarness.tabsState.active).toBe(notes.name));
+      void chatPaneHarness.onSend!('Create the reference image and then focus the final page.', [], []);
+      await waitFor(() => expect(handlers).toBeTruthy());
+
+      const firstFile = scenario === 'newer-image-focus' ? finalPage : referenceImage;
+      const newerFile = scenario === 'newer-image-focus' ? referenceImage : finalPage;
+      let releaseFirstRead!: (files: unknown[]) => void;
+      const firstRead = new Promise<unknown[]>(resolve => { releaseFirstRead = resolve; });
+      fetchProjectFiles.mockReturnValueOnce(firstRead);
+      const readsBeforeFirstFocus = fetchProjectFiles.mock.calls.length;
+      await act(async () => {
+        handlers.onAgentEvent({ kind: 'artifact_focus', open: firstFile.name });
+      });
+      expect(fetchProjectFiles.mock.calls.length).toBe(readsBeforeFirstFocus + 1);
+      expect(workspaceHarness.requests).toEqual([]);
+
+      if (scenario !== 'single-focus') {
+        // A later filesystem invalidation can start a new /files generation
+        // while an earlier reader is unresolved. The real provider eventually
+        // re-reads for that earlier caller, so both replies may contain the
+        // newest file list: stale focus intent, not stale file data, is the bug.
+        fetchProjectFiles.mockResolvedValue([notes, referenceImage, finalPage]);
+        await act(async () => {
+          handlers.onAgentEvent({ kind: 'artifact_focus', open: newerFile.name });
+        });
+        await waitFor(() => expect(focusedTab()).toBe(newerFile.name));
+        expect(workspaceHarness.requests).toEqual([{ name: newerFile.name, batch: [] }]);
+      }
+
+      // No onDone/onError/Stop or user tab callback: this same run is active.
+      // Resolve controlled I/O directly instead of sleeping for the race.
+      await act(async () => {
+        releaseFirstRead([notes, referenceImage, finalPage]);
+        await firstRead;
+      });
+      expect(workspaceHarness.requests).toEqual([
+        { name: scenario === 'single-focus' ? firstFile.name : newerFile.name, batch: [] },
+      ]);
+    },
+  );
+
   it.each(['completion', 'error', 'stop', 'user', 'still-streaming'] as const)(
     'resolves delayed intermediate focus against the %s lifecycle (OPEND-2815)',
     async (laterSelection) => {

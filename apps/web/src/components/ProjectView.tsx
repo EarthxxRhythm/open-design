@@ -8997,6 +8997,7 @@ export function ProjectView({
       // must not move focus again.
       let completionSelectedAutoOpen = false;
       let liveFocusClosed = false;
+      let latestExplicitFocusRequest = 0;
       // A new run gets a clean slate: taking the preview over during the last
       // turn says nothing about this one.
       userTookOverPreviewRef.current = false;
@@ -9101,13 +9102,18 @@ export function ProjectView({
          */
         if (ev.kind === 'artifact_focus' && ev.open) {
           const declaredPath = ev.open;
+          const focusRequest = ++latestExplicitFocusRequest;
           void refreshProjectFiles().then(async (nextFiles) => {
             const moduleFileNames = /\.(jsx|tsx)$/i.test(declaredPath)
               ? await collectReferencedJsxNames(nextFiles, readProjectHtml)
               : undefined;
             // The file read belongs to this live stream. Completion, failure,
             // or cancellation must not let its stale focus replace a later choice.
-            if (liveFocusClosed || controller.signal.aborted) return;
+            if (
+              liveFocusClosed
+              || controller.signal.aborted
+              || focusRequest !== latestExplicitFocusRequest
+            ) return;
             const decision = decideAgentFocusOpen({
               declaredPath,
               projectFiles: nextFiles,
