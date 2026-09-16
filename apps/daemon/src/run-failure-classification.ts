@@ -488,6 +488,14 @@ function authDetail(text: string): TrackingRunFailureDetail {
   return 'auth_required';
 }
 
+function upstreamClientErrorDetail(text: string): TrackingRunFailureDetail {
+  // Only the provider's explicit region denial gets S30. A bare 403, proxy
+  // rejection, or request-shape error keeps the existing client-error detail.
+  return /\bCountry, region, or territory not supported\b/i.test(text)
+    ? 'region_not_supported'
+    : 'upstream_client_error';
+}
+
 function upstreamDetail(text: string): TrackingRunFailureDetail {
   if (/\b(AMR model catalog is (?:temporarily )?unavailable|no endpoints found that support tool use|provider routing)\b/i.test(text)) {
     return 'provider_routing_error';
@@ -497,7 +505,7 @@ function upstreamDetail(text: string): TrackingRunFailureDetail {
     .test(text)) {
     return 'stream_disconnected';
   }
-  if (isUpstreamClientErrorText(text)) return 'upstream_client_error';
+  if (isUpstreamClientErrorText(text)) return upstreamClientErrorDetail(text);
   if (/\b(?:http|status|error|response)(?:[ _-]?code)?[\s:=#-]*5\d\d\b|\b5\d\d\s+(?:bad gateway|service unavailable|internal server error|gateway timeout)|\b(5xx|bad gateway|gateway timeout|internal server error|service unavailable|upstream[ _-](?:error|unavailable)|provider (?:error|unavailable)|overloaded|Unexpected server error|Failed to process error response)\b/i
     .test(text)) {
     return 'upstream_5xx';
@@ -974,6 +982,19 @@ function classifyRunFailureBase(
   }
 
   const errorCode = normalizeCode(input.errorCode ?? input.status.errorCode);
+  if (errorCode === 'OD_NEXT_TASK_BLOCKED') {
+    // The host rejected completion, but this does not establish why the model
+    // failed to satisfy the task contract. Do not infer a provider fault or a
+    // child crash from the blocked reason text (the process may exit zero).
+    return {
+      ...classification('process_exit', 'execution_failed', 'finalize', false, 'none', {
+        evidenceLevel: 'structured_code',
+      }),
+      failure_mechanism: 'unknown',
+      failure_domain: 'unknown',
+      repair_owner: 'unknown',
+    };
+  }
   const text = collectFailureText({ ...input, events });
   const retryableHint = latestRetryable(events);
   // Compute once; used both for the early empty_output guard below and for the
@@ -1386,7 +1407,7 @@ function classifyRunFailureBase(
     const retryable = upstreamClientError ? false : retryableHint ?? true;
     return classification(
       'upstream_unavailable',
-      upstreamClientError ? 'upstream_client_error' : upstreamDetail(text),
+      upstreamClientError ? upstreamClientErrorDetail(text) : upstreamDetail(text),
       inferFailureStageFromEvents(events, 'first_token_wait'),
       retryable,
       retryable ? 'retry' : 'none',
