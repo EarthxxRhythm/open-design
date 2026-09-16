@@ -187,7 +187,7 @@ describe('account menu billing card — workspace-aware upgrade routing', () => 
       expect(openSpy).toHaveBeenCalledTimes(1);
       const target = new URL(String(openSpy.mock.calls[0]![0]));
       expect(`${target.origin}${target.pathname}`).toBe(
-        'https://open-design.ai/amr/dashboard',
+        'https://open-design.ai/cloud/dashboard',
       );
       expect(target.searchParams.get('billing')).toBe('plan');
     },
@@ -232,7 +232,7 @@ describe('account menu billing card — 积分 row opens the web console (#62)',
       const [url, target, features] = openSpy.mock.calls[0]!;
       const destination = new URL(String(url));
       expect(destination.origin).toBe('https://open-design.ai');
-      expect(destination.pathname).toBe('/amr/dashboard');
+      expect(destination.pathname).toBe('/cloud/dashboard');
       expect(destination.searchParams.get('workspaceId')).toBe('ws-new');
       expect(target).toBe('_blank');
       expect(features).toBe('noopener,noreferrer');

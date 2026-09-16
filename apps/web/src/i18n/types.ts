@@ -2807,6 +2807,8 @@ export interface Dict {
   'project.brandReadyEditManually': string;
   'project.brandReadyPreviewOpened': string;
   'project.previewCommentSaveFailed': string;
+  'project.previewCommentSaveFailedTitle': string;
+  'project.previewCommentSaveFailedDescription': string;
   'project.previewCommentReorderFailed': string;
   'project.metaFreeform': string;
   'project.typePrototype': string;
@@ -2827,6 +2829,7 @@ export interface Dict {
   'chat.amrCard.chipNoKey': string;
   'chat.amrCard.chipAutoRetry': string;
   'chat.amrCard.switchCta': string;
+  'chat.amrCard.switchedResend': string;
   'chat.amrError.authMessage': string;
   'chat.amrError.balanceMessage': string;
   'chat.amrError.authorizeCta': string;
@@ -2912,7 +2915,20 @@ export interface Dict {
   'chat.runError.noDeliverableMessage': string;
   'chat.runError.title.clarificationRepeated': string;
   'chat.runError.clarificationRepeatedMessage': string;
+  'chat.runError.title.regionNotSupported': string;
   'chat.runError.title.clientEnvironment': string;
+  'chat.runError.title.certificateFailure': string;
+  'chat.runError.certificateFailureMessage': string;
+  'chat.runError.title.proxyConfiguration': string;
+  'chat.runError.proxyConfigurationMessage': string;
+  'chat.runError.title.networkConfiguration': string;
+  'chat.runError.networkConfigurationMessage': string;
+  'chat.runError.title.hostPolicyBlock': string;
+  'chat.runError.hostPolicyBlockMessage': string;
+  'chat.runError.title.localStorageFailure': string;
+  'chat.runError.localStorageFailureMessage': string;
+  'chat.runError.title.tierUpgradeRequired': string;
+  'chat.runError.tierUpgradeRequiredMessage': string;
   'chat.runError.title.generic': string;
   'chat.runError.title.artifactMissing': string;
   'chat.runError.signInMessage.amr': string;
@@ -2949,6 +2965,7 @@ export interface Dict {
   'chat.runError.fallbackMessage': string;
   'chat.runError.cliSessionRefusedMessage': string;
   'chat.runError.strategyTaskStateMismatchMessage': string;
+  'chat.runError.regionNotSupportedMessage': string;
   'chat.runError.clientEnvironmentMessage': string;
   'chat.runError.clientEnvironmentCause.certificate': string;
   'chat.runError.clientEnvironmentCause.proxy': string;
@@ -4447,6 +4464,8 @@ export interface Dict {
   'chat.runError.openSettingsCta': string;
   /* 恢复动作被挡住时,卡面上那一句「为什么现在动不了」(OPEND-2821)。
      四句对应 `runtime/chat/recovery-gating.ts` 的四档,不是四个新的门。 */
+  'chat.runError.title.readOnlyAccess': string;
+  'chat.runError.title.messagesUnavailable': string;
   'chat.runError.actionBlocked.readOnly': string;
   'chat.runError.actionBlocked.messagesUnavailable': string;
   'chat.runError.actionBlocked.billing': string;
@@ -4533,6 +4552,8 @@ export interface Dict {
 
   // Question form labels
   'qf.answered': string;
+  'qf.unanswered': string;
+  'qf.unansweredContinued': string;
   /** 「已回答」陈述块的标题(交付稿 `.answered .k`) */
   'qf.answeredConfirmed': string;
   /**
@@ -4556,7 +4577,9 @@ export interface Dict {
   'chat.edge.reconnectCta': string;
   'chat.edge.reconnectDetail': string;
   'chat.edge.reconnectFailed': string;
+  'chat.edge.reconnectFailedDescription': string;
   'chat.edge.reconnecting': string;
+  'chat.edge.reconnectingDescription': string;
   'chat.edge.retrying': string;
   'qf.visualNext': string;
   'qf.visualPrev': string;

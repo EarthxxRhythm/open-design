@@ -57,6 +57,7 @@ interface Props {
   priorityAnnouncementActive?: boolean;
   onPriorityAnnouncementPendingChange?: (pending: boolean) => void;
   priorityAnnouncementCurrentPlanId?: string | null;
+  priorityAnnouncementAmrProfile?: string | null;
   priorityAnnouncementMetricsConsent?: boolean;
 }
 
@@ -71,6 +72,7 @@ export function MessageCenter({
   priorityAnnouncementActive = false,
   onPriorityAnnouncementPendingChange,
   priorityAnnouncementCurrentPlanId,
+  priorityAnnouncementAmrProfile,
   priorityAnnouncementMetricsConsent = false,
 }: Props) {
   const { locale, t } = useI18n();
@@ -369,6 +371,7 @@ export function MessageCenter({
       <GoPlanSunsetDialog
         active={priorityAnnouncementActive}
         currentPlanId={priorityAnnouncementCurrentPlanId ?? 'unknown'}
+        profile={priorityAnnouncementAmrProfile}
         metricsConsent={priorityAnnouncementMetricsConsent}
         onDismiss={async () => {
           await markRead(priorityMessage.id, { requireAccount: true });

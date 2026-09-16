@@ -702,6 +702,7 @@ export function EntryShell({
     ? null
     : workspaceContext;
   const usesOpenDesignCloud = config.mode === 'daemon' && config.agentId === 'amr';
+  const amrProfile = config.agentCliEnv?.amr?.OPEN_DESIGN_AMR_PROFILE ?? null;
   const amrAuthRequired =
     workspaceContextState.failure === 'reauth-required'
     || (
@@ -1829,6 +1830,7 @@ export function EntryShell({
           priorityAnnouncementActive={view === 'home' && goPlanSunsetMessagePending}
           onPriorityAnnouncementPendingChange={setGoPlanSunsetMessagePending}
           priorityAnnouncementCurrentPlanId={deepSeekCampaignPlan}
+          priorityAnnouncementAmrProfile={amrProfile}
           priorityAnnouncementMetricsConsent={config.telemetry?.metrics === true}
         />
         {projectSearchOpen ? (
