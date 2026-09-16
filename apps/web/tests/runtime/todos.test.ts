@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   continuableUnfinishedTodos,
+  todosDeclaredByLatestTurn,
   latestTodosFromEvents,
   latestTodoWriteInputForPinnedCard,
   parseTodoWriteInput,
   unfinishedTodosFromEvents,
 } from '../../src/runtime/todos';
-import type { AgentEvent } from '../../src/types';
+import type { AgentEvent, ChatMessage } from '../../src/types';
 
 const firstTodoInput = {
   todos: [
@@ -416,5 +417,99 @@ describe('continuableUnfinishedTodos', () => {
         runStatus: 'canceled',
       }).map((todo) => todo.content),
     ).toEqual(['Collect the brand brief', 'Render the landing page']);
+  });
+});
+
+
+// OPEND-2944: exercise the exported plan lookup, not the private classifier.
+// Existing tests above remain unchanged apart from the added imports.
+describe('current turn plan ownership around host memory', () => {
+  const memory = '<od-card type="memory-applied">{"summary":"Remembered a preference","used":[]}</od-card>';
+  const older: ChatMessage = {
+    id: 'older-plan', role: 'assistant', content: 'Working.', createdAt: 1,
+    runId: 'run-older', runStatus: 'running',
+    events: [{ kind: 'tool_use', id: 'old-todo', name: 'TodoWrite', input: {
+      todos: [{ content: 'Older current task', status: 'in_progress' }],
+    } }],
+  };
+  const expectedOlder = [{
+    content: 'Older current task', status: 'in_progress', activeForm: undefined,
+  }];
+  function tail(content = memory, extra: Partial<ChatMessage> = {}): ChatMessage {
+    return {
+      id: 'tail', role: 'assistant', content, createdAt: 2,
+      events: [{ kind: 'text', text: content }], ...extra,
+    };
+  }
+
+  it('passes a standalone valid host memory notification without losing the current plan', () => {
+    expect(todosDeclaredByLatestTurn([older, tail()])).toEqual(expectedOlder);
+  });
+
+  it('also recognizes the host card when optional text events were not stored', () => {
+    expect(todosDeclaredByLatestTurn([older, tail(memory, { events: undefined })]))
+      .toEqual(expectedOlder);
+  });
+
+  it.each([
+    ['ordinary reply', 'The font is Inter.'],
+    ['inline code example', '`' + memory + '`'],
+    ['fenced code example', '```xml\n' + memory + '\n```'],
+    ['ordinary prose containing a real card', 'Here is an example.\n' + memory],
+    ['incomplete memory', '<od-card type="memory-applied">{"summary":"Partial","used":[]'],
+    ['invalid memory JSON', '<od-card type="memory-applied">not JSON</od-card>'],
+    ['different valid protocol card', '<od-card type="task-brief">{"summary":"New task","fields":[]}</od-card>'],
+  ])('keeps %s as a new boundary rather than finding an older plan', (_label, content) => {
+    expect(todosDeclaredByLatestTurn([older, tail(content)])).toEqual([]);
+  });
+
+  it.each([
+    ['ordinary reply', 'This is a normal new reply.'],
+    ['inline memory example', '`' + memory + '`'],
+    ['fenced memory example', '```xml\n' + memory + '\n```'],
+  ])('does not skip visible text events containing %s when content is memory-only', (_label, text) => {
+    expect(todosDeclaredByLatestTurn([older, tail(memory, {
+      events: [{ kind: 'text', text }],
+    })])).toEqual([]);
+  });
+
+  it('does not skip ordinary content merely because text events are memory-only', () => {
+    expect(todosDeclaredByLatestTurn([older, tail('This is a normal new reply.', {
+      events: [{ kind: 'text', text: memory }],
+    })])).toEqual([]);
+  });
+
+  it('uses a real legacy TodoWrite even when its body is a memory card', () => {
+    const events: AgentEvent[] = [{
+      kind: 'tool_use', id: 'new-todo', name: 'TodoWrite', input: {
+        todos: [{ content: 'Latest actual task', status: 'pending' }],
+      },
+    }];
+    expect(todosDeclaredByLatestTurn([older, tail(memory, { events })])).toEqual([
+      { content: 'Latest actual task', status: 'pending', activeForm: undefined },
+    ]);
+  });
+
+  it('treats an explicitly empty real TodoWrite as authoritative', () => {
+    const events: AgentEvent[] = [{
+      kind: 'tool_use', id: 'empty-todo', name: 'TodoWrite', input: { todos: [] },
+    }];
+    expect(todosDeclaredByLatestTurn([older, tail(memory, { events })])).toEqual([]);
+  });
+
+  it('does not skip a real non-Todo tool event merely because its prose is memory', () => {
+    const events: AgentEvent[] = [{
+      kind: 'tool_use', id: 'read-file', name: 'Read', input: { file_path: 'index.html' },
+    }];
+    expect(todosDeclaredByLatestTurn([older, tail(memory, { events })])).toEqual([]);
+  });
+
+  it.each([
+    { startedAt: 2 },
+    { runId: 'run-latest' },
+    { runStatus: 'running' as const },
+    { endedAt: 3 },
+  ])('keeps existing run identity %j as a boundary even with pure memory content', (identity) => {
+    expect(todosDeclaredByLatestTurn([older, tail(memory, identity)])).toEqual([]);
   });
 });
