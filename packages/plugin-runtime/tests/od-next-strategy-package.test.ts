@@ -125,6 +125,28 @@ describe('bundled OD Next Strategy V2 package', () => {
     expect(ruleCard).toContain('OD-LAYOUT-PRIMITIVES v1');
   });
 
+  it('sizes every shell status glyph on the svg itself', () => {
+    // Status glyphs only carry a viewBox, so their size came solely from the
+    // shell stylesheet. A delivery that kept the shell markup but dropped that
+    // stylesheet rendered each glyph at the container width (1424px wide in an
+    // evaluated artifact). Width and height attributes keep them bounded with
+    // or without the stylesheet; the stylesheet still wins when present.
+    const prototype = declaration.assets.taskProfiles.find((profile) => profile.taskType === 'prototype');
+    const shells = (prototype?.resources ?? []).filter((r) => r.path.includes('/device-frames/'));
+    expect(shells).toHaveLength(3);
+    for (const resource of shells) {
+      const shell = readFileSync(`${pluginRoot}/${resource.path.slice(2)}`, 'utf8');
+      const statusIcons = shell.match(/<span class="status-icons">([\s\S]*?)<\/span>/)?.[1];
+      expect(statusIcons, resource.path).toBeDefined();
+      const glyphs = Array.from(statusIcons!.matchAll(/<svg\b[^>]*>/g), (match) => match[0]);
+      expect(glyphs, resource.path).toHaveLength(3);
+      for (const glyph of glyphs) {
+        expect(glyph, resource.path).toMatch(/\swidth="\d+"/);
+        expect(glyph, resource.path).toMatch(/\sheight="\d+"/);
+      }
+    }
+  });
+
   it('maps unknown project kinds to generic or blocked instead of guessing', () => {
     const mapping = readFileSync(
       `${pluginRoot}/${declaration.assets.taskProfileMapping.path.slice(2)}`,

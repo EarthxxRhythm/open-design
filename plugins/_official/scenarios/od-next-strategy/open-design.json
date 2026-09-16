@@ -51,9 +51,9 @@
             "rollout": "active",
             "projectKinds": ["prototype"],
             "resources": [
-              { "path": "./assets/task-profiles/prototype/device-frames/iphone.html", "version": "1.0.0" },
-              { "path": "./assets/task-profiles/prototype/device-frames/android.html", "version": "1.0.0" },
-              { "path": "./assets/task-profiles/prototype/device-frames/neutral.html", "version": "1.0.0" },
+              { "path": "./assets/task-profiles/prototype/device-frames/iphone.html", "version": "1.0.1" },
+              { "path": "./assets/task-profiles/prototype/device-frames/android.html", "version": "1.0.1" },
+              { "path": "./assets/task-profiles/prototype/device-frames/neutral.html", "version": "1.0.1" },
               { "path": "./assets/task-profiles/prototype/layout.css", "version": "1.0.0" }
             ]
           },
