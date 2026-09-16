@@ -769,8 +769,9 @@ html.od-radial-open .workspace-shell {
   --app-chrome-traffic-margin: 0px; /* Set to 8px on macOS */
   display: flex;
   align-items: center;
-  min-height: 48px;
-  padding: 5px 14px;
+  /* 44px top chrome per design (OPEND-3111); the 32px controls center in it. */
+  min-height: 44px;
+  padding: 0 14px;
   border-bottom: 1px solid var(--border);
   background: var(--bg);
   gap: 12px;

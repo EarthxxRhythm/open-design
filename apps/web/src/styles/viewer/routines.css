@@ -929,10 +929,11 @@
 /* Project page audit pass: one final rule set for the active project shell.
    Keep the outer panes flat; only controls and repeated items get radius. */
 .workspace-shell {
-  /* 52px tab-bar row: 10px above + 32px tab + 10px below, so the tabs get 10px
-     top/bottom breathing room and the row below (sidebar) keeps its own 10px
-     top margin — one consistent 10px rhythm around the strip. */
-  grid-template-rows: 52px minmax(0, 1fr);
+  /* 44px tab-bar row (OPEND-3111, design update): 6px above + 32px tab + 6px
+     below. The row below (sidebar) keeps its own 10px top margin. Keep in step
+     with `.workspace-shell .workspace-tabs-chrome.app-chrome-header` and the
+     desktop traffic-light offset (apps/desktop runtime.ts). */
+  grid-template-rows: 44px minmax(0, 1fr);
 }
 /* ── Project-route tab-strip dock (workspaceTabsDock.ts) ──────────────────
    On the project route the strip portals into .split-chat-tabs-dock at the
@@ -1198,12 +1199,14 @@
   min-height: 0;
 }
 .workspace-shell .workspace-tabs-chrome.app-chrome-header {
-  --workspace-tabs-chrome-height: 52px;
+  /* 44px per design (OPEND-3111): the 32px controls sit 6px in from each
+     edge. Same figure as the `.workspace-shell` grid row above. */
+  --workspace-tabs-chrome-height: 44px;
   /* Flush with the page below it — the bar shares the app surface. */
   --workspace-tab-bar-bg: var(--bg);
   --workspace-active-tab-border: color-mix(in srgb, var(--border-strong) 38%, transparent);
-  height: 52px;
-  min-height: 52px;
+  height: 44px;
+  min-height: 44px;
   padding: 0 8px 0 0;
   background: var(--workspace-tab-bar-bg);
   border-bottom: 0;
