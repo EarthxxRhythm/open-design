@@ -13770,6 +13770,7 @@ export async function startServer({
       { gracefulWaitMs = 0 } = {},
     ) => {
       if (acpAttemptTermination) return acpAttemptTermination;
+      tracePackagedThumbnailClose('termination-start');
       acpAttemptTermination = design.runs.terminateProcessTree(
         run,
         child,
@@ -14125,6 +14126,17 @@ export async function startServer({
     noteAgentActivity();
 
     let child;
+    // TEMPORARY OPEND-2809 diagnostic branch only; remove before product delivery.
+    // No prompt, environment, file content or credentials enter this trace.
+    const tracePackagedThumbnailClose = (stage: string, exitCode?: number | null) => {
+      if (def.id !== 'codex' || typeof run.projectId !== 'string' || !run.projectId.startsWith('thumbnail-')) return;
+      try {
+        console.info('[opend-2809-close-trace]', JSON.stringify({
+          runId: run.id, stage, at: Date.now(), pid: child?.pid ?? null,
+          ...(exitCode === undefined ? {} : { exitCode }),
+        }));
+      } catch { /* Diagnostics cannot alter the run. */ }
+    };
     let acpSession = null;
     let writePromptToChildStdin = false;
     let spawnedAgentEnv = null;
@@ -14288,6 +14300,9 @@ export async function startServer({
         // breaks paths containing spaces (issue #315).
         windowsVerbatimArguments: invocation.windowsVerbatimArguments,
       });
+      child.once('exit', (code) => tracePackagedThumbnailClose('physical-exit', code));
+      child.stdout.once('end', () => tracePackagedThumbnailClose('stdout-end'));
+      child.stderr.once('end', () => tracePackagedThumbnailClose('stderr-end'));
       lifecycle.mark('process_spawned');
       run.child = child;
       run.childPid = typeof child.pid === 'number' ? child.pid : null;
@@ -15914,12 +15929,14 @@ export async function startServer({
       finishWithRetryDecision('failed', 1, null);
     });
     child.on('close', async (code, signal) => {
+      tracePackagedThumbnailClose('close-entry', code);
       try {
       clearInactivityWatchdog();
       clearFirstOutputWatchdog();
       clearForcedChildShutdown();
       flushVisibleAgentStderr();
       if (!attemptStillOwnsRun() || watchdogRetryRestarted) {
+        tracePackagedThumbnailClose('close-superseded');
         // Finalization and event-sink / run-handle ownership (keyed by the
         // shared runId) now belong to another retry generation, so this
         // child's late close must not re-run them.
@@ -15930,7 +15947,10 @@ export async function startServer({
       }
       revokeToolToken('child_exit');
       unregisterChatAgentEventSink();
-      if (run.pendingTerminalFinish) return;
+      if (run.pendingTerminalFinish) {
+        tracePackagedThumbnailClose('close-pending-terminal');
+        return;
+      }
       if (acpSession) beginAcpAttemptTermination('acp_child_close');
       if (
         def.id === 'codex' &&
@@ -16631,10 +16651,15 @@ export async function startServer({
         // even when OD Next Runtime State is absent. Resolve the settled
         // filesystem before deciding whether the host syntax gate applies.
         if (acpAttemptTermination) {
+          tracePackagedThumbnailClose('termination-await');
           const termination = await acpAttemptTermination;
+          tracePackagedThumbnailClose('termination-end');
           processTreeQuiescentForFinalization = termination?.quiescent === true;
         }
+        tracePackagedThumbnailClose('artifact-settle-start');
         await resolveRunArtifactOutcomeBeforeFinishAsync();
+        tracePackagedThumbnailClose('artifact-settle-end');
+        tracePackagedThumbnailClose('deliverable-finalize-start');
         const deliverableFinalization = await finalizeSuccessfulRunDeliverable({
           ...(run.artifactOutcome?.diff && baselineEntryFile ? { baselineEntryFile } : {}),
           projectsRoot: PROJECTS_DIR,
@@ -16653,6 +16678,7 @@ export async function startServer({
             ? { previousMetrics: run.deliverableSyntaxValidation.metrics }
             : {}),
         });
+        tracePackagedThumbnailClose('deliverable-finalize-end');
         const { deliverable } = deliverableFinalization;
         // Adding a second page must not erase an unambiguous pre-run entry.
         // Retain only a verified baseline identity, without replacing a user's
@@ -16789,9 +16815,13 @@ export async function startServer({
         // delivery, not syntax correctness; the Run keeps the warning evidence.
         // Freeze the delivered bytes before linking the HTML version below;
         // cover rendering remains asynchronous and does not delay the Run.
+        tracePackagedThumbnailClose('artifact-capture-start');
         await captureChatArtifactsBeforeSuccess();
+        tracePackagedThumbnailClose('artifact-capture-end');
         try {
+          tracePackagedThumbnailClose('html-version-start');
           await snapshotAiHtmlVersionsBeforeSuccess();
+          tracePackagedThumbnailClose('html-version-end');
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           const details = err instanceof AiHtmlVersionSnapshotError
@@ -16942,7 +16972,9 @@ export async function startServer({
           }
         }
       }
+      tracePackagedThumbnailClose('finish-start');
       const retried = finishWithRetryDecision(status, code, signal);
+      tracePackagedThumbnailClose('finish-end');
       if (!retried && pendingStrategyContinuation) {
         const continuation = pendingStrategyContinuation;
         // This turn is not over: the daemon is about to run the next stage of
@@ -17002,6 +17034,7 @@ export async function startServer({
         );
       }
       } finally {
+        tracePackagedThumbnailClose('close-finally');
         // Superseded attempts and early/error exits also release their own
         // receipt. The cleanup owner separately fences the shutdown deadline.
         completeCodexEvidenceCollection();
