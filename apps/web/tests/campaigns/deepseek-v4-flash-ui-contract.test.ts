@@ -72,7 +72,7 @@ describe('DeepSeek V4 Flash workbench campaign entry', () => {
       /topRightSlot=\{\s*view === 'home'/,
     );
     expect(entryNavRailSource).toMatch(
-      /export function WorkspaceTopRightAccountCluster[\s\S]*?\{\s*campaignAudience\s*\?\s*\([\s\S]*?<WorkbenchCampaignBadge[\s\S]*?audience=\{campaignAudience\}[\s\S]*?page="project"/,
+      /export function WorkspaceTopRightAccountCluster[\s\S]*?leadingSlot=\{\s*campaignAudience\s*\?\s*\([\s\S]*?<WorkbenchCampaignBadge[\s\S]*?audience=\{campaignAudience\}[\s\S]*?page="project"/,
     );
     expect(appSource).toMatch(
       /<WorkspaceTopRightAccountCluster[\s\S]*?amrLoggedIn=\{amrLoginStatus\?\.loggedIn \?\? null\}[\s\S]*?metricsConsent=\{config\.telemetry\?\.metrics === true\}/,
