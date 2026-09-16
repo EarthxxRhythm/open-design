@@ -47,7 +47,27 @@ const clock = (): Clock => ({ monotonic: performance.now(), wall: Date.now() });
 // A backwards wall-clock adjustment cannot grant time; a forward jump can only shorten it.
 const elapsed = (start: Clock) => Math.max(0, performance.now() - start.monotonic, Date.now() - start.wall);
 const POLL_MS = 30_000;
-const REQUEST_TIMEOUT_MS = 10_000;
+/**
+ * One refresh fetches a context and every enabled placement's content, so the
+ * budget has to cover a whole round, not one request. A ten-second budget was
+ * measured being exceeded by a real round (11.5s) whose placements all
+ * succeeded, which abandoned a campaign that was working.
+ *
+ * It stays well under `POLL_MS` on purpose: a budget at or above the interval
+ * would let a hung attempt swallow the next tick entirely.
+ */
+export const REQUEST_TIMEOUT_MS = 15_000;
+/**
+ * A failed attempt used to get its next chance from the fixed 30s tick, which
+ * for a sixty-second lease lands exactly when that lease expires — one failure
+ * put display on the edge of going blank with no chance to recover.
+ *
+ * These bounded retries cover FAST failures (transport error, 5xx, DNS), which
+ * return in milliseconds and leave the whole budget intact. A slow failure that
+ * burns the full timeout cannot be retried inside the lease, and should not be:
+ * a lease the server will not renew in time is one that ought to lapse.
+ */
+export const RETRY_BACKOFF_MS = [1_000, 3_000] as const;
 const MAX_TIMER_MS = 2_147_483_647;
 /** Only a failure carrying the server's own withdrawal may end a live lease. */
 const withdrawsDisplay = (error: unknown) =>
@@ -80,6 +100,10 @@ export function useTouchpointLifecycle<T>({ enabled, identity, load, onError }: 
 		let timeout: ReturnType<typeof setTimeout> | undefined;
 		let expiryTimer: ReturnType<typeof setTimeout> | undefined;
 		let boundaryTimer: ReturnType<typeof setTimeout> | undefined;
+		let retryTimer: ReturnType<typeof setTimeout> | undefined;
+		let retryIndex = 0;
+		/** When the current cycle began, so retries can be kept inside it. */
+		let cycleStart: Clock | null = null;
 		let status: LifecycleStatus = enabled && identity ? "loading" : null;
 		const publish = () => {
 			if (stopped) return;
@@ -95,6 +119,7 @@ export function useTouchpointLifecycle<T>({ enabled, identity, load, onError }: 
 			cancelRequest();
 			clearTimeout(expiryTimer);
 			clearTimeout(boundaryTimer);
+			clearTimeout(retryTimer);
 			lease.current = null;
 			++generation.current;
 			publish();
@@ -114,6 +139,27 @@ export function useTouchpointLifecycle<T>({ enabled, identity, load, onError }: 
 				status = "error";
 				revoke();
 			}
+			// Scheduled after any revoke above, which clears the retry timer: an
+			// authoritative withdrawal must not be retried back onto the screen.
+			//
+			// A retry must also finish inside the cycle that spawned it. `refresh`
+			// declines to start while a request is in flight, so a chain that ran
+			// past the next tick would not merely be late — it would swallow that
+			// tick entirely. Requiring room for the retry AND its full budget is
+			// what makes "retries cover fast failures" true in the code and not
+			// only in this comment: a failure that burned the whole budget leaves
+			// no room by construction, so it is never retried.
+			const delay = RETRY_BACKOFF_MS[retryIndex] ?? 0;
+			const remainingInCycle = cycleStart === null ? 0 : POLL_MS - elapsed(cycleStart);
+			if (
+				!withdrawsDisplay(error) &&
+				retryIndex < RETRY_BACKOFF_MS.length &&
+				delay + REQUEST_TIMEOUT_MS <= remainingInCycle
+			) {
+				retryIndex += 1;
+				clearTimeout(retryTimer);
+				retryTimer = setTimeout(() => void refresh(true), delay);
+			}
 			inputs.current.onError?.(error);
 		};
 		clearRef.current = () => { revalidationLease = null; revoke(); };
@@ -131,8 +177,18 @@ export function useTouchpointLifecycle<T>({ enabled, identity, load, onError }: 
 			};
 			tick();
 		};
-		const refresh = async () => {
+		/**
+		 * `retrying` distinguishes a scheduled retry from a fresh cycle. Only a
+		 * fresh cycle restores the retry budget: without that, the first cycle to
+		 * exhaust its retries would leave every later cycle with none.
+		 */
+		const refresh = async (retrying = false) => {
 			if (stopped || ended || request || document.hidden) return;
+			if (!retrying) {
+				retryIndex = 0;
+				cycleStart = clock();
+				clearTimeout(retryTimer);
+			}
 			const controller = new AbortController();
 			const started = clock();
 			request = controller;
@@ -146,6 +202,9 @@ export function useTouchpointLifecycle<T>({ enabled, identity, load, onError }: 
 				if (!ownsRequest()) return;
 				clearTimeout(timeout);
 				request = null;
+				// A completed attempt restores the full retry budget for the next one.
+				retryIndex = 0;
+				clearTimeout(retryTimer);
 				if (result.kind === "retain") {
 					if (!lease.current && revalidationLease && elapsed(revalidationLease.start) < revalidationLease.validForMs) {
 						lease.current = { ...revalidationLease, generation: generation.current };
@@ -229,6 +288,7 @@ export function useTouchpointLifecycle<T>({ enabled, identity, load, onError }: 
 		return () => {
 			stopped = true;
 			revoke();
+			clearTimeout(retryTimer);
 			clearInterval(interval);
 			window.removeEventListener("focus", focus);
 			window.removeEventListener("online", wake);

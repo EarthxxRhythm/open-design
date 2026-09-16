@@ -13,6 +13,7 @@
 // mirroring real vela's on-disk side-effect without the device-auth loop.
 
 import { mkdtempSync, existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { gzipSync } from 'node:zlib';
 import { createServer } from 'node:http';
 import https from 'node:https';
 import type { AddressInfo } from 'node:net';
@@ -3021,6 +3022,60 @@ describe('POST /api/integrations/vela/analytics-entry', () => {
 });
 
 describe('Test touchpoint runtime proxy', () => {
+  it('forwards the caller encoding preference and labels the reply it gets back', async () => {
+    // Decisions carry base64 content and run to megabytes. Building the upstream
+    // headers from scratch dropped `accept-encoding`, so every refresh pulled the
+    // payload uncompressed; the body is piped verbatim, so the reply must also
+    // carry upstream's `content-encoding` or the caller decodes gzip as JSON.
+    let seenAcceptEncoding: string | undefined;
+    const upstream = createServer((req, res) => {
+      seenAcceptEncoding = req.headers['accept-encoding'] as string | undefined;
+      res.setHeader('content-type', 'application/json');
+      res.setHeader('content-encoding', 'gzip');
+      res.statusCode = 200;
+      res.end(gzipSync(Buffer.from(JSON.stringify({ placementKey: 'opend.home.hover-layer' }))));
+    });
+    await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve));
+    const address = upstream.address() as AddressInfo;
+    seedLogin('local', { apiUrl: `http://127.0.0.1:${address.port}` });
+    try {
+      const response = await fetch(
+        `${baseUrl}/api/touchpoints/test-runtime?deploymentId=deployment-1&placementKey=opend.home.hover-layer&locale=zh-CN`,
+        { headers: { 'accept-encoding': 'gzip' } },
+      );
+      expect(response.status).toBe(200);
+      expect(seenAcceptEncoding).toBe('gzip');
+      // `fetch` decodes transparently, which is only possible when the header survived.
+      expect(await response.json()).toEqual({ placementKey: 'opend.home.hover-layer' });
+    } finally {
+      await new Promise<void>((resolve) => upstream.close(() => resolve()));
+    }
+  });
+
+  it('leaves an unencoded reply unlabelled when the caller asks for no encoding', async () => {
+    let seenAcceptEncoding: string | undefined = 'unset';
+    const upstream = createServer((req, res) => {
+      seenAcceptEncoding = req.headers['accept-encoding'] as string | undefined;
+      res.setHeader('content-type', 'application/json');
+      res.statusCode = 200;
+      res.end(JSON.stringify({ placementKey: 'opend.home.hover-layer' }));
+    });
+    await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve));
+    const address = upstream.address() as AddressInfo;
+    seedLogin('local', { apiUrl: `http://127.0.0.1:${address.port}` });
+    try {
+      const response = await fetch(
+        `${baseUrl}/api/touchpoints/test-runtime?deploymentId=deployment-1&placementKey=opend.home.hover-layer&locale=zh-CN`,
+        { headers: { 'accept-encoding': 'identity' } },
+      );
+      expect(seenAcceptEncoding).toBe('identity');
+      expect(response.headers.get('content-encoding')).toBeNull();
+      expect(await response.json()).toEqual({ placementKey: 'opend.home.hover-layer' });
+    } finally {
+      await new Promise<void>((resolve) => upstream.close(() => resolve()));
+    }
+  });
+
   it('forwards only the registered context POST with daemon-held credentials', async () => {
     const requests: Array<{
       url: string;

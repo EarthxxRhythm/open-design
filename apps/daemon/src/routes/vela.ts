@@ -485,6 +485,15 @@ function proxyTouchpointRuntimeRequest(
     accept: 'application/json',
     authorization: `Bearer ${context.controlKey}`,
   };
+  // Touchpoint decisions carry base64 content and run to megabytes, and this
+  // proxy pipes the upstream body through verbatim. Building the request
+  // headers from scratch dropped the caller's `accept-encoding`, so every
+  // refresh pulled the payload uncompressed — measured at 383KB against 214KB
+  // for the same decision. Forward the caller's preference and hand its
+  // `content-encoding` back, so the body stays labelled the way it is framed.
+  const acceptEncoding = req.headers['accept-encoding'];
+  if (typeof acceptEncoding === 'string' && acceptEncoding)
+    headers['accept-encoding'] = acceptEncoding;
   if (body) {
     headers['content-type'] =
       typeof req.headers['content-type'] === 'string'
@@ -496,6 +505,11 @@ function proxyTouchpointRuntimeRequest(
   const upstream = transport.request(target, { method: req.method, headers }, (upstreamRes) => {
     res.status(upstreamRes.statusCode ?? 502);
     res.setHeader('content-type', upstreamRes.headers['content-type'] ?? 'application/json');
+    // Without this the client would decode gzip bytes as JSON. It is set only
+    // when upstream actually encoded, so an unencoded reply is unaffected.
+    const contentEncoding = upstreamRes.headers['content-encoding'];
+    if (typeof contentEncoding === 'string' && contentEncoding)
+      res.setHeader('content-encoding', contentEncoding);
     pipeProxyStreamWithGuard(upstreamRes, res, () => res.destroy());
   });
   upstream.setTimeout(30_000, () =>

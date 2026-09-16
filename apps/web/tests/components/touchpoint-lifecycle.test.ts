@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mountTouchpoint, resolveAuthorizationDeadline, useTouchpointLifecycle, type TouchpointLifecycleLoad, type TouchpointLifecycleOptions } from "../../src/components/touchpoint-lifecycle";
+import { mountTouchpoint, REQUEST_TIMEOUT_MS, resolveAuthorizationDeadline, RETRY_BACKOFF_MS, useTouchpointLifecycle, type TouchpointLifecycleLoad, type TouchpointLifecycleOptions } from "../../src/components/touchpoint-lifecycle";
 import * as host from "../../src/components/touchpoint-component";
 
 const content: host.WebTouchpointContent = {
@@ -248,6 +248,7 @@ function deferred<T>() {
 	return { promise, resolve };
 }
 const first = { text: "campaign" };
+const second = { text: "campaign-renewed" };
 
 beforeEach(() => {
 	vi.useFakeTimers({ toFake: ["Date", "performance", "setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
@@ -360,7 +361,7 @@ describe("shared display lifecycle", () => {
 		const generation = result.current.generation;
 		act(() => { window.dispatchEvent(new Event("online")); expect(result.current.isCurrent(generation)).toBe(false); });
 		expect(result.current.current).toBeNull();
-		await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+		await act(async () => { await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS); });
 		expect(result.current.status).toBe("error");
 		await act(async () => { pending.resolve({ kind: "decision", value: first, key: "same", validForMs: 60_000 }); });
 		expect(result.current.current).toBeNull();
@@ -374,12 +375,14 @@ describe("shared display lifecycle", () => {
 		const generation = result.current.generation;
 		await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
 		expect(load).toHaveBeenCalledTimes(2);
-		await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+		await act(async () => { await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS); });
 		expect(onError).toHaveBeenCalledTimes(1);
 		expect(result.current.current).toBe(first);
 		expect(result.current.generation).toBe(generation);
 		expect(result.current.isCurrent(generation)).toBe(true);
-		await act(async () => { await vi.advanceTimersByTimeAsync(19_999); });
+		// The lease still retires on the server's deadline, not on the retries:
+		// every attempt after t=30s stays pending, so none of them can renew it.
+		await act(async () => { await vi.advanceTimersByTimeAsync(60_000 - 30_000 - REQUEST_TIMEOUT_MS - 1); });
 		expect(result.current.current).toBe(first);
 		await act(async () => { await vi.advanceTimersByTimeAsync(1); });
 		expect(result.current.current).toBeNull();
@@ -412,12 +415,88 @@ describe("shared display lifecycle", () => {
 			expect(result.current.generation).toBe(generation);
 			expect(result.current.isCurrent(generation)).toBe(true);
 		}
-		expect(onError).toHaveBeenCalledTimes(3);
-		await act(async () => { await vi.advanceTimersByTimeAsync(29_999); });
+		// Let the final cycle's retries run: the loop stops on the 90s tick itself.
+		// Backoffs are sequential: each retry is scheduled from the previous
+		// failure, so the cycle's last retry lands at their SUM.
+		const lastRetryAt = RETRY_BACKOFF_MS.reduce((total, delay) => total + delay, 0);
+		await act(async () => { await vi.advanceTimersByTimeAsync(lastRetryAt); });
+		// Each cycle is one attempt plus its full retry budget, and every cycle gets
+		// that budget back — an earlier exhausted cycle must not silence later ones.
+		expect(onError).toHaveBeenCalledTimes(3 * (1 + RETRY_BACKOFF_MS.length));
+		expect(result.current.current).toBe(first);
+		// The lease still retires on the deadline the server granted, never later.
+		await act(async () => { await vi.advanceTimersByTimeAsync(120_000 - 90_000 - lastRetryAt - 1); });
 		expect(result.current.current).toBe(first);
 		await act(async () => { await vi.advanceTimersByTimeAsync(1); });
 		expect(result.current.current).toBeNull();
 		expect(result.current.isCurrent(generation)).toBe(false);
+	});
+
+	it("retries a fast failure within seconds instead of waiting out the poll interval", async () => {
+		const load = vi
+			.fn<Load>()
+			.mockResolvedValueOnce({ kind: "decision", value: first, key: "one", validForMs: 60_000 })
+			.mockRejectedValueOnce(new Error("touchpoint_test_load_failed"))
+			.mockResolvedValue({ kind: "decision", value: second, key: "two", validForMs: 60_000 });
+		const { result } = renderHook(() => useTouchpointLifecycle({ enabled: true, identity: "test", load }));
+		await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+		await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+		expect(load).toHaveBeenCalledTimes(2);
+		// The failure must not have to wait for the next 30s tick: at that point
+		// only one poll would remain before the sixty-second lease expires.
+		await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+		expect(load).toHaveBeenCalledTimes(3);
+		expect(result.current.current).toBe(second);
+	});
+
+	it("bounds the retries and returns to the poll interval", async () => {
+		const load = vi
+			.fn<Load>()
+			.mockResolvedValueOnce({ kind: "decision", value: first, key: "one", validForMs: 60_000 })
+			.mockRejectedValue(new Error("touchpoint_test_load_failed"));
+		renderHook(() => useTouchpointLifecycle({ enabled: true, identity: "test", load }));
+		await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+		await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+		expect(load).toHaveBeenCalledTimes(2);
+		await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+		expect(load).toHaveBeenCalledTimes(3);
+		await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+		expect(load).toHaveBeenCalledTimes(4);
+		// Exhausted: no third retry, and nothing further until the next tick.
+		await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+		expect(load).toHaveBeenCalledTimes(4);
+	});
+
+	it("never lets a retry chain run into — and swallow — the next poll", async () => {
+		// `refresh` declines to start while a request is in flight, so a retry that
+		// outlives its cycle does not just arrive late: it costs the next tick.
+		const stalling = deferred<TouchpointLifecycleLoad<Content>>();
+		const load = vi
+			.fn<Load>()
+			.mockResolvedValueOnce({ kind: "decision", value: first, key: "one", validForMs: 300_000 })
+			.mockReturnValue(stalling.promise);
+		renderHook(() => useTouchpointLifecycle({ enabled: true, identity: "test", load }));
+		await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+		// Cycle at 30s stalls and is abandoned at its budget; no room is left for a
+		// retry plus another full budget inside this cycle, so none is scheduled.
+		await act(async () => { await vi.advanceTimersByTimeAsync(30_000 + REQUEST_TIMEOUT_MS); });
+		expect(load).toHaveBeenCalledTimes(2);
+		await act(async () => { await vi.advanceTimersByTimeAsync(RETRY_BACKOFF_MS[0] ?? 0); });
+		expect(load, "a timed-out attempt must not be retried").toHaveBeenCalledTimes(2);
+		// The next tick therefore still lands on schedule.
+		await act(async () => { await vi.advanceTimersByTimeAsync(60_000 - 30_000 - REQUEST_TIMEOUT_MS - (RETRY_BACKOFF_MS[0] ?? 0)); });
+		expect(load, "the 60s poll must not have been swallowed").toHaveBeenCalledTimes(3);
+	});
+
+	it("gives a slow response the full fifteen-second budget before abandoning it", async () => {
+		const slow = deferred<TouchpointLifecycleLoad<Content>>();
+		const load = vi.fn<Load>().mockReturnValue(slow.promise);
+		const { result } = renderHook(() => useTouchpointLifecycle({ enabled: true, identity: "test", load }));
+		// The retest measured an 11.5s round against the old ten-second budget.
+		await act(async () => { await vi.advanceTimersByTimeAsync(11_500); });
+		expect(result.current.status).not.toBe("error");
+		await act(async () => { slow.resolve({ kind: "decision", value: first, key: "same", validForMs: 60_000 }); });
+		expect(result.current.current).toBe(first);
 	});
 
 	it("clears a visible lease when the failure carries the server's own withdrawal", async () => {
