@@ -108,6 +108,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Qualify Windows Codex fixture wrapper
+        if: github.event_name == 'workflow_dispatch'
+        run: pnpm --filter @open-design/e2e test tests/packaged/codex-fixture.test.ts
+
       - name: Setup NSIS
         shell: pwsh
         run: |

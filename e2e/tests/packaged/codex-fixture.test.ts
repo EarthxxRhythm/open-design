@@ -1,8 +1,11 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createCommandInvocation, stopProcesses } from '@open-design/platform';
+import { T } from '@/timeouts';
+import { PACKAGED_THUMBNAIL_HTML, PACKAGED_THUMBNAIL_PNG_A_BASE64 } from '../../resources/packaged-thumbnail.ts';
 import { describe, expect, it } from 'vitest';
 import { createFakeAgentRuntimes } from '@/fake-agents';
 import {
@@ -167,4 +170,87 @@ describe('packaged Codex fixture transport', () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+});
+
+
+describe.skipIf(process.platform !== 'win32')('Windows thumbnail wrapper qualification', () => {
+  it('[P0] closes the real generated cmd wrapper after the production Codex adapter completes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'od-thumbnail-cmd-'));
+    const lifecycle: Array<Record<string, unknown>> = [];
+    let passed = false;
+    try {
+      await mkdir(join(root, 'input'));
+      const project = join(root, 'project');
+      await mkdir(project);
+      const image = Buffer.from(PACKAGED_THUMBNAIL_PNG_A_BASE64, 'base64');
+      await Promise.all([
+        writeFile(join(root, 'input', 'index.html'), PACKAGED_THUMBNAIL_HTML),
+        writeFile(join(root, 'input', 'a.png'), image),
+      ]);
+      const { codex } = await createFakeAgentRuntimes({ root, runtimeIds: ['codex'], recordInvocations: true });
+      expect(codex.bin).toMatch(/\.cmd$/i);
+      const env = { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, ComSpec: process.env.ComSpec, ...codex.env };
+      const invocation = createCommandInvocation({ command: codex.bin, args: ['app-server'], env });
+      expect(invocation.command).toMatch(/cmd\.exe$/i);
+      expect(invocation.windowsVerbatimArguments).toBe(true);
+      const child = spawn(invocation.command, invocation.args, {
+        cwd: project, env, stdio: 'pipe', windowsVerbatimArguments: invocation.windowsVerbatimArguments === true,
+      });
+      const closed = once(child, 'close');
+      let stderr = '';
+      child.stderr.on('data', (chunk) => { stderr = (stderr + String(chunk)).slice(-16000); });
+      child.on('exit', (code, signal) => lifecycle.push({ event: 'wrapper-exit', pid: child.pid, code, signal }));
+      child.on('close', (code, signal) => lifecycle.push({ event: 'wrapper-close', pid: child.pid, code, signal }));
+      const session = attachCodexAppServerSession({
+        child, cwd: project, prompt: 'Create the packaged thumbnail filter SVG fixture',
+        sandboxMode: 'workspace-write', manageThreadVisibility: true,
+        onAgentEvent: () => {},
+        onTurnComplete: () => lifecycle.push({ event: 'adapter-turn-completed' }),
+      });
+      let deadline: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const result = await Promise.race([
+          closed,
+          new Promise<never>((_, reject) => {
+            deadline = setTimeout(() => reject(new Error('Windows wrapper did not close after real turn completion: ' + JSON.stringify({ lifecycle, stderr }))), T.medium);
+          }),
+        ]);
+        expect(result, JSON.stringify({ lifecycle, stderr })).toEqual([0, null]);
+        expect(session.completedSuccessfully()).toBe(true);
+        expect(lifecycle.map((entry) => entry.event)).toEqual(['adapter-turn-completed', 'wrapper-exit', 'wrapper-close']);
+        expect(await readFile(join(project, 'index.html'), 'utf8')).toBe(PACKAGED_THUMBNAIL_HTML);
+        expect(await readFile(join(project, 'assets', 'a.png'))).toEqual(image);
+        if (!codex.invocation) throw new Error('Missing CLI recorder');
+        const records = (await readFile(codex.invocation.path, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+        const completed = records.find((entry) => entry.event === 'completed');
+        expect(completed).toMatchObject({ nonce: codex.invocation.nonce, failed: false });
+        expect(completed?.pid).not.toBe(child.pid);
+        expect(records.filter((entry) => ['completed', 'stdin-end', 'process-exit'].includes(entry.event)).map((entry) => entry.event))
+          .toEqual(['completed', 'stdin-end', 'process-exit']);
+        expect(records.find((entry) => entry.event === 'process-exit')).toMatchObject({ code: 0, pid: completed?.pid });
+        passed = true;
+      } finally {
+        clearTimeout(deadline);
+        let records: Array<Record<string, unknown>> = [];
+        try {
+          records = codex.invocation ? (await readFile(codex.invocation.path, 'utf8')).trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)) : [];
+        } catch (error) { console.error('Could not read owned wrapper receipts', error); }
+        if (!passed) console.error('Windows thumbnail wrapper qualification failed', { lifecycle, stderr, records });
+        // Exact case nonce and the direct child own every PID eligible for cleanup.
+        const pids = [...new Set([
+          child.pid,
+          ...records.filter((entry) => entry.nonce === codex.invocation?.nonce).map((entry) => entry.pid),
+        ].filter((pid): pid is number => typeof pid === 'number' && Number.isSafeInteger(pid) && pid > 0))];
+        if (!passed) {
+          try {
+            const stopped = await stopProcesses(pids, { termGraceMs: T.short, killGraceMs: T.short });
+            console.error('Owned wrapper failure cleanup', stopped);
+          } catch (error) { console.error('Owned wrapper failure cleanup failed', error); }
+        }
+      }
+    } finally {
+      if (passed) await rm(root, { recursive: true, force: true });
+      else console.error('Preserved owned wrapper qualification scratch', root);
+    }
+  }, T.long);
 });
