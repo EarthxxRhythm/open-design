@@ -211,6 +211,33 @@ describe('account menu billing card — workspace-aware upgrade routing', () => 
 });
 
 describe('account menu billing card — 积分 row opens the web console (#62)', () => {
+<<<<<<< HEAD
+=======
+  it.each(['paid pill', 'allowance row'] as const)(
+    'opens the workspace dashboard from the %s without a settings URL',
+    (action) => {
+      const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+      renderRail({
+        context: context({ billingState: 'active', planId: 'team_plus' }),
+        billing: billing({ membershipTier: 'team_plus', subscriptionStatus: 'active' }),
+      });
+
+      fireEvent.click(action === 'paid pill'
+        ? screen.getByTestId('entry-top-right-credits')
+        : billingCard().getByTestId('entry-nav-credits-row'));
+
+      expect(openSpy).toHaveBeenCalledTimes(1);
+      const [url, target, features] = openSpy.mock.calls[0]!;
+      const destination = new URL(String(url));
+      expect(destination.origin).toBe('https://open-design.ai');
+      expect(destination.pathname).toBe('/cloud/dashboard');
+      expect(destination.searchParams.get('workspaceId')).toBe('ws-new');
+      expect(target).toBe('_blank');
+      expect(features).toBe('noopener,noreferrer');
+    },
+  );
+
+>>>>>>> 3e81db4630 (chore(web): sync main into feat/home-entry-refresh (second pass) (#8204))
   // Product ruling: clicking 积分 must jump straight to B's console for the
   // usage detail — there is NO intermediate credits popover in the client
   // (the reference #5517 has no such panel either). The destination is the
