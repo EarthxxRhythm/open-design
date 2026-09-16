@@ -879,10 +879,6 @@
 .recent-projects__search input::placeholder {
   color: var(--text-faint);
 }
-.recent-projects__view {
-  display: flex;
-  gap: var(--spacing-6);
-}
 .recent-projects__view-btn {
   appearance: none;
   display: inline-flex;
@@ -1088,50 +1084,23 @@
    uses (workspace/design-files.css .df-batch-bar) — so a filtered Recent
    Projects grid always carries a visible, one-click way back to the full
    list instead of quietly looking like the projects are gone. */
-.recent-projects__filter-clear {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacing-6);
-  height: 28px;
-  padding: 0 var(--spacing-12) 0 var(--spacing-8);
-  border: var(--stroke-thin) solid var(--accent-soft);
-  border-radius: var(--radius-pill);
-  background: var(--accent-tint);
-  color: var(--accent-strong);
-  font: inherit;
-  font-size: var(--font-size-13);
-  font-weight: 500;
-  line-height: 1;
-  white-space: nowrap;
-  cursor: pointer;
-  transition:
-    background-color var(--duration-ultra-fast) var(--curve-easy-ease),
-    border-color var(--duration-ultra-fast) var(--curve-easy-ease);
-}
-.recent-projects__filter-clear:hover {
-  border-color: var(--accent);
-}
-.recent-projects__filter-clear:active {
-  transform: translateY(1px);
-}
-.recent-projects__filter-clear:focus-visible {
-  outline: var(--stroke-thin) solid var(--blue);
-  outline-offset: 2px;
-}
 .recent-projects__filter-menu {
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
   z-index: 80;
-  min-width: 148px;
+  min-width: min(148px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
   padding: 6px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-panel);
   box-shadow: var(--shadow-md);
 }
-.recent-projects__filter-wrap:first-of-type .recent-projects__filter-menu,
-.recent-projects__filter-wrap:nth-of-type(2) .recent-projects__filter-menu {
+/* Label pills (owner / type) drop their menu under their left edge; the
+   icon-only ⋯ at the row's end keeps the default right anchor so its menu
+   stays inside the viewport. */
+.recent-projects__filter-wrap:has(> .recent-projects__filter) .recent-projects__filter-menu {
   left: 0;
   right: auto;
 }
@@ -1160,6 +1129,40 @@
 .recent-projects__filter-menu button.is-active {
   background: var(--bg-subtle);
   color: var(--accent);
+}
+/* OPEND-3107: the ⋯ menu folds sort and view into two labelled groups, each
+   item printing its label on the left and a check slot on the right. */
+.recent-projects__filter-menu--display {
+  min-width: min(196px, calc(100vw - 24px));
+}
+.recent-projects__filter-menu-group {
+  display: grid;
+  gap: 2px;
+}
+.recent-projects__filter-menu-group + .recent-projects__filter-menu-group {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+.recent-projects__filter-menu-label {
+  display: block;
+  padding: 3px 10px 4px;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.recent-projects__filter-menu--display button {
+  justify-content: space-between;
+  gap: var(--spacing-16);
+}
+.recent-projects__filter-menu-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 13px;
+  width: 13px;
+  height: 13px;
 }
 
 /* "邀请同事" entry on the team "全部项目" header (UC-2 entry point 2). */

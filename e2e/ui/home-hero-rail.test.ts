@@ -660,7 +660,8 @@ test('[P1] last project list row keeps its overflow menu inside the viewport', a
   });
   await gotoEntryHome(page);
 
-  await page.getByRole('button', { name: 'List view' }).click();
+  await page.getByRole('button', { name: 'Sort projects · View mode' }).click();
+  await page.getByRole('menuitemradio', { name: 'List view' }).click();
   const lastRow = page.locator(`[data-project-id="${lastProject.id}"]`);
   await expect(lastRow).toBeVisible();
   await page.evaluate((projectId) => {
