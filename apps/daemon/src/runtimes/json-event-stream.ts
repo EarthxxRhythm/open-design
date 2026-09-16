@@ -161,7 +161,18 @@ function formatOpenCodeUsage(tokens: unknown): Usage | null {
   if (!isRecord(tokens)) return null;
   const usage: Usage = {};
   if (typeof tokens.input === 'number') usage.input_tokens = tokens.input;
-  if (typeof tokens.output === 'number') usage.output_tokens = tokens.output;
+  /* OpenCode reports `output` WITHOUT reasoning and counts `reasoning`
+   * separately, while every other runtime's output_tokens already includes it
+   * (Codex and Claude both inherit the provider's completion_tokens, where
+   * reasoning is a detail line inside the total). Forwarding OpenCode's split
+   * verbatim made one field mean two different things downstream: billing,
+   * analytics and Langfuse all read output_tokens as "everything generated",
+   * so an OpenCode run under-reported its generated tokens by its entire
+   * reasoning budget. Fold reasoning in here so output_tokens carries the same
+   * meaning for every runtime; thought_tokens below stays the detail line. */
+  if (typeof tokens.output === 'number') {
+    usage.output_tokens = tokens.output + (typeof tokens.reasoning === 'number' ? tokens.reasoning : 0);
+  }
   if (typeof tokens.reasoning === 'number') usage.thought_tokens = tokens.reasoning;
   if (isRecord(tokens.cache)) {
     if (typeof tokens.cache.read === 'number') usage.cached_read_tokens = tokens.cache.read;

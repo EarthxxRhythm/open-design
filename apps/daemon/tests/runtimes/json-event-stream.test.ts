@@ -27,8 +27,30 @@ test('opencode json stream emits text and usage events', () => {
       type: 'usage',
       usage: {
         input_tokens: 11,
-        output_tokens: 7,
+        // OpenCode reports output without reasoning; the adapter folds the two
+        // together so output_tokens means the same thing as on every other
+        // runtime. 7 generated + 3 reasoning = 10.
+        output_tokens: 10,
         thought_tokens: 3,
+        cached_read_tokens: 5,
+        cached_write_tokens: 2,
+      },
+      costUsd: 0,
+    },
+  ]);
+});
+
+test('opencode usage leaves output_tokens alone when the step reports no reasoning', () => {
+  const { events, handler } = collectEvents('opencode');
+  handler.feed(
+    '{"type":"step_finish","sessionID":"ses-1","part":{"type":"step-finish","tokens":{"input":11,"output":7,"cache":{"read":5,"write":2}},"cost":0}}\n',
+  );
+  assert.deepEqual(events, [
+    {
+      type: 'usage',
+      usage: {
+        input_tokens: 11,
+        output_tokens: 7,
         cached_read_tokens: 5,
         cached_write_tokens: 2,
       },
