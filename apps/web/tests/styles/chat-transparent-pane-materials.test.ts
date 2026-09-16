@@ -1,15 +1,22 @@
 // Measurement spec for the chat containers that sit on the TRANSPARENT chat
-// pane (OPEND-3177 / OPEND-3175 / OPEND-3178, OPEND-2553 H1). After S6 made
-// the pane paint nothing (OPEND-3090), every container that used to borrow the
-// pane's white — the question form, the Confirmed answer block, the thoughts
-// window, the nested terminal block, the composer shell, the project dropdown
-// and the conversation history menu — showed up as a flat opaque slab over the
-// app wash. Each one now reads a material from `styles/material.css`
-// (content-layer cards: Regular material; floating menus: liquid glass) so the
-// wash / window vibrancy shows through, and the tokens flatten back to a solid
-// surface when transparency is reduced or backdrop-filter is unsupported.
-// Values here are token names, not colours: the tint level is a design call
-// and changes here, not in the components.
+// pane (OPEND-3177 / OPEND-3175 / OPEND-3173, OPEND-2553 K1; supersedes the
+// H1 pins from #8166). After S6 made the pane paint nothing (OPEND-3090), the
+// containers that used to borrow the pane's white showed up as flat slabs over
+// the app wash. H1 answered with the frosted Regular material; the direction
+// settled on since (#8165 commit 1) is the opposite: ONE opaque floating card
+// for everything in the content layer, and one plain elevated menu for the
+// popovers. So:
+//
+//   content layer — composer shell, question form (shell / body / foot),
+//     Confirmed answer block, thoughts window, nested terminal block — read
+//     the same floating-card tokens the queued-send cards already use
+//     (`--chat-floating-card-bg` + `--chat-border-soft`), with NO backdrop
+//     blur and no shadow;
+//   popovers — project switcher menu, conversation history menu — use the
+//     action-menu recipe (`--bg` ground, `--border-soft` edge, `--shadow-md`).
+//
+// Values here are token names, not colours: dark and reduced-transparency
+// follow the token layer, so the components carry no per-appearance override.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
@@ -17,12 +24,16 @@ const read = (relative: string) => readFileSync(new URL(relative, import.meta.ur
 
 const composioCss = read('../../src/styles/viewer/composio.css');
 const routinesCss = read('../../src/styles/viewer/routines.css');
-const materialCss = read('../../src/styles/material.css');
+const chatCss = read('../../src/styles/chat.css');
 const recordCss = read('../../src/components/chat/primitives/record.module.css');
 const chatRootCss = read('../../src/components/chat/ChatRoot.module.css');
 
+function stripComments(css: string): string {
+  return css.replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
 function declarations(css: string, selector: string): string {
-  const cssWithoutComments = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const cssWithoutComments = stripComments(css);
   const rulePattern = /([^{}]+)\{([^}]*)\}/g;
   const blocks: string[] = [];
   let match: RegExpExecArray | null;
@@ -34,40 +45,21 @@ function declarations(css: string, selector: string): string {
   return blocks.join('\n');
 }
 
-/** The declarations of `selector` inside the at-rule blocks whose prelude
- *  contains `atRule` (a file may carry several such blocks). */
-function declarationsInside(css: string, atRule: string, selector: string): string {
-  const cssWithoutComments = css.replace(/\/\*[\s\S]*?\*\//g, '');
-  const bodies: string[] = [];
-  let start = cssWithoutComments.indexOf(atRule);
-  if (start === -1) throw new Error(`Missing at-rule ${atRule}`);
-  while (start !== -1) {
-    const open = cssWithoutComments.indexOf('{', start);
-    let depth = 0;
-    let end = open;
-    for (let index = open; index < cssWithoutComments.length; index += 1) {
-      const char = cssWithoutComments[index];
-      if (char === '{') depth += 1;
-      if (char === '}') {
-        depth -= 1;
-        if (depth === 0) {
-          end = index;
-          break;
-        }
-      }
-    }
-    bodies.push(cssWithoutComments.slice(open + 1, end));
-    start = cssWithoutComments.indexOf(atRule, end);
+/** Whether any rule in `css` (including inside at-rules) targets `selector`. */
+function declares(css: string, selector: string): boolean {
+  try {
+    declarations(css, selector);
+    return true;
+  } catch {
+    return false;
   }
-  const matches = bodies.flatMap((body) => {
-    try {
-      return [declarations(body, selector)];
-    } catch {
-      return [];
-    }
-  });
-  if (matches.length === 0) throw new Error(`Missing CSS block for ${selector} inside ${atRule}`);
-  return matches.join('\n');
+}
+
+/** The last value declared for `property` in a block ('' when absent). */
+function value(block: string, property: string): string {
+  const pattern = new RegExp(`(?:^|;)\\s*${property.replace(/[-]/g, '\\-')}\\s*:\\s*([^;]+)`, 'g');
+  const values = [...block.matchAll(pattern)].map((m) => m[1]!.trim());
+  return values.at(-1) ?? '';
 }
 
 /** The last `background` / `background-color` value declared in a block. */
@@ -76,101 +68,110 @@ function background(block: string): string {
   return values.at(-1) ?? '';
 }
 
-/** Solid paints that the transparent pane no longer hides: pure white and the
- *  opaque panel / page tokens that resolve to #fff / #fafafa. */
-const OPAQUE = /(^|[^-\w])(#fff\b|#ffffff\b|white\b|var\(--bg\)|var\(--bg-panel\)|var\(--chat-bg\)|var\(--chat-bg-panel\)|var\(--chat-confirm-surface[^)]*\))/;
+/** H1's frosted / glass tokens: none of these containers may read them now. */
+const FROSTED = /--(?:chat-)?material-|--glass-|--vibrancy-fill/;
 
-function expectMaterial(block: string, tint: string, backdrop: string) {
-  expect(background(block)).toBe(`var(${tint})`);
-  expect(block).toMatch(new RegExp(`-webkit-backdrop-filter:\\s*var\\(${backdrop}\\);`));
-  expect(block).toMatch(new RegExp(`(^|[^-])backdrop-filter:\\s*var\\(${backdrop}\\);`));
-  expect(background(block)).not.toMatch(OPAQUE);
+/** An opaque card in the content layer: the floating-card tokens, no blur. */
+function expectFloatingCard(block: string) {
+  expect(background(block)).toBe('var(--chat-floating-card-bg)');
+  expect(block).not.toMatch(/backdrop-filter\s*:\s*var\(/);
+  expect(block).not.toMatch(FROSTED);
 }
 
+/** A popover in the action-menu recipe: plain ground, soft edge, md shadow. */
+function expectActionMenu(block: string) {
+  expect(background(block)).toBe('var(--bg)');
+  expect(value(block, 'border')).toBe('1px solid var(--border-soft)');
+  expect(value(block, 'box-shadow')).toBe('var(--shadow-md)');
+  expect(block).not.toMatch(/backdrop-filter\s*:\s*var\(/);
+  expect(block).not.toMatch(FROSTED);
+}
+
+describe('composer shell is one opaque floating card (styles/viewer/routines.css)', () => {
+  const shell = declarations(routinesCss, '.chat-composer-fixed-layer .composer-shell');
+
+  it('reads the floating-card ground and soft edge at the xl radius, with no shadow', () => {
+    expectFloatingCard(shell);
+    expect(value(shell, 'border-color')).toBe('var(--chat-border-soft)');
+    expect(value(shell, 'border-radius')).toBe('var(--chat-radius-xl)');
+    expect(value(shell, 'box-shadow')).toBe('none');
+  });
+
+  it('switches the backdrop blur off explicitly (chat.css used to give it glass)', () => {
+    expect(value(shell, '-webkit-backdrop-filter')).toBe('none');
+    expect(value(shell, 'backdrop-filter')).toBe('none');
+    expect(declares(chatCss, '.chat-composer-fixed-layer .composer-shell')).toBe(false);
+  });
+
+  it('keeps the compact inset of the reference (5px padding, 8px gap)', () => {
+    expect(value(shell, 'padding')).toBe('5px');
+    expect(value(shell, 'gap')).toBe('8px');
+  });
+
+  it('carries no per-appearance override: dark follows the floating-card token', () => {
+    expect(declares(routinesCss, '[data-theme="dark"] .chat-composer-fixed-layer .composer-shell')).toBe(false);
+    expect(declares(routinesCss, 'html:not([data-theme]) .chat-composer-fixed-layer .composer-shell')).toBe(false);
+  });
+
+  it('has the xl radius alias on the chat seam in both appearances', () => {
+    for (const scope of [declarations(chatRootCss, '.root'), declarations(chatRootCss, ":global([data-theme='dark']) .root")]) {
+      expect(scope).toMatch(/--chat-radius-xl:\s*var\(--radius-xl\);/);
+    }
+  });
+});
+
 describe('question form on the transparent pane (styles/viewer/composio.css)', () => {
-  it('gives the card shell the Regular material with the material separator instead of the opaque panel', () => {
+  it('gives the card shell the floating-card ground and soft edge instead of the frosted material', () => {
     const shell = declarations(composioCss, '.question-form');
-    expectMaterial(shell, '--material-regular', '--material-regular-backdrop');
-    expect(shell).toMatch(/border:\s*1px solid var\(--material-separator\);/);
+    expectFloatingCard(shell);
+    expect(value(shell, 'border')).toBe('1px solid var(--chat-border-soft)');
   });
 
-  it('keeps the confirm variant on the same material rather than the opaque confirm surface', () => {
-    const confirm = declarations(composioCss, '.question-form:has(.question-form-foot):has(.qf-options)');
-    expect(background(confirm)).toBe('var(--material-regular)');
-    expect(background(confirm)).not.toMatch(OPAQUE);
+  it('keeps the confirm variant on the same floating card', () => {
+    expectFloatingCard(declarations(composioCss, '.question-form:has(.question-form-foot):has(.qf-options)'));
   });
 
-  it('lets the head, body and pill paint nothing of their own so the shell material is the only surface', () => {
+  it('lets the head, body and pill paint nothing of their own so the shell is the only surface', () => {
     expect(background(declarations(composioCss, '.question-form-head'))).toBe('transparent');
     expect(background(declarations(composioCss, '.question-form-body'))).toBe('transparent');
     expect(background(declarations(composioCss, '.question-form-pill'))).toBe('transparent');
+    expect(background(declarations(composioCss, '.question-form-foot'))).toBe('');
   });
 
-  it('puts the Confirmed answer block on the Regular material', () => {
-    expectMaterial(declarations(composioCss, '.answered'), '--material-regular', '--material-regular-backdrop');
+  it('puts the Confirmed answer block on the floating card', () => {
+    expectFloatingCard(declarations(composioCss, '.answered'));
   });
 });
 
 describe('thoughts window and nested terminal block (chat/primitives/record.module.css)', () => {
-  it('routes the materials through the --chat-* seam in both appearances', () => {
-    for (const scope of [declarations(chatRootCss, '.root'), declarations(chatRootCss, ":global([data-theme='dark']) .root")]) {
-      expect(scope).toMatch(/--chat-material-regular:\s*var\(--material-regular\);/);
-      expect(scope).toMatch(/--chat-material-regular-backdrop:\s*var\(--material-regular-backdrop\);/);
-      expect(scope).toMatch(/--chat-material-separator:\s*var\(--material-separator\);/);
-    }
+  it('gives the thoughts window the floating-card ground instead of the frosted material', () => {
+    expectFloatingCard(declarations(recordCss, '.thoughts > .body.stack'));
   });
 
-  it('gives the thoughts window the Regular material instead of the opaque panel', () => {
-    expectMaterial(declarations(recordCss, '.thoughts > .body.stack'), '--chat-material-regular', '--chat-material-regular-backdrop');
-  });
-
-  it('gives the nested command + output block the Regular material and the material separator', () => {
+  it('gives the nested command + output block the floating-card ground and soft edge', () => {
     const code = declarations(recordCss, '.fold .body.stack .code');
-    expectMaterial(code, '--chat-material-regular', '--chat-material-regular-backdrop');
-    expect(code).toMatch(/border:\s*var\(--chat-stroke\) solid var\(--chat-material-separator\);/);
+    expectFloatingCard(code);
+    expect(value(code, 'border')).toBe('var(--chat-stroke) solid var(--chat-border-soft)');
+  });
+
+  it('no longer needs the H1 material seam tokens on the chat root', () => {
+    expect(chatRootCss).not.toMatch(/--chat-material-/);
+    expect(recordCss).not.toMatch(FROSTED);
   });
 });
 
-describe('floating menus over the pane (styles/viewer/routines.css + composio.css)', () => {
-  it('lifts the project dropdown onto liquid glass instead of pure white', () => {
-    const menu = declarations(routinesCss, '.workspace-tabs-dropdown__menu');
-    expectMaterial(menu, '--glass-regular', '--glass-backdrop');
-    expect(menu).toMatch(/border:\s*1px solid var\(--material-separator\);/);
-    expect(background(declarations(routinesCss, '.workspace-tabs-dropdown__row:hover'))).toBe('var(--vibrancy-fill-tertiary)');
+describe('popovers over the pane use the action-menu recipe (routines.css + composio.css)', () => {
+  it('draws the project switcher menu as a plain elevated menu, rows on the subtle fill', () => {
+    expectActionMenu(declarations(routinesCss, '.workspace-tabs-dropdown__menu'));
+    expect(background(declarations(routinesCss, '.workspace-tabs-dropdown__row:hover'))).toBe('var(--bg-subtle)');
   });
 
-  it('lifts the conversation history menu onto liquid glass instead of the opaque panel', () => {
-    const menu = declarations(composioCss, '.chat-history-menu');
-    expectMaterial(menu, '--glass-regular', '--glass-backdrop');
-    expect(menu).toMatch(/border:\s*1px solid var\(--material-separator\);/);
+  it('draws the conversation history menu the same way, with its search field back on a solid mix', () => {
+    expectActionMenu(declarations(composioCss, '.chat-history-menu'));
     const search = declarations(composioCss, '.chat-history-search');
-    expect(background(search)).toBe('var(--vibrancy-fill-tertiary)');
-    expect(search).toMatch(/border:\s*1px solid var\(--material-separator\);/);
-  });
-});
-
-describe('composer shell on the transparent pane (styles/viewer/routines.css)', () => {
-  it('replaces the opaque grey mix with the Regular material in both appearances', () => {
-    expectMaterial(
-      declarations(routinesCss, '.chat-composer-fixed-layer .composer-shell'),
-      '--material-regular',
-      '--material-regular-backdrop',
-    );
-    expect(background(declarations(routinesCss, '[data-theme="dark"] .chat-composer-fixed-layer .composer-shell'))).toBe('var(--material-regular)');
-    expect(
-      background(declarationsInside(routinesCss, '@media (prefers-color-scheme: dark)', 'html:not([data-theme]) .chat-composer-fixed-layer .composer-shell')),
-    ).toBe('var(--material-regular)');
-  });
-});
-
-describe('degraded environments keep a solid surface (styles/material.css)', () => {
-  it('flattens every material and glass token to the elevated surface under reduced transparency and without backdrop-filter', () => {
-    for (const atRule of ['@media (prefers-reduced-transparency: reduce)', '@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)))']) {
-      const root = declarationsInside(materialCss, atRule, 'html:root');
-      expect(root).toMatch(/--material-regular:\s*var\(--bg-elevated\);/);
-      expect(root).toMatch(/--glass-regular:\s*var\(--bg-elevated\);/);
-      expect(root).toMatch(/--material-separator:\s*var\(--border\);/);
-    }
-    expect(declarationsInside(materialCss, '@media (prefers-reduced-transparency: reduce)', 'html:root')).toMatch(/--material-regular-backdrop:\s*none;/);
+    expect(background(search)).toBe('color-mix(in srgb, var(--bg) 88%, var(--bg-panel))');
+    expect(value(search, 'border')).toBe('1px solid color-mix(in srgb, var(--border) 78%, transparent)');
+    expect(background(declarations(composioCss, '.chat-history-search:hover'))).toBe('color-mix(in srgb, var(--bg) 94%, var(--bg-panel))');
+    expect(search).not.toMatch(FROSTED);
   });
 });

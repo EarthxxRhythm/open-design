@@ -1404,12 +1404,11 @@ Expected output:
 
     const strip = screen.getByTestId('chat-queued-send-strip');
     // 稿子里队列**没有卡头**:它贴在输入框底下,是什么一目了然,
-    // 不再单起一行写「排队中 · N 条」。行首改成序号。
+    // 不再单起一行写「排队中 · N 条」。行首也不再带序号(K1,参照 #8165):
+    // 队列行紧凑成 grip → 正文 → 动作三段。
     expect(strip?.textContent).not.toContain('Queued');
     expect(strip?.textContent).not.toContain('Start Multitasking');
-    expect(
-      screen.getAllByTestId('chat-queued-send-index').map((el) => el.textContent),
-    ).toEqual(['1', '2', '3', '4', '5']);
+    expect(screen.queryAllByTestId('chat-queued-send-index')).toHaveLength(0);
     expect(screen.getAllByTestId('chat-queued-send-row')).toHaveLength(5);
     expect(strip?.textContent).toContain('Make the export button larger and use a warmer accent');
     expect(strip?.textContent).toContain('Then adjust the title spacing');

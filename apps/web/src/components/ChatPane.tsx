@@ -1620,6 +1620,8 @@ export function ChatPane({
   const composerSlotRef = useRef<HTMLDivElement | null>(null);
   const composerLayerRef = useRef<HTMLDivElement | null>(null);
   const queuedSendStripRef = useRef<HTMLDivElement | null>(null);
+  /** The queued-send stack is spread open over the transcript (see `QueuedSendStack.onExpandedChange`). */
+  const [queuedSendExpanded, setQueuedSendExpanded] = useState(false);
   const didInitialScrollRef = useRef(false);
   const runFailedToastSurfaceKeysRef = useRef<Set<string>>(new Set());
   const runRecoverySurfaceKeysRef = useRef<Set<string>>(new Set());
@@ -2066,8 +2068,11 @@ export function ChatPane({
    * 按位置分工才对:人在上面时他要的是回到最新 —— 那一刻「跑到第几步了」既不紧急、
    * 也不是他伸手要够的东西;人贴着底时他已经在最新上,回底按钮无事可做,
    * 位置该让给进度。两者因此天然不同时出现,不需要谁给谁让一档。
+   *
+   * 队列展开时是第三个例外(K1,参照 #8165):展开的队列叠在 transcript 底部
+   * 同一角上,「回到最新」这时候让位,队列收起后回来。
    */
-  const showJumpToLatest = scrolledFromBottom;
+  const showJumpToLatest = scrolledFromBottom && !queuedSendExpanded;
   const planPillVisible = planPillEligible && !scrolledFromBottom;
   /**
    * 重试在飞时,报错卡**钉在被重试的那一轮上**(OPEND-2758)。
@@ -5091,6 +5096,7 @@ export function ChatPane({
             <QueuedSendStrip
               key={activeConversationId ?? projectId ?? 'draft'}
               containerRef={queuedSendStripRef}
+              onExpandedChange={setQueuedSendExpanded}
               items={queuedItems}
               editingId={editingQueuedSendId}
               onEdit={(item) => {
@@ -6378,10 +6384,13 @@ function queuedTipPlacement(
   onReorder,
   onSendNow,
   steerBlockedReason,
+  onExpandedChange,
 }: {
   containerRef?: MutableRefObject<HTMLDivElement | null>;
   editingId?: string | null;
   items: QueuedSendItem[];
+  /** Forwarded to `QueuedSendStack`: the stack is spread open over the transcript. */
+  onExpandedChange?: (expanded: boolean) => void;
   onEdit?: (item: QueuedSendItem) => void;
   onRemove?: (id: string) => void;
   onReorder?: (orderedIds: string[]) => void;
@@ -6471,6 +6480,7 @@ function queuedTipPlacement(
   return (
     <QueuedSendStack
       containerRef={containerRef}
+      onExpandedChange={onExpandedChange}
       label={`${t('chat.queuedHeader')} · ${items.length}`}
       dragging={Boolean(dragState)}
       onDragLeave={(event) => {
@@ -6500,8 +6510,9 @@ function queuedTipPlacement(
               onDragOver={(event) => handleDragOver(event, item.id)}
               onDrop={(event) => handleDrop(event, item.id)}
             >
-              {/* 稿子这一行是 `grip → ix → tx → qops`:**拖动手柄在最左**,序号跟在它右边。
-                  原来这两个是反的(序号在最左),整行的起手就和稿子对不上。 */}
+              {/* 稿子这一行是 `grip → ix → tx → qops`:**拖动手柄在最左**。
+                  序号(`ix`)K1 起不再渲染(参照 #8165 提交 1):每条是一张独立的
+                  浮动卡,卡的顺序就是队列顺序,出队重排后位置一目了然。 */}
               <button
                 type="button"
                 className="chat-queued-send-drag-handle chat-queued-send-tooltip od-tooltip"
@@ -6516,8 +6527,6 @@ function queuedTipPlacement(
               >
                 <Icon name="grip-vertical" size={14} />
               </button>
-              {/* 序号:出队后重排是数组下标的自然结果,不用另外维护 */}
-              <span className="chat-queued-send-index" data-testid="chat-queued-send-index" aria-hidden>{index + 1}</span>
               <div className="chat-queued-send-main">
                 <span className="chat-queued-send-title">{summarizeQueuedPrompt(item, t)}</span>
               </div>

@@ -720,23 +720,22 @@
      (稿子 `scene-shell.css` 的 `.flow { gap: 12px }`,轮次**内部**那一档)。
      自己再加 margin 就是 12+8,比稿子松一档。 */
   /* OPEND-3177: the chat pane paints nothing of its own (OPEND-3090), so the
-     card no longer inherits a white ground to sit on. It carries the Regular
-     material itself (styles/material.css) and the material separator, and
-     flattens back to a solid surface where transparency is reduced or
-     backdrop-filter is unsupported (the tokens degrade together). The tint
-     level is a design call and lives on the token, not here. */
-  border: 1px solid var(--material-separator);
+     card no longer inherits a white ground to sit on. It is ONE opaque
+     floating card — the same `--chat-floating-card-bg` / `--chat-border-soft`
+     pair the composer shell and the queued-send cards read (#8165 commit 1) —
+     rather than H1's frosted material: the content layer under the
+     transparent pane has one card material, not a blur per container. Dark
+     follows the token. */
+  border: 1px solid var(--chat-border-soft);
   border-radius: var(--radius-lg);
-  background: var(--material-regular);
-  -webkit-backdrop-filter: var(--material-regular-backdrop);
-  backdrop-filter: var(--material-regular-backdrop);
+  background: var(--chat-floating-card-bg);
   overflow: hidden;
 }
 /* 稿子 `.card:has(.foot):has(.opts)`:带底栏又带选项的卡换一层确认底色 ——
    the confirm surface was an opaque #fafafa; under the transparent pane the
-   card keeps the one Regular material instead. */
+   card keeps the one floating-card ground instead. */
 .question-form:has(.question-form-foot):has(.qf-options) {
-  background: var(--material-regular);
+  background: var(--chat-floating-card-bg);
 }
 /* 稿子 `.card:has(.foot) > .h`:有底栏的卡,头不再有分隔线和底色 */
 .question-form:has(.question-form-foot) > .question-form-head {
@@ -766,7 +765,7 @@
   gap: 7px;
   padding: 9px 11px;
   border-bottom: 1px solid var(--border-soft, var(--border));
-  /* The shell's material is the only surface; the head paints nothing over it. */
+  /* The shell's card is the only surface; the head paints nothing over it. */
   background: transparent;
   font-size: var(--font-size-14);
   font-weight: 600;
@@ -853,7 +852,7 @@
   border: 0;
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   /* Was the white block from the question down to the footer; on the
-     transparent pane the shell's material is the only surface (OPEND-3177). */
+     transparent pane the shell's card is the only surface (OPEND-3177). */
   background: transparent;
 }
 /* 稿子 `.card > .h .n { margin-left: auto; font-variant-numeric: tabular-nums }`
@@ -4147,18 +4146,14 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
   max-height: min(360px, calc(100vh - 160px));
   display: flex;
   flex-direction: column;
-  /* Liquid glass (OPEND-3175): the sticky .chat-project-header paints no
-     glass of its own any more (chat.css), so it is no longer a backdrop root
-     and this menu can sample the transcript and the app wash behind it. The
-     glass tokens flatten to a solid panel under reduced transparency. */
-  background: var(--glass-regular);
-  -webkit-backdrop-filter: var(--glass-backdrop);
-  backdrop-filter: var(--glass-backdrop);
-  border: 1px solid var(--material-separator);
+  /* OPEND-3175: the same recipe as the project switcher's action menu —
+     plain `--bg` ground, soft edge, md shadow — instead of H1's liquid glass.
+     A popover covers the transcript; a frost let the un-blurred text under it
+     read through, and the `--bg-panel` grey it replaced read as a slab. */
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
   border-radius: var(--radius-lg);
-  box-shadow:
-    0 1px 2px color-mix(in srgb, #000 4%, transparent),
-    0 12px 32px -12px color-mix(in srgb, #000 22%, transparent);
+  box-shadow: var(--shadow-md);
   z-index: 30;
   overflow: hidden;
   transform-origin: top right;
@@ -4174,10 +4169,9 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
   height: 36px;
   margin: 6px 8px 3px;
   padding: 0 9px;
-  /* A vibrancy fill on the glass menu, not a second opaque field. */
-  border: 1px solid var(--material-separator);
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
   border-radius: var(--radius);
-  background: var(--vibrancy-fill-tertiary);
+  background: color-mix(in srgb, var(--bg) 88%, var(--bg-panel));
   color: var(--text-faint);
   transition:
     border-color 160ms cubic-bezier(0.23, 1, 0.32, 1),
@@ -4186,7 +4180,7 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
 }
 .chat-history-search:hover {
   border-color: color-mix(in srgb, var(--text-faint) 34%, var(--border));
-  background: var(--vibrancy-fill-secondary);
+  background: color-mix(in srgb, var(--bg) 94%, var(--bg-panel));
 }
 .chat-history-search:focus-within {
   border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
@@ -4578,11 +4572,9 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
   width: fit-content;
   max-width: 100%;
   padding: var(--answered-padding);
-  /* OPEND-3177: same Regular material as the question card it answers, so the
-     Confirmed block does not read as a white slab on the transparent pane. */
-  background: var(--material-regular);
-  -webkit-backdrop-filter: var(--material-regular-backdrop);
-  backdrop-filter: var(--material-regular-backdrop);
+  /* OPEND-3177: the same opaque floating card as the question card it
+     answers (and the composer shell), not a frost of its own. */
+  background: var(--chat-floating-card-bg);
   border-radius: var(--answered-radius);
   font-size: var(--font-size-12);
   line-height: 1.5;

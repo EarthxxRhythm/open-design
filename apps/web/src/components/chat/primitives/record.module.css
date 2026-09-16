@@ -1183,13 +1183,11 @@
 .fold .body.stack .code {
   margin: 2px 11px 4px 33px;
   padding: 0;
-  /* Same Regular material as the thoughts window (OPEND-3178): the nested
-     command + output block sits on the transparent pane too. */
-  border: var(--chat-stroke) solid var(--chat-material-separator);
+  /* Same opaque floating card as the thoughts window (OPEND-3178 → 3177):
+     the nested command + output block sits on the transparent pane too. */
+  border: var(--chat-stroke) solid var(--chat-border-soft);
   border-radius: var(--chat-radius-lg);
-  background: var(--chat-material-regular);
-  -webkit-backdrop-filter: var(--chat-material-regular-backdrop);
-  backdrop-filter: var(--chat-material-regular-backdrop);
+  background: var(--chat-floating-card-bg);
   overflow: hidden;
 }
 /* 代码 / 终端块**不吃**上面那份行缩进:它自己靠外边距对齐(稿子
@@ -1479,16 +1477,13 @@
    * 而稿子给的恰恰是一个定值。
    *
    * OPEND-3178 (folded into OPEND-3177): the chat pane itself paints nothing
-   * now (OPEND-3090), so the opaque #fafafa window turned into a white slab
-   * over the app wash. The window carries the Regular MATERIAL instead — a
-   * frost with its own backdrop blur, so what shows through is blurred wash,
-   * not the un-blurred transcript the old translucent fill let bleed through.
-   * The tint is a token (styles/material.css) and flattens to a solid surface
-   * under reduced transparency; the level is a design call made there.
+   * now (OPEND-3090), so the window is the one OPAQUE floating card every
+   * content-layer container under the transparent pane reads —
+   * `--chat-floating-card-bg`, shared with the composer shell and the
+   * queued-send cards (#8165 commit 1). Still a defined value, still opaque;
+   * H1's frosted material in between is gone, so no backdrop blur here.
    */
-  background: var(--chat-material-regular);
-  -webkit-backdrop-filter: var(--chat-material-regular-backdrop);
-  backdrop-filter: var(--chat-material-regular-backdrop);
+  background: var(--chat-floating-card-bg);
   padding: var(--stream-pad);
 }
 /*
