@@ -10,7 +10,16 @@ export type ProductionTouchpointLoadResult =
 	| Readonly<{ kind: "revoked"; receipt: ProductionRuntimeRevocationReceipt }>;
 
 export class ProductionTouchpointLoadError extends Error {
-	constructor(readonly detail: string) { super("touchpoint_load_failed"); }
+	/**
+	 * A 410 is the server's own withdrawal and must clear display authority even
+	 * when its receipt body is unreadable. Every other failure is transport or
+	 * protocol noise, which the shared lifecycle rides out on the existing lease.
+	 */
+	readonly touchpointWithdrawal: boolean;
+	constructor(readonly detail: string) {
+		super("touchpoint_load_failed");
+		this.touchpointWithdrawal = detail === "http_410";
+	}
 }
 
 function receipt(value: unknown): ProductionRuntimeRevocationReceipt | null {

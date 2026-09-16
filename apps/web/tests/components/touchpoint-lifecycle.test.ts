@@ -365,6 +365,72 @@ describe("shared display lifecycle", () => {
 		await act(async () => { pending.resolve({ kind: "decision", value: first, key: "same", validForMs: 60_000 }); });
 		expect(result.current.current).toBeNull();
 	});
+	it("keeps a visible lease when a polling refresh times out, then retires it at its own deadline", async () => {
+		const stalled = deferred<TouchpointLifecycleLoad<Content>>();
+		const load = vi.fn<Load>().mockResolvedValueOnce({ kind: "decision", value: first, key: "same", validForMs: 60_000 }).mockReturnValue(stalled.promise);
+		const onError = vi.fn();
+		const { result } = renderHook(() => useTouchpointLifecycle({ enabled: true, identity: "test", load, onError }));
+		await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+		const generation = result.current.generation;
+		await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+		expect(load).toHaveBeenCalledTimes(2);
+		await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+		expect(onError).toHaveBeenCalledTimes(1);
+		expect(result.current.current).toBe(first);
+		expect(result.current.generation).toBe(generation);
+		expect(result.current.isCurrent(generation)).toBe(true);
+		await act(async () => { await vi.advanceTimersByTimeAsync(19_999); });
+		expect(result.current.current).toBe(first);
+		await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+		expect(result.current.current).toBeNull();
+	});
+
+	it("keeps a visible lease when a polling refresh fails, and clears once it lapses", async () => {
+		const load = vi.fn<Load>().mockResolvedValueOnce({ kind: "decision", value: first, key: "same", validForMs: 60_000 }).mockRejectedValue(new Error("touchpoint_test_load_failed"));
+		const onError = vi.fn();
+		const { result } = renderHook(() => useTouchpointLifecycle({ enabled: true, identity: "test", load, onError }));
+		await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+		const generation = result.current.generation;
+		await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+		expect(onError).toHaveBeenCalledTimes(1);
+		expect(result.current.current).toBe(first);
+		expect(result.current.generation).toBe(generation);
+		await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+		expect(result.current.current).toBeNull();
+		expect(result.current.status).toBe("error");
+	});
+
+	it("rides out consecutive polling failures inside the lease, then clears at the granted deadline", async () => {
+		const load = vi.fn<Load>().mockResolvedValueOnce({ kind: "decision", value: first, key: "same", validForMs: 120_000 }).mockRejectedValue(new Error("touchpoint_test_load_failed"));
+		const onError = vi.fn();
+		const { result } = renderHook(() => useTouchpointLifecycle({ enabled: true, identity: "production", load, onError }));
+		await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+		const generation = result.current.generation;
+		for (const tick of [30_000, 60_000, 90_000]) {
+			await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+			expect(result.current.current, `lease must survive the failure at ${tick}ms`).toBe(first);
+			expect(result.current.generation).toBe(generation);
+			expect(result.current.isCurrent(generation)).toBe(true);
+		}
+		expect(onError).toHaveBeenCalledTimes(3);
+		await act(async () => { await vi.advanceTimersByTimeAsync(29_999); });
+		expect(result.current.current).toBe(first);
+		await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+		expect(result.current.current).toBeNull();
+		expect(result.current.isCurrent(generation)).toBe(false);
+	});
+
+	it("clears a visible lease when the failure carries the server's own withdrawal", async () => {
+		const withdrawal = Object.assign(new Error("touchpoint_load_failed"), { touchpointWithdrawal: true });
+		const load = vi.fn<Load>().mockResolvedValueOnce({ kind: "decision", value: first, key: "same", validForMs: 60_000 }).mockRejectedValue(withdrawal);
+		const { result } = renderHook(() => useTouchpointLifecycle({ enabled: true, identity: "production", load }));
+		await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+		expect(result.current.current).toBe(first);
+		await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+		expect(result.current.current).toBeNull();
+		expect(result.current.status).toBe("error");
+	});
+
 	it("cannot restore an original lease that expires while a wake request is pending", async () => {
 		const pending = deferred<TouchpointLifecycleLoad<Content>>();
 		const load = vi.fn<Load>().mockResolvedValueOnce({ kind: "decision", value: first, key: "same", validForMs: 3000 }).mockReturnValue(pending.promise);
