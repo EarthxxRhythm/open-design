@@ -719,23 +719,24 @@
   /* 稿子 `.card` 不带外距也不带投影 —— 上下间距由 `.assistant-flow` 的 gap:12px 给
      (稿子 `scene-shell.css` 的 `.flow { gap: 12px }`,轮次**内部**那一档)。
      自己再加 margin 就是 12+8,比稿子松一档。 */
-  /* OPEND-3177: the chat pane paints nothing of its own (OPEND-3090), so the
-     card no longer inherits a white ground to sit on. It is ONE opaque
-     floating card — the same `--chat-floating-card-bg` / `--chat-border-soft`
-     pair the composer shell and the queued-send cards read (#8165 commit 1) —
-     rather than H1's frosted material: the content layer under the
-     transparent pane has one card material, not a blur per container. Dark
-     follows the token. */
-  border: 1px solid var(--chat-border-soft);
+  /* OPEND-3177: the chat pane paints nothing of its own (OPEND-3090), and the
+     design settled on 2026-09-16 (OPEND-3178 recording; OPEND-3177 comment
+     "去掉底部的白色底") has the form sit DIRECTLY on the transparent pane —
+     no ground, no edge, no shadow. H1's frost and K1's opaque floating card
+     (#8185) are both withdrawn here; the floating card stays with the
+     composer shell and the queued-send cards only. The head's separator, the
+     input underline, the pill stroke and the chips keep their own ink-token
+     edges, which is what still groups the form. Dark follows the tokens. */
+  border: 0;
   border-radius: var(--radius-lg);
-  background: var(--chat-floating-card-bg);
+  background: transparent;
   overflow: hidden;
 }
 /* 稿子 `.card:has(.foot):has(.opts)`:带底栏又带选项的卡换一层确认底色 ——
-   the confirm surface was an opaque #fafafa; under the transparent pane the
-   card keeps the one floating-card ground instead. */
+   the confirm surface was an opaque #fafafa; on the transparent pane the
+   variant paints nothing either (OPEND-3177). */
 .question-form:has(.question-form-foot):has(.qf-options) {
-  background: var(--chat-floating-card-bg);
+  background: transparent;
 }
 /* 稿子 `.card:has(.foot) > .h`:有底栏的卡,头不再有分隔线和底色 */
 .question-form:has(.question-form-foot) > .question-form-head {
@@ -4572,9 +4573,12 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
   width: fit-content;
   max-width: 100%;
   padding: var(--answered-padding);
-  /* OPEND-3177: the same opaque floating card as the question card it
-     answers (and the composer shell), not a frost of its own. */
-  background: var(--chat-floating-card-bg);
+  /* OPEND-3177 (2026-09-16 design): the Confirmed block sits directly on the
+     transparent pane like the form it answers — no ground of its own (the
+     draft's #fafafa, H1's frost and K1's floating card are all withdrawn).
+     The radius / padding properties stay so the visual-answer variant keeps
+     its own inset. */
+  background: transparent;
   border-radius: var(--answered-radius);
   font-size: var(--font-size-12);
   line-height: 1.5;

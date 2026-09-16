@@ -1,19 +1,27 @@
 // Measurement spec for the chat containers that sit on the TRANSPARENT chat
-// pane (OPEND-3177 / OPEND-3175 / OPEND-3173, OPEND-2553 K1; supersedes the
-// H1 pins from #8166). After S6 made the pane paint nothing (OPEND-3090), the
-// containers that used to borrow the pane's white showed up as flat slabs over
-// the app wash. H1 answered with the frosted Regular material; the direction
-// settled on since (#8165 commit 1) is the opposite: ONE opaque floating card
-// for everything in the content layer, and one plain elevated menu for the
-// popovers. So:
+// pane (OPEND-3177 / OPEND-3175 / OPEND-3173; OPEND-3178 is the design
+// evidence — OPEND-2553 P3, correcting the K1 pins from #8185). After S6 made
+// the pane paint nothing (OPEND-3090), the containers that used to borrow the
+// pane's white showed up as flat slabs over the app wash. H1 answered with a
+// frosted material, K1 with one opaque floating card for everything in the
+// content layer. The direction settled by design (OPEND-3178 recording of
+// 2026-09-16 and `acceptance-3178-0.png`; OPEND-3177 comment "去掉底部的白色底")
+// splits the content layer in two:
 //
-//   content layer — composer shell, question form (shell / body / foot),
-//     Confirmed answer block, thoughts window, nested terminal block — read
-//     the same floating-card tokens the queued-send cards already use
-//     (`--chat-floating-card-bg` + `--chat-border-soft`), with NO backdrop
-//     blur and no shadow;
-//   popovers — project switcher menu, conversation history menu — use the
+//   floating cards — ONLY the composer shell and the queued-send cards keep
+//     the opaque `--chat-floating-card-*` card (K1's treatment stands there);
+//   bare content — the thoughts window, the Confirmed answer block, the nested
+//     terminal block and the question form (shell / body / foot) paint NOTHING
+//     of their own: no ground, no edge, no shadow, no blur. Their text reads
+//     the chat ink tokens so it stays legible straight on the pane (the
+//     thoughts body moves from the muted stream ink to `--chat-text`, the
+//     #494949 named in the recording's comment);
+//   popovers — project switcher menu, conversation history menu — keep the
 //     action-menu recipe (`--bg` ground, `--border-soft` edge, `--shadow-md`).
+//
+// The user bubble in the recording is the dark ground with white ink the
+// branch already ships (`#121212` light / `--text-strong` dark), so it is
+// pinned rather than changed.
 //
 // Values here are token names, not colours: dark and reduced-transparency
 // follow the token layer, so the components carry no per-appearance override.
@@ -27,6 +35,7 @@ const routinesCss = read('../../src/styles/viewer/routines.css');
 const chatCss = read('../../src/styles/chat.css');
 const recordCss = read('../../src/components/chat/primitives/record.module.css');
 const chatRootCss = read('../../src/components/chat/ChatRoot.module.css');
+const queuedSendCss = read('../../src/components/chat/QueuedSendStack.module.css');
 
 function stripComments(css: string): string {
   return css.replace(/\/\*[\s\S]*?\*\//g, '');
@@ -78,6 +87,23 @@ function expectFloatingCard(block: string) {
   expect(block).not.toMatch(FROSTED);
 }
 
+/** Any card family a bare container must not read. */
+const CARDED = /--chat-floating-card-|--chat-confirm-surface|--(?:chat-)?bg-panel|--(?:chat-)?bg\b/;
+
+/**
+ * Bare content on the transparent pane: paints no ground of its own, draws
+ * no edge and no shadow, blurs nothing behind it, and reads no card token.
+ */
+function expectBare(block: string) {
+  expect(['transparent', 'none']).toContain(background(block));
+  expect(['', '0', 'none']).toContain(value(block, 'border'));
+  expect(value(block, 'border-color')).toBe('');
+  expect(['', 'none']).toContain(value(block, 'box-shadow'));
+  expect(block).not.toMatch(/backdrop-filter\s*:\s*var\(/);
+  expect(block).not.toMatch(FROSTED);
+  expect(block).not.toMatch(CARDED);
+}
+
 /** A popover in the action-menu recipe: plain ground, soft edge, md shadow. */
 function expectActionMenu(block: string) {
   expect(background(block)).toBe('var(--bg)');
@@ -120,43 +146,80 @@ describe('composer shell is one opaque floating card (styles/viewer/routines.css
   });
 });
 
-describe('question form on the transparent pane (styles/viewer/composio.css)', () => {
-  it('gives the card shell the floating-card ground and soft edge instead of the frosted material', () => {
-    const shell = declarations(composioCss, '.question-form');
-    expectFloatingCard(shell);
-    expect(value(shell, 'border')).toBe('1px solid var(--chat-border-soft)');
+describe('question form sits bare on the transparent pane (styles/viewer/composio.css)', () => {
+  it('lets the card shell paint no ground, no edge and no shadow of its own', () => {
+    expectBare(declarations(composioCss, '.question-form'));
   });
 
-  it('keeps the confirm variant on the same floating card', () => {
-    expectFloatingCard(declarations(composioCss, '.question-form:has(.question-form-foot):has(.qf-options)'));
+  it('keeps the confirm variant bare too (it used to switch to the confirm surface)', () => {
+    expectBare(declarations(composioCss, '.question-form:has(.question-form-foot):has(.qf-options)'));
   });
 
-  it('lets the head, body and pill paint nothing of their own so the shell is the only surface', () => {
+  it('keeps the head, body, foot and pill transparent inside the shell', () => {
     expect(background(declarations(composioCss, '.question-form-head'))).toBe('transparent');
     expect(background(declarations(composioCss, '.question-form-body'))).toBe('transparent');
     expect(background(declarations(composioCss, '.question-form-pill'))).toBe('transparent');
     expect(background(declarations(composioCss, '.question-form-foot'))).toBe('');
   });
 
-  it('puts the Confirmed answer block on the floating card', () => {
-    expectFloatingCard(declarations(composioCss, '.answered'));
+  it('lets the Confirmed answer block sit bare as well', () => {
+    expectBare(declarations(composioCss, '.answered'));
+  });
+
+  it('no longer reads the floating-card family anywhere in composio.css', () => {
+    expect(composioCss).not.toMatch(/--chat-floating-card-/);
   });
 });
 
-describe('thoughts window and nested terminal block (chat/primitives/record.module.css)', () => {
-  it('gives the thoughts window the floating-card ground instead of the frosted material', () => {
-    expectFloatingCard(declarations(recordCss, '.thoughts > .body.stack'));
+describe('thoughts window and nested terminal block sit bare (chat/primitives/record.module.css)', () => {
+  it('gives the thoughts window no ground of its own', () => {
+    expectBare(declarations(recordCss, '.stream'));
+    expectBare(declarations(recordCss, '.thoughts > .body.stack'));
   });
 
-  it('gives the nested command + output block the floating-card ground and soft edge', () => {
-    const code = declarations(recordCss, '.fold .body.stack .code');
-    expectFloatingCard(code);
-    expect(value(code, 'border')).toBe('var(--chat-stroke) solid var(--chat-border-soft)');
+  it('gives the nested command + output block no ground and no edge', () => {
+    expectBare(declarations(recordCss, '.fold .body.stack .code'));
   });
 
-  it('no longer needs the H1 material seam tokens on the chat root', () => {
+  it('reads the thoughts body in the chat body ink so it stays legible on the pane', () => {
+    expect(value(declarations(recordCss, '.fold .thoughts > .body > *'), 'color')).toBe('var(--chat-text)');
+    expect(value(declarations(recordCss, '.stream > .think'), 'color')).toBe('var(--chat-text)');
+  });
+
+  it('reads neither the floating-card family nor the H1 material seam', () => {
+    expect(recordCss).not.toMatch(/--chat-floating-card-/);
     expect(chatRootCss).not.toMatch(/--chat-material-/);
     expect(recordCss).not.toMatch(FROSTED);
+  });
+});
+
+describe('the floating card stays with the composer and the queue', () => {
+  it('keeps the queued-send cards on the opaque floating card with the soft edge', () => {
+    const banner = declarations(queuedSendCss, '.banner');
+    expectFloatingCard(banner);
+    expect(value(banner, 'border')).toBe('1px solid var(--chat-border-soft)');
+    expect(value(banner, 'color')).toBe('var(--chat-floating-card-text)');
+  });
+
+  it('defines the floating-card token in both chat seam scopes', () => {
+    for (const scope of [declarations(chatRootCss, '.root'), declarations(chatRootCss, ":global([data-theme='dark']) .root")]) {
+      expect(scope).toMatch(/--chat-floating-card-bg:/);
+      expect(scope).toMatch(/--chat-floating-card-text:/);
+    }
+  });
+});
+
+describe('user bubble matches the recording: dark ground, white ink (styles/chat.css)', () => {
+  it('keeps the dark ground token on the light appearance and the theme ink in dark', () => {
+    expect(value(declarations(chatCss, '.msg.user'), '--chat-user-bubble-ground')).toBe('#121212');
+    expect(value(declarations(chatCss, '.msg.user'), '--bub-bg')).toBe('var(--chat-user-bubble-ground)');
+    expect(value(declarations(chatCss, '[data-theme="dark"] .msg.user'), '--chat-user-bubble-ground')).toBe('var(--text-strong)');
+  });
+
+  it('paints the bubble from that ground with the page ink for the text', () => {
+    const bubble = declarations(chatCss, '.msg.user .user-text');
+    expect(background(bubble)).toBe('var(--bub-bg)');
+    expect(value(bubble, 'color')).toBe('var(--bg)');
   });
 });
 
