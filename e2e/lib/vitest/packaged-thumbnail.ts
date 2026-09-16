@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import type { ChatRunStatusResponse } from '@open-design/contracts';
 import { PNG } from 'pngjs';
 import { expect } from 'vitest';
 
@@ -12,7 +13,6 @@ import { PACKAGED_THUMBNAIL_HTML, PACKAGED_THUMBNAIL_PNG_A_BASE64, PACKAGED_THUM
 
 type Inspect = (expression: string) => Promise<unknown>;
 type Ref = { id: string; label: string; kind: string; snapshotId?: string; snapshotState: string; thumbnailUrl?: string };
-type Run = { id: string; agentId?: string; strategyTask?: unknown; status: string; exitCode?: number; childExited?: boolean; projectId: string; conversationId: string; assistantMessageId: string };
 
 /** Real packaged desktop only. This never writes a message, snapshot, or thumbnail. */
 export async function verifyPackagedThumbnail(input: {
@@ -73,6 +73,8 @@ export async function verifyPackagedThumbnail(input: {
   let passed = false;
   let hasPrimaryError = false;
   let primaryError: unknown;
+  let phase = 'configure';
+  let lastRun: ChatRunStatusResponse | null = null;
   try {
     await request('/api/app-config', {
       ...original.config,
@@ -80,28 +82,35 @@ export async function verifyPackagedThumbnail(input: {
       odNextStrategyMode: 'off', skillId: null, designSystemId: null,
       agentCliEnv: {
         ...(original.config.agentCliEnv as Record<string, unknown> | undefined),
-        codex: { ...fake.codex.env, OD_E2E_PACKAGED_THUMBNAIL_FIXTURE: resources },
+        codex: { ...fake.codex.env },
       },
     }, 'PUT');
+    phase = 'create-project';
     const project = await request<{ project: { id: string }; conversationId: string }>('/api/projects', {
       id: `thumbnail-${randomUUID()}`, name: 'Packaged thumbnail binding', metadata: { kind: 'prototype' },
     });
     const projectPath = `/api/projects/${project.project.id}`;
     const conversationPath = `${projectPath}/conversations/${project.conversationId}`;
     const prompt = 'Create the packaged thumbnail filter SVG fixture';
+    phase = 'create-run';
     const created = await request<{ runId: string }>('/api/runs', {
       projectId: project.project.id, conversationId: project.conversationId,
       clientRequestId: randomUUID(), agentId: 'codex', model: 'default', reasoning: 'default',
       message: prompt, currentPrompt: prompt, sessionMode: 'chat', skillId: null, designSystemId: null,
       // Omit assistantMessageId: the normal API owns both the message seed and pin.
     });
+    phase = 'wait-natural-terminal';
     await expect.poll(async () => {
-      const terminal = await request<Run>(`/api/runs/${created.runId}`);
-      if (terminal.status === 'failed' || terminal.status === 'canceled') throw new Error(JSON.stringify(terminal));
-      return terminal.status === 'succeeded' && terminal.childExited === true;
+      const observed = await request<ChatRunStatusResponse>(`/api/runs/${created.runId}`);
+      lastRun = observed;
+      // A failed terminal satisfies the wait, then fails the assertion outside
+      // poll. Throwing inside poll would hide its actual error until timeout.
+      return observed.status === 'failed' || observed.status === 'canceled'
+        || (observed.status === 'succeeded' && observed.childExited === true);
     }, { timeout: T.xlong, message: 'real child must finish naturally before snapshot verification' }).toBe(true);
-    const terminal = await request<Run>(`/api/runs/${created.runId}`);
-    expect(terminal.status).toBe('succeeded');
+    const terminal = await request<ChatRunStatusResponse>(`/api/runs/${created.runId}`);
+    lastRun = terminal;
+    expect(terminal.status, JSON.stringify(terminal)).toBe('succeeded');
     expect(terminal.childExited).toBe(true);
     expect(terminal.exitCode).toBe(0);
     expect(terminal.agentId).toBe('codex');
@@ -111,6 +120,7 @@ export async function verifyPackagedThumbnail(input: {
     expect(terminal.assistantMessageId).toEqual(expect.any(String));
     await report.json(`${prefix}/run.json`, terminal);
 
+    phase = 'wait-bound-snapshot';
     const refsPath = `${conversationPath}/messages/${terminal.assistantMessageId}/artifacts`;
     await expect.poll(async () => {
       const { artifacts } = await request<{ artifacts: Ref[] }>(refsPath);
@@ -133,6 +143,7 @@ export async function verifyPackagedThumbnail(input: {
     const owner = messages.messages.find((message) => message.id === terminal.assistantMessageId);
     expect(owner).toMatchObject({ runId: created.runId, runStatus: 'succeeded' });
     expect(owner?.artifactRefs).toEqual(expect.arrayContaining([expect.objectContaining({ snapshotId: htmlRef.snapshotId })]));
+    phase = 'verify-rendered-pixels';
     const png = await thumbnail(htmlRef.thumbnailUrl);
     await report.save(`${prefix}/captured-a.png`, png);
     await report.json(`${prefix}/before.json`, { frozenRef, snapshot, messages });
@@ -140,6 +151,7 @@ export async function verifyPackagedThumbnail(input: {
     const pixels = quadrantEvidence(png, imageA);
     await report.json(`${prefix}/pixels-a.json`, pixels);
 
+    phase = 'mutate-source-and-verify-history';
     // Normal file mutation after a completed run; no write to historical messages or snapshots.
     await request(`${projectPath}/files`, { name: 'assets/a.png', content: imageB.toString('base64'), encoding: 'base64', overwrite: true });
     await request(`${projectPath}/files`, { name: 'index.html', content: html.replace('2809 image decode fixture', 'Source B now'), encoding: 'utf8', overwrite: true });
@@ -154,6 +166,7 @@ export async function verifyPackagedThumbnail(input: {
     expect(sha(afterPng)).toBe(sha(png));
     quadrantEvidence(afterPng, imageA);
 
+    phase = 'verify-visible-card-and-reload';
     const route = `/projects/${project.project.id}/conversations/${project.conversationId}`;
     // Trigger ordinary navigation then inspect the real Chat image, not an injected canvas/card.
     await inspect(`(() => { setTimeout(() => location.assign(${JSON.stringify(route)}), 0); return true; })()`);
@@ -183,6 +196,7 @@ export async function verifyPackagedThumbnail(input: {
     expect(writes).toHaveLength(1);
     expect(writes[0]?.nonce).toBe(fake.codex.invocation.nonce);
     await report.json(`${prefix}/body-verified.json`, { runId: created.runId, project, frozenRef, snapshot, pixels, sourceChangedToB: true });
+    phase = 'verified';
     passed = true;
   } catch (error) {
     hasPrimaryError = true;
@@ -192,6 +206,7 @@ export async function verifyPackagedThumbnail(input: {
     async function cleanup(step: string, action: () => Promise<unknown>): Promise<void> {
       try { await action(); } catch (error) { cleanupErrors.push({ step, error }); }
     }
+    await cleanup('save last run observation', () => report.json(`${prefix}/last-run.json`, { phase, run: lastRun }));
     // Saving diagnostics must not prevent the following configuration restore.
     const invocation = fake.codex.invocation;
     if (invocation) await cleanup('save CLI log', async () =>
@@ -207,6 +222,7 @@ export async function verifyPackagedThumbnail(input: {
       rm(input.fixtureRoot, { recursive: true, force: true }));
     await cleanup('save final result', () => report.json(`${prefix}/result.json`, {
       passed: passed && !hasPrimaryError && cleanupErrors.length === 0,
+      phase, lastRun,
       primaryError: hasPrimaryError ? errorText(primaryError) : null,
       cleanupErrors: cleanupErrors.map(({ step, error }) => ({ step, error: errorText(error) })),
     }));
