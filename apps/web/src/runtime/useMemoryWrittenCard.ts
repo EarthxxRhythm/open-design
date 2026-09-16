@@ -114,6 +114,10 @@ export function useMemoryWrittenCard<Context = undefined>(
 ): UseMemoryWrittenCard<Context> {
   const [batch, setBatch] = useState<UseMemoryWrittenCard<Context>['batch']>(null);
   const [pollsLeft, setPollsLeft] = useState(0);
+  const pollingWindowRef = useRef<{
+    context: Context | undefined;
+    startedAt: number;
+  } | null>(null);
   // Attempts already turned into a card. Survives dismiss so a still-open
   // window cannot post the same batch twice.
   const seenRef = useRef<Set<string>>(new Set());
@@ -132,18 +136,29 @@ export function useMemoryWrittenCard<Context = undefined>(
       return;
     }
     // A turn just ended. Extraction runs after child close, so start looking.
-    if (!runActive && wasActive) setPollsLeft(MAX_POLLS);
+    if (!runActive && wasActive) {
+      // A subsequent turn can start before this extractor finishes. Each
+      // retry must retain the completed turn's owner and lower time bound.
+      pollingWindowRef.current = {
+        context: turnContextRef.current,
+        startedAt: turnStartedAtRef.current ?? 0,
+      };
+      setPollsLeft(MAX_POLLS);
+    }
   }, [runActive, context]);
 
   useEffect(() => {
-    if (pollsLeft <= 0) return undefined;
+    const pollingWindow = pollingWindowRef.current;
+    if (pollsLeft <= 0 || !pollingWindow) return undefined;
     // Hold the window open while a batch is waiting to be consumed, so a second
     // attempt cannot overwrite a card the caller has not posted yet.
     if (batch) return undefined;
-    // Keep the turn's owner across both requests. Navigation or a new turn
-    // while summaries are in flight must not reassign this extraction.
-    const turnContext = turnContextRef.current;
-    const since = turnStartedAtRef.current ?? 0;
+    // Snapshot the window for this attempt, including both awaits. Replacing
+    // the ref is not an effect dependency: if a fast next turn completes while
+    // this first attempt still awaits its selected record's summaries, the
+    // unchanged MAX budget must not cancel that already-owned result.
+    const turnContext = pollingWindow.context;
+    const since = pollingWindow.startedAt;
     let cancelled = false;
     const timer = setTimeout(async () => {
       if (cancelled) return;

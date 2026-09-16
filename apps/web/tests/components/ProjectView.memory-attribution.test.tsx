@@ -200,7 +200,7 @@ describe('OPEND-2944 delayed memory summaries keep their originating conversatio
     window.sessionStorage.clear();
   });
 
-  it.each(['stay', 'conversation', 'project', 'conversation-running', 'project-running', 'unmount'] as const)(
+  it.each(['stay', 'conversation', 'project', 'conversation-running', 'project-running', 'unmount', 'conversation-running-late-record', 'conversation-running-early-record', 'conversation-running-completed-before-summary'] as const)(
     'persists A memory once and keeps B history clean after %s navigation', async (navigation) => {
       const stored = new Map<string, ChatMessage[]>();
       listConversations.mockImplementation(async (projectId: string) => projectId === 'project-1'
@@ -226,6 +226,11 @@ describe('OPEND-2944 delayed memory summaries keep their originating conversatio
         options.onRunCreated?.('run-memory-a');
         return new Promise<void>(() => {});
       });
+      const lateRecord = navigation.endsWith('-record');
+      const extractionStartedBeforeB = navigation === 'conversation-running-early-record';
+      let extractionStartedAt: number | undefined;
+      let extractionPolls = 0;
+      let exposeExtraction = !lateRecord;
       let releaseSummaries: ((response: Response) => void) | undefined;
       globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = input.toString();
@@ -239,8 +244,11 @@ describe('OPEND-2944 delayed memory summaries keep their originating conversatio
           return Response.json({ message });
         }
         if (input.toString() === '/api/memory/extractions') {
+          extractionPolls += 1;
+          if (!exposeExtraction) return Response.json({ extractions: [] });
           return Response.json({ extractions: [{
-            id: 'extraction-a', kind: 'llm', startedAt: Date.now(), phase: 'success',
+            id: 'extraction-a', kind: 'llm',
+            startedAt: extractionStartedAt ?? Date.now(), finishedAt: Date.now(), phase: 'success',
             writtenCount: 1, writtenIds: ['rule_from_a'],
           }] });
         }
@@ -263,7 +271,17 @@ describe('OPEND-2944 delayed memory summaries keep their originating conversatio
         captured!.handlers.onDone('Saved preference');
       });
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-      expect(releaseSummaries).toBeDefined();
+      if (lateRecord) {
+        expect(extractionPolls).toBe(1);
+        expect(releaseSummaries).toBeUndefined();
+        // Preserve a real extraction start timestamp independently of when
+        // its successful record finally becomes visible to the poller.
+        if (extractionStartedBeforeB) extractionStartedAt = Date.now();
+        // B starts strictly later than A and the early extraction.
+        await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+      } else {
+        expect(releaseSummaries).toBeDefined();
+      }
 
       let projectId = 'project-1';
       let conversationId = 'conv-1';
@@ -276,9 +294,39 @@ describe('OPEND-2944 delayed memory summaries keep their originating conversatio
       await act(async () => { view.rerender(projectView({ projectId, routeConversationId: conversationId })); });
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });
       expect(listMessages.mock.calls.some((call) => call[0] === projectId && call[1] === conversationId)).toBe(true);
-      if (navigation.endsWith('running')) {
+      if (navigation.includes('running')) {
         await act(async () => { void chatPaneHarness.onSend!('B starts another task', [], []); });
         expect(captured?.conversationId).toBe(conversationId);
+      }
+      if (navigation === 'conversation-running-completed-before-summary') {
+        // A's first poll selected its record and is still awaiting summaries,
+        // so its remaining budget is still MAX. Completing B must not cancel
+        // that selected A result or leave it permanently consumed in `seen`.
+        expect(releaseSummaries).toBeDefined();
+        expect(memoryRequests).toHaveLength(0);
+        await act(async () => {
+          captured!.handlers.onDelta('B completed while A summary was pending');
+          captured!.onRunStatus?.('succeeded');
+          captured!.handlers.onDone('B completed while A summary was pending');
+        });
+      }
+      if (lateRecord) {
+        // A's already-scheduled retry still has A's closure. Keep the queue
+        // empty through that retry so the following retry is scheduled while
+        // B is active: this is where the mutable owner ref used to be reread.
+        await act(async () => { await vi.advanceTimersByTimeAsync(2_998); });
+        expect(extractionPolls).toBe(1);
+        await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+        expect(extractionPolls).toBe(2);
+        expect(releaseSummaries).toBeUndefined();
+        expect(memoryRequests).toHaveLength(0);
+        if (!extractionStartedBeforeB) extractionStartedAt = Date.now();
+        exposeExtraction = true;
+        await act(async () => { await vi.advanceTimersByTimeAsync(2_999); });
+        expect(extractionPolls).toBe(2);
+        await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+        expect(extractionPolls).toBe(3);
+        expect(releaseSummaries).toBeDefined();
       }
       if (navigation === 'unmount') view.unmount();
       await act(async () => {
