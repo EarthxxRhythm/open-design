@@ -22,6 +22,7 @@ function contextFor(workspaceType: 'team' | 'personal'): WorkspaceCollabContext 
     memberStatus: 'active',
     lifecycleState: 'active',
     permissions: { canInviteMembers: true, canViewWorkspaceSettings: true },
+    workspaceSettingsUrl: 'https://open-design.ai/cloud/workspace/settings',
   } as unknown as WorkspaceCollabContext;
 }
 
@@ -71,5 +72,17 @@ describe('EntryNavRail project destinations (OPEND-3108)', () => {
     // highlight because the route names the old view.
     renderRail('team', 'all-projects');
     expect(screen.getByTestId('entry-nav-drafts').getAttribute('aria-current')).toBe('page');
+  });
+});
+
+describe('EntryNavRail has no Workspace settings entry (OPEND-3257)', () => {
+  // The rail used to link out to the console's workspace settings under the
+  // recent-projects list (product decision 2026-07-20). OPEND-3257 removes it
+  // in BOTH spaces even when the member may view settings and the console URL
+  // is present; the account menu's billing row remains the way out.
+  it.each(['team', 'personal'] as const)('%s workspace: no settings entry below recent projects', (workspaceType) => {
+    renderRail(workspaceType);
+    expect(screen.queryByTestId('entry-nav-workspace-settings')).toBeNull();
+    expect(screen.queryByLabelText('Workspace settings')).toBeNull();
   });
 });

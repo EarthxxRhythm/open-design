@@ -863,7 +863,7 @@ test('[P0] ordinary team member sees team projects but no invite or workspace-ad
   await expect(menu.getByRole('menuitem', { name: 'Invite colleague' })).toHaveCount(0);
 });
 
-test('[P0] locked workspace removes invite and sharing capabilities while preserving the recovery settings exit', async ({
+test('[P0] locked workspace removes invite and sharing capabilities and keeps the projects entry', async ({
   page,
 }) => {
   await wireWorkspaceMocks(page, TEAM_LOCKED, [TEAM_LOCKED]);
@@ -876,9 +876,9 @@ test('[P0] locked workspace removes invite and sharing capabilities while preser
     page.getByRole('menu').getByRole('menuitem', { name: 'Invite colleague' }),
   ).toHaveCount(0);
 
-  const settingsExit = page.getByTestId('entry-nav-workspace-settings');
-  await expect(settingsExit).toBeVisible();
-  await expect(settingsExit).toHaveAttribute('href', TEAM_LOCKED.workspaceSettingsUrl);
+  // OPEND-3257: the rail no longer links out to workspace settings in any
+  // workspace; the locked recovery path lives in the account menu instead.
+  await expect(page.getByTestId('entry-nav-workspace-settings')).toHaveCount(0);
   await expect(page.getByTestId('entry-nav-drafts')).toBeVisible();
 });
 

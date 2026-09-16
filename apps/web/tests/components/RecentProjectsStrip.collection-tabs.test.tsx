@@ -8,7 +8,7 @@
 // non-shrinking element so the creator, not the time, gives way.
 
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RecentProjectsStrip } from '../../src/components/RecentProjectsStrip';
 import type { Project } from '../../src/types';
@@ -19,6 +19,46 @@ vi.mock('../../src/providers/registry', () => ({
   projectFileUrl: (projectId: string, fileName: string) =>
     `/api/projects/${projectId}/files/${fileName}`,
 }));
+
+
+// The collection tabs read the workspace kind (OPEND-3285): the 团队项目 tab
+// exists only in a team workspace. Default the mock to a team so the OPEND-3108
+// cases keep their three tabs; the OPEND-3285 cases flip it to personal.
+const workspaceState: {
+  context: Record<string, unknown> | null;
+  loading: boolean;
+} = { context: null, loading: false };
+function teamContext() {
+  return {
+    workspaceId: 'ws-team',
+    workspaceType: 'team',
+    workspaceMemberId: 'wm-1',
+    teamName: 'OD Feature Team',
+    role: 'owner',
+    memberStatus: 'active',
+    lifecycleState: 'active',
+    permissions: { canShareProjects: true, canInviteMembers: true },
+  };
+}
+function personalContext() {
+  return { ...teamContext(), workspaceId: 'ws-personal', workspaceType: 'personal', teamName: undefined };
+}
+vi.mock('../../src/collab/useWorkspaceContext', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/collab/useWorkspaceContext')>();
+  return {
+    ...actual,
+    useWorkspaceContext: () => ({
+      context: workspaceState.context,
+      loading: workspaceState.loading,
+      failure: null,
+    }),
+  };
+});
+
+beforeEach(() => {
+  workspaceState.context = teamContext();
+  workspaceState.loading = false;
+});
 
 afterEach(() => {
   cleanup();
@@ -165,5 +205,40 @@ describe('project card footer keeps the time whole (OPEND-3201)', () => {
       [...time.childNodes].filter((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim()),
     ).toEqual([]);
     expect(creator && when && creator.compareDocumentPosition(when) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
+describe('personal workspace hides the 团队项目 tab (OPEND-3285)', () => {
+  it('shows only 最近浏览过 / 个人项目 in a personal workspace', () => {
+    workspaceState.context = personalContext();
+    const { container } = renderPage();
+    const group = tabs(container);
+    expect(within(group).getAllByRole('radio').map((tab) => tab.textContent)).toEqual([
+      'Recently viewed',
+      'Personal projects',
+    ]);
+    expect(screen.queryByTestId('recent-projects-collection-teamProjects')).toBeNull();
+  });
+
+  it('keeps all three tabs in a team workspace', () => {
+    workspaceState.context = teamContext();
+    const { container } = renderPage();
+    expect(within(tabs(container)).getAllByRole('radio')).toHaveLength(3);
+  });
+
+  it('falls back to 最近浏览过 when a personal workspace lands on the team tab (deep link / stale state)', () => {
+    workspaceState.context = personalContext();
+    const onCollectionChange = vi.fn();
+    renderPage({ collection: 'teamProjects', onCollectionChange });
+    expect(onCollectionChange).toHaveBeenCalledWith('recent');
+    expect(screen.queryByTestId('recent-projects-collection-teamProjects')).toBeNull();
+  });
+
+  it('does not reset the team tab while the workspace context is still loading', () => {
+    workspaceState.context = null;
+    workspaceState.loading = true;
+    const onCollectionChange = vi.fn();
+    renderPage({ collection: 'teamProjects', onCollectionChange });
+    expect(onCollectionChange).not.toHaveBeenCalled();
   });
 });

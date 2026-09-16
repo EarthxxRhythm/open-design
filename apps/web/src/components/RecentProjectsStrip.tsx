@@ -452,6 +452,14 @@ export function RecentProjectsStrip({
   // The 全部项目 page (drafts space) splits its one catalog into three tabs; the
   // team space and the home rail have no such split.
   const showCollectionTabs = space === 'drafts';
+  // 团队项目 is a team-workspace tab only (OPEND-3285): a personal workspace
+  // has no shared catalog to show, so the tab would only ever open an empty
+  // state. Keyed on the workspace kind, not on `canShareProjects` (a role bit
+  // a personal owner also carries).
+  const teamCollectionAvailable = workspaceContext?.workspaceType === 'team';
+  const collectionOptions = teamCollectionAvailable
+    ? COLLECTION_OPTIONS
+    : COLLECTION_OPTIONS.filter((option) => option.id !== 'teamProjects');
   const [uncontrolledCollection, setUncontrolledCollection] =
     useState<ProjectCollectionScope>('recent');
   const collection = controlledCollection ?? uncontrolledCollection;
@@ -459,6 +467,19 @@ export function RecentProjectsStrip({
     if (controlledCollection === undefined) setUncontrolledCollection(next);
     onCollectionChange?.(next);
   };
+  // A deep link (`/all-projects`), a cached tab or a workspace switch can land
+  // a personal workspace on the hidden team tab; fall back to 最近浏览过 once
+  // the workspace kind is known (never while it is still loading, or the
+  // team-space deep link would be reset before the context arrives).
+  const collectionUnavailable =
+    showCollectionTabs &&
+    !workspaceContextLoading &&
+    !teamCollectionAvailable &&
+    collection === 'teamProjects';
+  useEffect(() => {
+    if (collectionUnavailable) selectCollection('recent');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collectionUnavailable]);
   const [view, setView] = useState<'grid' | 'list'>('grid');
   const [ownerFilter, setOwnerFilter] = useState<OwnerFilter>('all');
   const [kindFilter, setKindFilter] = useState<ProjectKindFilter>('all');
@@ -1209,7 +1230,7 @@ export function RecentProjectsStrip({
               role="radiogroup"
               aria-label={heading ?? t('entry.navDrafts')}
             >
-              {COLLECTION_OPTIONS.map((option) => (
+              {collectionOptions.map((option) => (
                 <button
                   key={option.id}
                   type="button"

@@ -1992,9 +1992,6 @@ export function EntryNavRail({
 
   const isTeam = Boolean(context) && context!.workspaceType === 'team';
   const permissions = context?.permissions;
-  // Demo `canOwnWorkspace` → real owner-level view of workspace settings. Never
-  // re-derive from role — the permission bits already fold role + lifecycle in.
-  const canViewWorkspaceSettings = Boolean(permissions?.canViewWorkspaceSettings);
   const canInviteMembers = Boolean(permissions?.canInviteMembers);
   const canAccessInviteFlow = canAccessWorkspaceInviteFlow(context);
   const workspaceSettingsUrl = context?.workspaceSettingsUrl?.trim() || null;
@@ -2505,36 +2502,10 @@ export function EntryNavRail({
               analyticsPage={analyticsPage}
               label={t('recentProjects.title')}
             />
-            {/* Product decision (2026-07-20): 成员 and 数据大盘 leave the rail
-                entirely — both surfaces live in B's console and the rail should
-                not advertise them. Workspace 设置 stays, and still links OUT to
-                that console rather than routing to an in-client view. Gate by B
-                permissions, not workspaceType: a personal workspace owner can
-                manage their workspace too. */}
-            {canViewWorkspaceSettings && workspaceSettingsUrl ? (
-              <a
-                className="entry-nav-rail__btn"
-                href={workspaceSettingsUrl}
-                {...externalLinkProps}
-                aria-label={t('entry.navWorkspaceSettings')}
-                data-testid="entry-nav-workspace-settings"
-                onClick={() => {
-                  trackEntryNavigationClick(analytics.track, {
-                    page_name: analyticsPage,
-                    area: 'entry_nav',
-                    element: 'workspace_settings',
-                    target: 'workspace_settings',
-                    entry_from: 'sidebar',
-                    ...workspaceDimensions,
-                  });
-                }}
-              >
-                <span className="entry-nav-rail__btn-icon" aria-hidden>
-                  <Icon name="settings" size={16} />
-                </span>
-                <span className="entry-nav-rail__btn-label">{t('entry.navWorkspaceSettings')}</span>
-              </a>
-            ) : null}
+            {/* No Workspace 设置 entry here (OPEND-3257, 2026-09-16): the
+                2026-07-20 decision that kept it below the recent list is
+                withdrawn for both spaces. Workspace settings stay reachable
+                from the account menu's billing row (`billingConsoleUrl`). */}
           </div>
         ) : (
           /* Same section wrapper as the signed-in branch (OPEND-3140): it

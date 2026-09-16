@@ -719,24 +719,24 @@
   /* 稿子 `.card` 不带外距也不带投影 —— 上下间距由 `.assistant-flow` 的 gap:12px 给
      (稿子 `scene-shell.css` 的 `.flow { gap: 12px }`,轮次**内部**那一档)。
      自己再加 margin 就是 12+8,比稿子松一档。 */
-  /* OPEND-3177: the chat pane paints nothing of its own (OPEND-3090), and the
-     design settled on 2026-09-16 (OPEND-3178 recording; OPEND-3177 comment
-     "去掉底部的白色底") has the form sit DIRECTLY on the transparent pane —
-     no ground, no edge, no shadow. H1's frost and K1's opaque floating card
-     (#8185) are both withdrawn here; the floating card stays with the
-     composer shell and the queued-send cards only. The head's separator, the
-     input underline, the pill stroke and the chips keep their own ink-token
-     edges, which is what still groups the form. Dark follows the tokens. */
-  border: 0;
+  /* OPEND-3282 (2026-09-16): every region that asks the user to type or
+     choose keeps an opaque white card so it never melts into the transparent
+     pane (OPEND-3090). The same `--chat-floating-card-bg` / `--chat-border-soft`
+     pair the composer shell and the queued-send cards read (K1 #8185) — no
+     blur, no shadow. This narrows the OPEND-3177 reading P3 (#8199) applied
+     to the whole form: the read-only Confirmed block, the thoughts window and
+     the terminal block stay bare; only the input surface keeps its card.
+     Dark follows the tokens. */
+  border: 1px solid var(--chat-border-soft);
   border-radius: var(--radius-lg);
-  background: transparent;
+  background: var(--chat-floating-card-bg);
   overflow: hidden;
 }
 /* 稿子 `.card:has(.foot):has(.opts)`:带底栏又带选项的卡换一层确认底色 ——
-   the confirm surface was an opaque #fafafa; on the transparent pane the
-   variant paints nothing either (OPEND-3177). */
+   the confirm surface was an opaque #fafafa; it now shares the form's one
+   floating card (OPEND-3282) instead of switching surface. */
 .question-form:has(.question-form-foot):has(.qf-options) {
-  background: transparent;
+  background: var(--chat-floating-card-bg);
 }
 /* 稿子 `.card:has(.foot) > .h`:有底栏的卡,头不再有分隔线和底色 */
 .question-form:has(.question-form-foot) > .question-form-head {

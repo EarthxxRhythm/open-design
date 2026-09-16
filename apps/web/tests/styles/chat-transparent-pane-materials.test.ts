@@ -146,13 +146,17 @@ describe('composer shell is one opaque floating card (styles/viewer/routines.css
   });
 });
 
-describe('question form sits bare on the transparent pane (styles/viewer/composio.css)', () => {
-  it('lets the card shell paint no ground, no edge and no shadow of its own', () => {
-    expectBare(declarations(composioCss, '.question-form'));
+describe('question form keeps its white card on the transparent pane (styles/viewer/composio.css)', () => {
+  // OPEND-3282 (2026-09-16): every region that asks the user to type or
+  // choose keeps an opaque white card so it does not melt into the pane.
+  // That reverses the OPEND-3177 reading P3 applied to the form shell; the
+  // read-only Confirmed block, thoughts window and terminal block stay bare.
+  it('gives the card shell the floating-card ground and edge, no blur', () => {
+    expectFloatingCard(declarations(composioCss, '.question-form'));
   });
 
-  it('keeps the confirm variant bare too (it used to switch to the confirm surface)', () => {
-    expectBare(declarations(composioCss, '.question-form:has(.question-form-foot):has(.qf-options)'));
+  it('keeps the confirm variant on the same card (no separate confirm surface)', () => {
+    expect(background(declarations(composioCss, '.question-form:has(.question-form-foot):has(.qf-options)'))).toBe('var(--chat-floating-card-bg)');
   });
 
   it('keeps the head, body, foot and pill transparent inside the shell', () => {
@@ -162,12 +166,14 @@ describe('question form sits bare on the transparent pane (styles/viewer/composi
     expect(background(declarations(composioCss, '.question-form-foot'))).toBe('');
   });
 
-  it('lets the Confirmed answer block sit bare as well', () => {
+  it('lets the Confirmed answer block sit bare (it is content, not an input region)', () => {
     expectBare(declarations(composioCss, '.answered'));
   });
 
-  it('no longer reads the floating-card family anywhere in composio.css', () => {
-    expect(composioCss).not.toMatch(/--chat-floating-card-/);
+  it('reads the floating-card family only for the form shell in composio.css', () => {
+    const uses = composioCss.match(/--chat-floating-card-bg/g) ?? [];
+    expect(uses.length).toBeGreaterThanOrEqual(1);
+    expect(composioCss).not.toMatch(/--chat-floating-card-text/);
   });
 });
 
