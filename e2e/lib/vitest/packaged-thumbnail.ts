@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { readFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { PNG } from 'pngjs';
@@ -8,6 +8,7 @@ import { expect } from 'vitest';
 import { createFakeAgentRuntimes } from '../fake-agents.ts';
 import { T } from '../timeouts.ts';
 import type { E2eReport } from './report.ts';
+import { PACKAGED_THUMBNAIL_HTML, PACKAGED_THUMBNAIL_PNG_A_BASE64, PACKAGED_THUMBNAIL_PNG_B_BASE64 } from '../../resources/packaged-thumbnail.ts';
 
 type Inspect = (expression: string) => Promise<unknown>;
 type Ref = { id: string; label: string; kind: string; snapshotId?: string; snapshotState: string; thumbnailUrl?: string };
@@ -16,7 +17,6 @@ type Run = { id: string; agentId?: string; strategyTask?: unknown; status: strin
 /** Real packaged desktop only. This never writes a message, snapshot, or thumbnail. */
 export async function verifyPackagedThumbnail(input: {
   inspect: Inspect;
-  workspaceRoot: string;
   fixtureRoot: string;
   report: E2eReport;
   screenshot: (relpath: string) => Promise<void>;
@@ -53,11 +53,15 @@ export async function verifyPackagedThumbnail(input: {
     return Buffer.from(result.base64, 'base64');
   }
 
-  const resources = join(input.workspaceRoot, 'e2e', 'resources', 'packaged-thumbnail');
-  const [html, imageA, imageB] = await Promise.all([
-    readFile(join(resources, 'index.html'), 'utf8'),
-    readFile(join(resources, 'a.png')),
-    readFile(join(resources, 'b.png')),
+  const resources = join(input.fixtureRoot, 'input');
+  const html = PACKAGED_THUMBNAIL_HTML;
+  const imageA = Buffer.from(PACKAGED_THUMBNAIL_PNG_A_BASE64, 'base64');
+  const imageB = Buffer.from(PACKAGED_THUMBNAIL_PNG_B_BASE64, 'base64');
+  await mkdir(resources, { recursive: true });
+  await Promise.all([
+    writeFile(join(resources, 'index.html'), html, 'utf8'),
+    writeFile(join(resources, 'a.png'), imageA),
+    writeFile(join(resources, 'b.png'), imageB),
   ]);
   // Freeze source input identity; these are source assets, never renderer output.
   await report.json(`${prefix}/input.json`, {

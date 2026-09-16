@@ -758,7 +758,6 @@ winDescribe('packaged windows runtime smoke', () => {
       expect(inspect.desktopIpcUnavailable, 'thumbnail binding requires desktop IPC').not.toBe(true);
       await measureSmokeStep(timings, 'real HTML thumbnail and historical message binding', async () =>
         verifyPackagedThumbnail({
-          workspaceRoot,
           fixtureRoot: join(toolsPackDir, 'fixtures', `thumbnail-${randomUUID()}`),
           report: report.report,
           inspect: async (expression) => {
