@@ -5030,6 +5030,7 @@ export interface Dict {
   'community.typeVideo': string;
   'community.typeHyperFrames': string;
   'community.typeAudio': string;
+  'community.typeWebGL': string;
   'community.usePrompt': string;
   /** Empty gallery tab; `{type}` is the tab's own label. */
   'community.emptyTitle': string;

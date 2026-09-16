@@ -4776,6 +4776,7 @@ export const ru: Dict = {
   'community.typeVideo': 'Video',
   'community.typeHyperFrames': 'HyperFrames',
   'community.typeAudio': 'Audio',
+  'community.typeWebGL': 'WebGL',
   'community.usePrompt': 'Попробовать',
   'community.emptyTitle': 'Шаблонов «{type}» пока нет',
   'community.emptyBody': 'Шаблоны, опубликованные в сообществе, появятся здесь.',

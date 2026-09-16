@@ -4776,6 +4776,7 @@ export const esES: Dict = {
   'community.typeVideo': 'Video',
   'community.typeHyperFrames': 'HyperFrames',
   'community.typeAudio': 'Audio',
+  'community.typeWebGL': 'WebGL',
   'community.usePrompt': 'Probar ahora',
   'community.emptyTitle': 'Aún no hay plantillas de {type}',
   'community.emptyBody': 'Las plantillas publicadas en la comunidad aparecerán aquí.',

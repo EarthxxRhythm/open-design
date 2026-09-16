@@ -4776,6 +4776,7 @@ export const th: Dict = {
   'community.typeVideo': 'Video',
   'community.typeHyperFrames': 'HyperFrames',
   'community.typeAudio': 'Audio',
+  'community.typeWebGL': 'WebGL',
   'community.usePrompt': 'ลองเลย',
   'community.emptyTitle': 'ยังไม่มีเทมเพลต {type}',
   'community.emptyBody': 'เทมเพลตที่เผยแพร่ในชุมชนจะแสดงที่นี่',

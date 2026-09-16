@@ -6807,6 +6807,12 @@ function projectPageKindForCommunityPlugin(record: InstalledPluginRecord): Proje
   switch (primaryCategory) {
     case 'prototype':
       return 'prototype';
+    case 'document':
+      return 'document';
+    // GPU scenes are prototypes on the project page, as on Home (the `webgl`
+    // chip creates them with `projectKind: 'prototype'`).
+    case 'webgl':
+      return 'prototype';
     case 'live-artifact':
       return 'liveArtifact';
     case 'deck':

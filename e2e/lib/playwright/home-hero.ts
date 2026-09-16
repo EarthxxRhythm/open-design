@@ -60,9 +60,19 @@ export async function clearHomeTemplate(page: Page): Promise<void> {
  */
 const HOME_APPLY_TEMPLATE_EVENT = 'open-design:home-apply-template';
 
-/** The types the row itself offers: three inline, two behind 更多. */
+/** The types the row itself offers: three inline, every other create type
+ *  behind 更多 in product order (OPEND-3146). Mirrors `HOME_TYPE_ROW_IDS` /
+ *  `HOME_TYPE_ROW_MORE_IDS` in `apps/web/src/components/home-hero/chips.ts`. */
 export const HOME_TYPE_ROW_CHIP_IDS = ['prototype', 'deck', 'document'] as const;
-export const HOME_TYPE_ROW_MORE_CHIP_IDS = ['image', 'web-clone'] as const;
+export const HOME_TYPE_ROW_MORE_CHIP_IDS = [
+  'image',
+  'hyperframes',
+  'web-clone',
+  'video',
+  'audio',
+  'live-artifact',
+  'webgl',
+] as const;
 
 export async function pickHomeTemplate(page: Page, chipId: string): Promise<void> {
   // A type already picked retires the row, so switching means clearing first.

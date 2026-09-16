@@ -5223,6 +5223,7 @@ export const zhCN: Dict = {
   'community.typeVideo': '视频',
   'community.typeHyperFrames': 'HyperFrames',
   'community.typeAudio': '音频',
+  'community.typeWebGL': 'WebGL',
   'community.usePrompt': '做同款',
   'community.emptyTitle': '还没有{type}模板',
   'community.emptyBody': '社区发布的模板会出现在这里。',

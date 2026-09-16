@@ -317,10 +317,13 @@ describe('CommunityView catalogue source', () => {
     expect(readFacets().map((facet) => facet.label)).toEqual(['Prototype', 'Slides', 'Document', 'Image']);
     expect(screen.queryByTestId('community-type-tabs-popover')).toBeNull();
 
+    // 更多 is a fixed product list (OPEND-3098), not the catalogue's leftovers:
+    // the kinds with nothing published sit beside Video and show the empty
+    // state when picked.
     fireEvent.click(screen.getByTestId('community-type-tabs-more'));
     const popover = screen.getByTestId('community-type-tabs-popover');
     expect(Array.from(popover.querySelectorAll('button')).map((button) => button.textContent?.trim()))
-      .toEqual(['Video']);
+      .toEqual(['HyperFrames', 'Video', 'Audio', 'Live Artifact', 'WebGL']);
 
     fireEvent.click(screen.getByTestId('community-type-tab-video-more'));
 
@@ -329,8 +332,8 @@ describe('CommunityView catalogue source', () => {
     expect(screen.queryByTestId('community-type-tabs-popover')).toBeNull();
     expect(readFacets().map((facet) => facet.label)).toEqual(['Prototype', 'Slides', 'Document', 'Image', 'Video']);
     expect(readFacets()[4]!.tab.classList.contains('is-active')).toBe(true);
-    // Video was the only overflow kind, so nothing is left for 更多 to show.
-    expect(screen.queryByTestId('community-type-tabs-more')).toBeNull();
+    // The other four fixed 更多 kinds are still behind the trigger.
+    expect(screen.getByTestId('community-type-tabs-more')).toBeTruthy();
     expect(renderedCards().map((card) => card.getAttribute('data-template-type'))).toEqual(['Video']);
     expect(document.querySelector('.community-template-grid')?.getAttribute('data-layout')).toBe('masonry');
 

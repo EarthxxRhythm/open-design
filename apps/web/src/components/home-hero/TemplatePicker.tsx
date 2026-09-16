@@ -55,7 +55,8 @@ export function TemplatePicker({
     <div
       className="home-hero__footer-option home-hero__footer-option--select home-hero__template-option has-selection"
       data-field-name="template"
-      // The stylesheet keys the lead types' hue (原型 / 幻灯片 / 文档) on this.
+      // Selector hook for tests — the stylesheet keys no colour on it
+      // (OPEND-3103): the picked pill wears the brand pair whatever the type.
       data-chip={active.id}
       data-testid="home-hero-template-picker"
     >

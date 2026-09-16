@@ -4776,6 +4776,7 @@ export const fr: Dict = {
   'community.typeVideo': 'Video',
   'community.typeHyperFrames': 'HyperFrames',
   'community.typeAudio': 'Audio',
+  'community.typeWebGL': 'WebGL',
   'community.usePrompt': 'Essayer maintenant',
   'community.emptyTitle': 'Aucun modèle {type} pour le moment',
   'community.emptyBody': 'Les modèles publiés dans la communauté apparaîtront ici.',

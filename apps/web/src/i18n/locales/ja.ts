@@ -4776,6 +4776,7 @@ export const ja: Dict = {
   'community.typeVideo': 'Video',
   'community.typeHyperFrames': 'HyperFrames',
   'community.typeAudio': 'Audio',
+  'community.typeWebGL': 'WebGL',
   'community.usePrompt': '同じものを作る',
   'community.emptyTitle': '{type}のテンプレートはまだありません',
   'community.emptyBody': 'コミュニティに公開されたテンプレートがここに表示されます。',

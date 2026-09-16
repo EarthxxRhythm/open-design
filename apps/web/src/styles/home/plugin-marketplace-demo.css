@@ -1468,17 +1468,35 @@
 }
 
 /* The type tabs ARE the Home type row's pills: each button wears
-   `.home-hero__type-pill` (+ `data-chip` for the lead hues, `.is-active` for
-   the lit state) from home-hero.css, a documented shared contract, so 原型 here
-   and 原型 under the composer are one object. This row only owns the layout —
-   the same 8px rhythm Home's `.home-hero__type-pills-wrap` keeps — and pins no
-   colour, size or ring of its own. The sub-facet pill row and its rules are
-   gone: the type tabs are the whole filter surface. */
+   `.home-hero__type-pill` (+ `.is-active` for the lit state; `data-chip` is a
+   selector hook only) from home-hero.css, a documented shared contract, so 原型
+   here and 原型 under the composer are one object. This row only owns the
+   layout — the same 8px rhythm Home's `.home-hero__type-pills-wrap` keeps — and
+   pins no colour, size or ring of its own. The sub-facet pill row and its rules
+   are gone: the type tabs are the whole filter surface. */
 .community-template-view__type-tabs {
+  /* Containing block for the 更多 popover, which centres on this row as a
+     whole rather than on the trigger (OPEND-3098). */
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+/* The five folded kinds (HyperFrames / 视频 / 音频 / 实时产物 / WebGL) stay on
+   one line, centred under the tab row (per product: 一排横向居中). The row
+   shrink-wraps its five pills (~405px) and the open line is wider (~510px), so
+   the shared `left: 50%` + `translate: -50%` centring would push the panel
+   past the page's left edge. Instead the panel starts on the row's left edge,
+   is at least as wide as the row, and centres its pills: exactly centred on
+   the row whenever it fits, and never off-screen when it does not. */
+.community-template-view__type-tabs .home-hero__type-pills-popover {
+  left: 0;
+  translate: none;
+  min-width: 100%;
+  flex-wrap: nowrap;
+  max-width: none;
+  transform-origin: top left;
 }
 
 .community-template-grid {

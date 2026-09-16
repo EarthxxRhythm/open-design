@@ -5230,6 +5230,7 @@ export const zhTW: Dict = {
   'community.typeVideo': '影片',
   'community.typeHyperFrames': 'HyperFrames',
   'community.typeAudio': '音訊',
+  'community.typeWebGL': 'WebGL',
   'community.usePrompt': '做同款',
   'community.emptyTitle': '還沒有{type}範本',
   'community.emptyBody': '社群發布的範本會出現在這裡。',

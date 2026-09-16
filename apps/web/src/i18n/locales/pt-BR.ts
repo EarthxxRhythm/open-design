@@ -4776,6 +4776,7 @@ export const ptBR: Dict = {
   'community.typeVideo': 'Video',
   'community.typeHyperFrames': 'HyperFrames',
   'community.typeAudio': 'Audio',
+  'community.typeWebGL': 'WebGL',
   'community.usePrompt': 'Testar agora',
   'community.emptyTitle': 'Ainda não há modelos de {type}',
   'community.emptyBody': 'Modelos publicados na comunidade aparecerão aqui.',

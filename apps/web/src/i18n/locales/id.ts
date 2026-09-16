@@ -4776,6 +4776,7 @@ export const id: Dict = {
   'community.typeVideo': 'Video',
   'community.typeHyperFrames': 'HyperFrames',
   'community.typeAudio': 'Audio',
+  'community.typeWebGL': 'WebGL',
   'community.usePrompt': 'Coba sekarang',
   'community.emptyTitle': 'Belum ada template {type}',
   'community.emptyBody': 'Template yang dipublikasikan ke komunitas akan muncul di sini.',

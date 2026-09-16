@@ -4776,6 +4776,7 @@ export const it: Dict = {
   'community.typeVideo': 'Video',
   'community.typeHyperFrames': 'HyperFrames',
   'community.typeAudio': 'Audio',
+  'community.typeWebGL': 'WebGL',
   'community.usePrompt': 'Provalo ora',
   'community.emptyTitle': 'Nessun modello {type} per ora',
   'community.emptyBody': 'I modelli pubblicati nella community appariranno qui.',

@@ -118,7 +118,8 @@ export function TypePillRow({ chips, activeChipId, disabled, labelFor, onPick }:
         className={`home-hero__type-pill${isActive ? ' is-active' : ''}`}
         disabled={disabled}
         data-testid={`home-hero-type-pill-${chip.id}${inPopover ? '-more' : ''}`}
-        // The stylesheet keys the lead chips' hue (原型 / 幻灯片 / 文档) on this.
+        // Selector hook for tests and measurement — the stylesheet keys no
+        // colour on it (OPEND-3103: every type chip is neutral).
         data-chip={chip.id}
         onClick={() => {
           setMoreOpen(false);

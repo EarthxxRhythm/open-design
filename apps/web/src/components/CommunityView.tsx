@@ -5,10 +5,10 @@ import { useI18n } from '../i18n';
 import { listPlugins } from '../state/projects';
 import {
   buildCommunityTemplates,
+  COMMUNITY_MORE_TYPES,
   COMMUNITY_TAB_TYPES,
   isPromptArtifact,
   TEMPLATE_TYPE_LABEL_KEY,
-  TEMPLATE_TYPE_ORDER,
   type TemplateDemo,
   type TemplateType,
 } from './CommunityTemplatePreview';
@@ -40,6 +40,9 @@ const TEMPLATE_HOME_TARGET: Record<TemplateType, Pick<CommunityTemplateUseTarget
   'Video': { chipId: 'video', projectKind: 'video' },
   'HyperFrames': { chipId: 'hyperframes', projectKind: 'video' },
   'Audio': { chipId: 'audio', projectKind: 'audio' },
+  // GPU scenes create as prototypes — the same pair the Home `webgl` chip
+  // dispatches (see home-hero/chips.ts).
+  'WebGL': { chipId: 'webgl', projectKind: 'prototype' },
 };
 
 function templateUseTarget(template: TemplateDemo): CommunityTemplateUseTarget {
@@ -62,6 +65,7 @@ const TEMPLATE_TYPE_ICON: Record<TemplateType, IconName> = {
   'Video': 'video-ai',
   'HyperFrames': 'orbit',
   'Audio': 'mic',
+  'WebGL': 'sparkles',
 };
 
 interface CommunityViewProps {
@@ -173,19 +177,17 @@ export function CommunityView({ onRemixTemplate, onUsePrompt, onUsePlugin }: Com
     () => new Map(plugins.map((record) => [record.id, record])),
     [plugins],
   );
-  // Every kind the catalogue carries beyond the four fixed tabs (Live
-  // Artifact, Video, HyperFrames, Audio…) stays reachable through the row's
-  // 更多 popover — the same tail the Home type row keeps for its overflow — so
-  // pinning the inline set to Home's taxonomy never strands a published
-  // template. A picked overflow kind is promoted to an inline pill after 图片
-  // for as long as it is the active one, so the selection is always visible.
-  const extraTypes = TEMPLATE_TYPE_ORDER.filter((type) =>
-    !COMMUNITY_TAB_TYPES.includes(type) && templates.some((template) => template.type === type),
-  );
+  // The row's 更多 popover holds the FIXED `COMMUNITY_MORE_TYPES` list — the
+  // same tail the Home type row keeps for its overflow — not whatever kinds
+  // the catalogue happens to carry (OPEND-3098): a kind with nothing published
+  // yet keeps its entry and shows the empty state when picked. A picked
+  // overflow kind is promoted to an inline pill after 图片 for as long as it is
+  // the active one, so the selection is always visible; the popover keeps the
+  // other four.
   const inlineTypes: TemplateType[] = COMMUNITY_TAB_TYPES.includes(activeType)
     ? [...COMMUNITY_TAB_TYPES]
     : [...COMMUNITY_TAB_TYPES, activeType];
-  const popoverTypes = extraTypes.filter((type) => type !== activeType);
+  const popoverTypes = COMMUNITY_MORE_TYPES.filter((type) => type !== activeType);
   const filteredTemplates = templates.filter((template) => template.type === activeType);
   // Dismiss the 更多 popover on outside press / Escape, the way the Home row does.
   useEffect(() => {
@@ -219,8 +221,8 @@ export function CommunityView({ onRemixTemplate, onUsePrompt, onUsePlugin }: Com
   };
   /** One tab pill. It wears the Home type row's pill classes (home-hero.css,
    *  a documented shared contract) so 原型 here and 原型 under the composer
-   *  are the same object: same ring, same icon hue keyed on `data-chip`, same
-   *  lit state. */
+   *  are the same object: same ring, same neutral icon, same lit state.
+   *  `data-chip` is a selector hook, not a colour key (OPEND-3103). */
   const typeTab = (type: TemplateType, inPopover: boolean) => {
     const isActive = type === activeType;
     return (
@@ -458,9 +460,9 @@ export function CommunityView({ onRemixTemplate, onUsePrompt, onUsePlugin }: Com
         ))}
       </div>
       {catalogueLoaded && filteredTemplates.length === 0 ? (
-        /* A tab with nothing published yet (Document, until document templates
-           ship). The mark is the same blueprint glyph the drafts blank state
-           draws, so the two empty pages read as one family. */
+        /* A tab with nothing published yet (an 更多 kind the catalogue has no
+           template for). The mark is the same blueprint glyph the drafts blank
+           state draws, so the two empty pages read as one family. */
         <div className="community-template-view__no-results" data-testid="community-empty-state">
           <p className="community-template-view__no-results-title">
             {t('community.emptyTitle', { type: t(TEMPLATE_TYPE_LABEL_KEY[activeType]) })}

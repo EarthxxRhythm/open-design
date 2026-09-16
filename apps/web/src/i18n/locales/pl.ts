@@ -4776,6 +4776,7 @@ export const pl: Dict = {
   'community.typeVideo': 'Video',
   'community.typeHyperFrames': 'HyperFrames',
   'community.typeAudio': 'Audio',
+  'community.typeWebGL': 'WebGL',
   'community.usePrompt': 'Wypróbuj teraz',
   'community.emptyTitle': 'Brak szablonów typu {type}',
   'community.emptyBody': 'Szablony opublikowane w społeczności pojawią się tutaj.',

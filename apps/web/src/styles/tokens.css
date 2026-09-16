@@ -108,15 +108,6 @@
   --amber: #FF7528;
   --amber-bg: color-mix(in srgb, #FFBA12 18%, #fafafa);
 
-  /* Home type chips (OPEND-2684): one hue per lead entry — 原型 blue, 幻灯片
-     orange, 文档 green — carried by the chip's icon and, at 10%, by its
-     selected ground. Their own names rather than the --blue/--amber/--green
-     they alias here, so a status pill and a type chip can drift apart later
-     without one silently recolouring the other. */
-  --type-prototype: var(--blue);
-  --type-deck: var(--amber);
-  --type-document: var(--green);
-
   /* Project-kind tag hues (see `.design-card-tag.tag-*`). Each kind carries an
      ink; the three whose tint is a lighter sibling of that ink also carry a
      `-tint` the pill's fill/border are mixed from. `tag-brand` /
@@ -283,12 +274,6 @@
   --amber: #FFC740;
   --amber-bg: color-mix(in srgb, #FFBA12 22%, #202020);
 
-  /* Dark keeps the deck chip ORANGE: --amber turns yellow on this theme (a
-     status hue), and the chip's identity is the orange. */
-  --type-prototype: var(--blue);
-  --type-deck: #ff9a5c;
-  --type-document: var(--green);
-
   --shadow-xs: 0 1px 0 rgba(0, 0, 0, 0.2);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.2);
   --shadow-md: 0 6px 24px rgba(0, 0, 0, 0.4), 0 2px 6px rgba(0, 0, 0, 0.25);
@@ -351,9 +336,6 @@
     --red-border: color-mix(in srgb, #FF5E5E 34%, #5c5c5c);
     --amber: #FFC740;
     --amber-bg: color-mix(in srgb, #FFBA12 22%, #202020);
-    --type-prototype: var(--blue);
-    --type-deck: #ff9a5c;
-    --type-document: var(--green);
 
     --shadow-xs: 0 1px 0 rgba(0, 0, 0, 0.2);
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.2);

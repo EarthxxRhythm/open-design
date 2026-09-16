@@ -4776,6 +4776,7 @@ export const tr: Dict = {
   'community.typeVideo': 'Video',
   'community.typeHyperFrames': 'HyperFrames',
   'community.typeAudio': 'Audio',
+  'community.typeWebGL': 'WebGL',
   'community.usePrompt': 'Hemen dene',
   'community.emptyTitle': 'Henüz {type} şablonu yok',
   'community.emptyBody': 'Toplulukta yayınlanan şablonlar burada görünecek.',

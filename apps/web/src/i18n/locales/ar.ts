@@ -4776,6 +4776,7 @@ export const ar: Dict = {
   'community.typeVideo': 'Video',
   'community.typeHyperFrames': 'HyperFrames',
   'community.typeAudio': 'Audio',
+  'community.typeWebGL': 'WebGL',
   'community.usePrompt': 'جرّبه الآن',
   'community.emptyTitle': 'لا توجد قوالب {type} بعد',
   'community.emptyBody': 'ستظهر هنا القوالب المنشورة في المجتمع.',

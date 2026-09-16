@@ -4771,6 +4771,7 @@ export const fa: Dict = {
   'community.typeVideo': 'Video',
   'community.typeHyperFrames': 'HyperFrames',
   'community.typeAudio': 'Audio',
+  'community.typeWebGL': 'WebGL',
   'community.usePrompt': 'همین حالا امتحان کنید',
   'community.emptyTitle': 'هنوز قالب {type} وجود ندارد',
   'community.emptyBody': 'قالب‌های منتشرشده در انجمن اینجا نمایش داده می‌شوند.',

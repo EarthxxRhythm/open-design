@@ -312,8 +312,11 @@
   gap: 8px;
   flex: 0 0 auto;
 }
+/* NOT a containing block: the 更多 popover below positions against the row
+   as a whole (`.home-hero__type-pills-wrap` on Home, the tab row in
+   Community), so it centres on the row rather than hanging off this trigger's
+   right edge (OPEND-3146 / OPEND-3098). */
 .home-hero__type-pills-more {
-  position: relative;
   flex: 0 0 auto;
 }
 /* Invisible measuring copy of the full pill set: out of flow, unpainted,
@@ -334,16 +337,24 @@
   border-color: color-mix(in srgb, var(--bg-subtle) 82%, var(--text));
   background: transparent;
 }
+/* Open 更多: one line of pills centred under the WHOLE type row (per product,
+   2026-09-16), so the seven folded types read as a continuation of the row
+   rather than a menu off its last button. `left: 50%` + `translate` rather than
+   `transform`: the pop-in animation owns `transform`, and the two would fight.
+   At the row's own width (820px) the seven fit one line; a narrower viewport
+   lets them wrap. The Community tab row overrides the wrap (never wraps). */
 .home-hero__type-pills-popover {
   position: absolute;
   top: calc(100% + 8px);
-  right: 0;
+  left: 50%;
+  translate: -50% 0;
   z-index: 60;
   display: flex;
   flex-wrap: wrap;
+  justify-content: center;
   gap: 8px;
   width: max-content;
-  max-width: min(420px, calc(100vw - 32px));
+  max-width: min(820px, calc(100vw - 32px));
   padding: 10px;
   background: var(--bg-panel);
   border: 1px solid var(--border-soft, var(--border));
@@ -352,7 +363,7 @@
     0 1px 2px color-mix(in srgb, #000 4%, transparent),
     0 12px 32px -12px color-mix(in srgb, #000 22%, transparent);
   animation: pop-in 160ms cubic-bezier(0.23, 1, 0.32, 1);
-  transform-origin: top right;
+  transform-origin: top center;
 }
 /* SHARED CONTRACT — `.home-hero__type-pill` (+ `[data-chip]`, `.is-active`,
    `.home-hero__type-pills-more` / `-more-btn` / `-popover`) is consumed by the
@@ -398,26 +409,12 @@
   background: transparent;
   transform: translateY(-0.5px);
 }
-/* The three lead types each carry a hue (OPEND-2684): 原型 blue, 幻灯片
-   orange, 文档 green, so the three entries read as three things and not one
-   grey row. The hue lives on the ICON only — the label stays ink, so the row
-   keeps one text colour and stays readable — and is keyed on the chip id the
-   component stamps, so 更多 and every other type stay neutral. Set as a custom
-   property on the chip so the icon rule below reads it. (There is no lit pill
-   in this row: picking a type retires the row, and the composer's template
-   pill — see the picker section — carries the selected tint.) */
-.home-hero__type-pill[data-chip='prototype'] {
-  --type-pill-hue: var(--type-prototype);
-}
-.home-hero__type-pill[data-chip='deck'] {
-  --type-pill-hue: var(--type-deck);
-}
-.home-hero__type-pill[data-chip='document'] {
-  --type-pill-hue: var(--type-document);
-}
-.home-hero__type-pill > .od-icon {
-  color: var(--type-pill-hue, currentColor);
-}
+/* No per-type colour (OPEND-3103, product 2026-09-16, per the #7635 Demo):
+   the icon inherits the pill's ink like the label, on every type including
+   原型 / 幻灯片 / 文档. The `data-chip` the component stamps is a selector hook
+   only. (There is no lit pill in this row: picking a type retires the row, and
+   the composer's template pill — see the picker section — carries the
+   selection in the brand pair.) */
 /* Selected pill mirrors the composer's selected template chip exactly (the
    `.has-selection` pair above: 极浅品牌背景 --brand-surface, brand green
    --brand-ink, inset 1px ring at 22%), so the picked type reads as the same
@@ -4048,43 +4045,8 @@
      would otherwise swap in shadow-xs. */
   box-shadow: none;
 }
-/* Picked LEAD type (OPEND-2684): the pill that names 原型 / 幻灯片 / 文档
-   wears that type's own hue instead of the brand-green pair — a 10% tint of
-   the hue as its ground, a 36% ring of it, the hue on the icon, and the
-   label in the strong ink so the row keeps one text colour. Keyed on the
-   chip id `TemplatePicker` stamps, so every other type keeps the pair above.
-   The type row under the composer retires the moment a type is picked, so
-   THIS pill is the selected state — there is no lit pill in that row. Same
-   specificity as the hover / open / focus restatements above and later in
-   the sheet, so it holds through all three; the hue is set once as a custom
-   property so the icon rule below reads the same value. */
-.home-hero__footer-option--select.home-hero__template-option.has-selection[data-field-name='template'][data-chip='prototype'] {
-  --type-pill-hue: var(--type-prototype);
-}
-.home-hero__footer-option--select.home-hero__template-option.has-selection[data-field-name='template'][data-chip='deck'] {
-  --type-pill-hue: var(--type-deck);
-}
-.home-hero__footer-option--select.home-hero__template-option.has-selection[data-field-name='template'][data-chip='document'] {
-  --type-pill-hue: var(--type-document);
-}
-.home-hero__footer-option--select.home-hero__template-option.has-selection[data-field-name='template'][data-chip='prototype'],
-.home-hero__footer-option--select.home-hero__template-option.has-selection[data-field-name='template'][data-chip='deck'],
-.home-hero__footer-option--select.home-hero__template-option.has-selection[data-field-name='template'][data-chip='document'] {
-  border-color: transparent;
-  background-color: color-mix(in srgb, var(--type-pill-hue) 10%, transparent);
-  color: var(--text-strong);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--type-pill-hue) 36%, transparent);
-}
-.home-hero__template-option.has-selection[data-chip='prototype'] .home-hero__footer-option-icon,
-.home-hero__template-option.has-selection[data-chip='deck'] .home-hero__footer-option-icon,
-.home-hero__template-option.has-selection[data-chip='document'] .home-hero__footer-option-icon {
-  color: var(--type-pill-hue);
-}
-.home-hero__template-option.has-selection[data-chip='prototype'] .home-hero__footer-select-label,
-.home-hero__template-option.has-selection[data-chip='deck'] .home-hero__footer-select-label,
-.home-hero__template-option.has-selection[data-chip='document'] .home-hero__footer-select-label {
-  color: var(--text-strong);
-}
+/* The picked type wears the brand pair above whatever the type (OPEND-3103):
+   the per-type tint 原型 / 幻灯片 / 文档 used to take here is withdrawn. */
 .home-hero__footer-option.home-hero__template-option:hover,
 .home-hero__footer-option.home-hero__template-option.is-open,
 .home-hero__footer-option.home-hero__template-option:focus-within {

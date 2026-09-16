@@ -4776,6 +4776,7 @@ export const hu: Dict = {
   'community.typeVideo': 'Video',
   'community.typeHyperFrames': 'HyperFrames',
   'community.typeAudio': 'Audio',
+  'community.typeWebGL': 'WebGL',
   'community.usePrompt': 'Kipróbálom',
   'community.emptyTitle': 'Még nincs {type} sablon',
   'community.emptyBody': 'A közösségben közzétett sablonok itt jelennek meg.',

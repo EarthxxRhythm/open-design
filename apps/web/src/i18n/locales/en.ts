@@ -4790,6 +4790,7 @@ export const en: Dict = {
   'community.typeVideo': 'Video',
   'community.typeHyperFrames': 'HyperFrames',
   'community.typeAudio': 'Audio',
+  'community.typeWebGL': 'WebGL',
   'community.usePrompt': 'Try it now',
   'community.emptyTitle': 'No {type} templates yet',
   'community.emptyBody': 'Templates published to the community will show up here.',

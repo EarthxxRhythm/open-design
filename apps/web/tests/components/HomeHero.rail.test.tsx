@@ -135,7 +135,7 @@ function pickTemplate(chipId: string) {
 }
 
 describe('HomeHero intent rail', () => {
-  it('offers exactly the three row types plus the two behind 更多', () => {
+  it('offers exactly the three row types plus the seven behind 更多', () => {
     renderHero();
     // The row is a curated entry set, not the whole create catalog (product,
     // 2026-08-31). Everything else — Brand Kit's own action, the migrate

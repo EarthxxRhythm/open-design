@@ -109,7 +109,7 @@ test('[P0] @critical entry chrome exposes the primary home creation surface and 
   await expect(page.getByTestId('home-hero-design-system-picker')).toBeVisible();
   await expect(page.getByTestId('working-dir-picker')).toBeVisible();
   // The type row under the composer is a curated entry set (product,
-  // 2026-08-31): three inline pills plus two behind 更多.
+  // 2026-09-16 / OPEND-3146): three inline pills, the rest behind 更多.
   const typeRow = homeTypeRow(page);
   await expect(typeRow).toBeVisible();
   for (const id of HOME_TYPE_ROW_CHIP_IDS) {

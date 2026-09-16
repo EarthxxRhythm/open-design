@@ -287,29 +287,6 @@ export const HOME_HERO_CHIPS: ReadonlyArray<HomeHeroChip> = [
     },
   },
   {
-    id: 'web-clone',
-    label: 'Website clone',
-    icon: 'globe',
-    group: 'create',
-    description: 'Source-first site reproduction',
-    hint: 'Paste a target URL, then reconstruct the site and audit the clone.',
-    // Website reproduction binds the bundled `example-web-clone` plugin.
-    // Stored as a prototype so the artifact keeps prototype preview
-    // behavior; `intent: 'web-clone'` is what routes the scenario plugin
-    // (see `defaultScenarioPluginIdForProjectMetadata`) and splits these
-    // projects into their own `web_clone` analytics kind.
-    action: {
-      kind: 'apply-scenario',
-      pluginId: 'example-web-clone',
-      projectKind: 'prototype',
-      projectMetadata: {
-        kind: 'prototype',
-        intent: 'web-clone',
-        fidelity: 'high-fidelity',
-      },
-    },
-  },
-  {
     id: 'image',
     label: 'Image',
     icon: 'image',
@@ -423,11 +400,20 @@ export const CREATE_RAIL_ORDER = [
 ] as const;
 
 // The Home type row is an explicit product decision, not a width computation
-// (2026-08-31): three entry types stay inline, and 更多 holds exactly two.
-// Everything else in the create catalog stays reachable through the composer's
-// template picker instead of widening this row.
+// (OPEND-3146, 2026-09-16): three entry types stay inline, and 更多 holds EVERY
+// other create type in this exact order, so no artifact kind loses its
+// discoverable entry to the fold. The two lists together cover
+// `CREATE_RAIL_ORDER`; `TypePillRow.more-order.test.tsx` pins both.
 export const HOME_TYPE_ROW_IDS: readonly string[] = ['prototype', 'deck', 'document'];
-export const HOME_TYPE_ROW_MORE_IDS: readonly string[] = ['image', 'web-clone'];
+export const HOME_TYPE_ROW_MORE_IDS: readonly string[] = [
+  'image',
+  'hyperframes',
+  'web-clone',
+  'video',
+  'audio',
+  'live-artifact',
+  'webgl',
+];
 
 // Chip ids the onboarding "build a design system" teaser intentionally omits.
 // Video and Audio are pure-media outputs and the least central to the

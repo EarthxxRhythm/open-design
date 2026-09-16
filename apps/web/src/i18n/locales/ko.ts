@@ -4776,6 +4776,7 @@ export const ko: Dict = {
   'community.typeVideo': 'Video',
   'community.typeHyperFrames': 'HyperFrames',
   'community.typeAudio': 'Audio',
+  'community.typeWebGL': 'WebGL',
   'community.usePrompt': '같은 작품 만들기',
   'community.emptyTitle': '아직 {type} 템플릿이 없습니다',
   'community.emptyBody': '커뮤니티에 게시된 템플릿이 여기에 표시됩니다.',

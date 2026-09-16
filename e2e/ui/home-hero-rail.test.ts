@@ -1357,21 +1357,21 @@ test('[P2] home hero exposes the composer footer pickers and the full template s
   await expect(page.getByTestId('home-hero-type-tabs')).toHaveCount(0);
   await expect(page.getByTestId('home-hero-shortcuts-trigger')).toHaveCount(0);
 
-  // The row is a curated entry set (product, 2026-08-31): three inline, two
-  // behind 更多, nothing else — the remaining create types reach the hero only
-  // through the cross-surface hand-off.
+  // The row is a curated entry set (product, 2026-09-16 / OPEND-3146): three
+  // inline, every other create type behind 更多 in product order, so no kind
+  // is stranded outside the row.
   const typeRow = homeTypeRow(page);
   for (const id of HOME_TYPE_ROW_CHIP_IDS) {
     await expect(typeRow.getByTestId(`home-hero-type-pill-${id}`)).toBeVisible();
   }
   await page.getByTestId('home-hero-type-pills-more').click();
   const overflow = page.getByTestId('home-hero-type-pills-popover');
+  const overflowIds = await overflow.locator('button[data-chip]').evaluateAll((buttons) =>
+    buttons.map((button) => button.getAttribute('data-chip')),
+  );
+  expect(overflowIds).toEqual([...HOME_TYPE_ROW_MORE_CHIP_IDS]);
   for (const id of HOME_TYPE_ROW_MORE_CHIP_IDS) {
-    await expect(overflow.getByTestId(`home-hero-type-pill-${id}-more`)).toBeVisible();
-  }
-  for (const id of ['live-artifact', 'video', 'hyperframes', 'audio']) {
     await expect(typeRow.getByTestId(`home-hero-type-pill-${id}`)).toHaveCount(0);
-    await expect(overflow.getByTestId(`home-hero-type-pill-${id}-more`)).toHaveCount(0);
   }
   await page.keyboard.press('Escape');
   await expect(overflow).toHaveCount(0);

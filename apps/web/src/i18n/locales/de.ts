@@ -4776,6 +4776,7 @@ export const de: Dict = {
   'community.typeVideo': 'Video',
   'community.typeHyperFrames': 'HyperFrames',
   'community.typeAudio': 'Audio',
+  'community.typeWebGL': 'WebGL',
   'community.usePrompt': 'Jetzt ausprobieren',
   'community.emptyTitle': 'Noch keine {type}-Vorlagen',
   'community.emptyBody': 'In der Community veröffentlichte Vorlagen erscheinen hier.',
