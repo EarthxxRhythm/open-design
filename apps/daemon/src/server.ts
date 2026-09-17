@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { startEvidenceDelivery } from './services/evidence-delivery.js';
 import type {
   DesktopExportArtifactInput,
   DesktopExportArtifactResult,
@@ -557,7 +558,7 @@ import {
   createOdNextInitialPromptBundleService,
   resolveOdNextPromptRecipeForRun,
 } from './strategies/od-next/initial-prompt-bundle-service.js';
-import { OdNextMachineProtocolStream } from './strategies/od-next/protocol.js';
+import { createOdNextRunProtocol } from './strategies/od-next/protocol.js';
 import {
   blockAutomaticContinuation,
   prepareAutomaticStrategyContinuation,
@@ -566,9 +567,15 @@ import {
   odNextTurnMayInferProductionCompletion,
 } from './strategies/od-next/automatic-simple-production.js';
 import { readOdNextRolloutPolicy } from './strategies/od-next/rollout.js';
+import { createStrategyRunWriteEvidenceRecorder, strategyRunWriteEvidence } from './strategies/od-next/run-write-evidence.js';
+import { recoverPlanningIntentResolution } from './strategies/od-next/intent-resolution-recovery.js';
+import { isStrategyIntentResolutionRun, requiresStrategyIntentResolution, validateStrategyIntentResolutionReply } from './strategies/od-next/intent-resolution.js';
+import { startIntentResolution } from './strategies/od-next/intent-resolution-store.js';
 import {
   getStrategyTaskExecutionByRunId,
   reconcileStrategyTaskRunTerminal,
+  isInitialStrategyTaskRun,
+  InvalidStrategyTaskRecordError,
 } from './strategies/task-store.js';
 import {
   InvalidFrozenSkillPackageError,
@@ -1215,6 +1222,18 @@ import {
 } from './http/local-daemon-request.js';
 import { renderOAuthResultPage } from './http/oauth-result-page.js';
 import { bearerTokenFromRequest, createToolRequestAuth } from './http/tool-request-auth.js';
+
+/**
+ * `OD_PROJECT_CREATE_PREPARATION_TIMEOUT_MS` shortens the POST /api/projects
+ * preparation deadline for end-to-end tests. Only a positive finite number is
+ * honoured; anything else leaves the route on its production default.
+ */
+function projectCreatePreparationTimeoutMsFromEnv(): number | null {
+  const raw = process.env.OD_PROJECT_CREATE_PREPARATION_TIMEOUT_MS;
+  if (raw == null || raw.trim() === '') return null;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
 
 /** @typedef {import('@open-design/contracts').ApiErrorCode} ApiErrorCode */
 /** @typedef {import('@open-design/contracts').ApiError} ApiError */
@@ -7764,6 +7783,8 @@ export async function startServer({
       readRunTelemetrySinkConfig(process.env, configuredAmrEnv()),
     ),
   );
+  const stopEvidenceDelivery = startEvidenceDelivery(RUNTIME_DATA_DIR);
+  const strategyWriteEvidence = createStrategyRunWriteEvidenceRecorder(db);
   const codexThreadCleanupOwner = createCodexThreadCleanupOwner();
   const design = {
     runs: createChatRunService({
@@ -7778,6 +7799,7 @@ export async function startServer({
       onEventEmitted: (run, record) => {
         if (!run.sideEffectLedger) run.sideEffectLedger = createRunSideEffectLedger();
         foldEventIntoRunSideEffectLedger(run.sideEffectLedger, record);
+        strategyWriteEvidence.observeToolStream(run);
         if (!run.perRequestUsageLedger) run.perRequestUsageLedger = createRunPerRequestUsageLedger();
         foldEventIntoPerRequestUsageLedger(run.perRequestUsageLedger, record);
         const data = record.data && typeof record.data === 'object' && !Array.isArray(record.data)
@@ -7800,12 +7822,13 @@ export async function startServer({
           };
         }
         if (status !== 'failed' && status !== 'canceled') return;
+        strategyWriteEvidence.finish(run);
         try {
           reconcileStrategyTaskRunTerminal(db, { runId: run.id, status });
           const latestTask = getStrategyTaskExecutionByRunId(db, run.id);
           if (latestTask) run.strategyTask = projectStrategyTask(latestTask, run.id);
         } catch (error) {
-          if (!(error instanceof InvalidFrozenSkillPackageError)) throw error;
+          if (!(error instanceof InvalidFrozenSkillPackageError) && !(error instanceof InvalidStrategyTaskRecordError)) throw error;
           // The Run is already failing closed for the corrupt task state. Do
           // not let terminal reconciliation throw and prevent persistence of
           // that failure, and never attempt any live Skill reconstruction.
@@ -7845,40 +7868,6 @@ export async function startServer({
     taskObservationRollout.diagnostic(),
   );
 
-  // Runs are process-local, but their terminal obligations are durable. On a
-  // fresh daemon boot, repair stale message rows and replay any PostHog or
-  // Langfuse terminal work whose checkpoint was not committed. Network work
-  // stays off the startup critical path.
-  void reconcileDurableRunTerminals({
-    analytics: analyticsService,
-    appVersion: currentAppVersion(),
-    appVersionInfo: currentAppVersionInfo(),
-    db,
-    reportLangfuse: reportRunCompletedFromDaemon,
-    finalizeTerminalLocally: createAmrTerminalReportFinalizer(amrTerminalReportOutbox),
-    taskObservationModeForRun: (runId) => taskObservationRollout.modeForRun(runId),
-    taskObservationRepresentationForRun: (runId) =>
-      taskObservationRollout.representationForRun(runId),
-    taskObservationNotExpectedReasonForRun: (runId) =>
-      taskObservationRollout.notExpectedReasonForRun(runId),
-    seedTaskObservationRunFact: (runId, fact) =>
-      taskObservationRollout.seedRepresentationFromRunFact(runId, fact),
-    beginTaskObservationForRun: (runId) => taskObservationRollout.beginFinalizeForRun(runId),
-    runsLogDir: path.join(RUNTIME_DATA_DIR, 'runs'),
-  }).then(async (reconciled) => {
-    if (reconciled.interrupted > 0 || reconciled.messagesReconciled > 0) {
-      console.warn('[runs] reconciled interrupted run terminals', reconciled);
-    }
-    const taskObservationsRecovered = await taskObservationRollout.reconcileCrashWindows();
-    if (taskObservationsRecovered > 0) {
-      console.warn('[telemetry] reconciled task observation crash windows', {
-        recovered: taskObservationsRecovered,
-      });
-    }
-  }).catch((error) => {
-    console.warn('[runs] terminal reconciliation failed', error);
-  });
-
   // Interactive Terminal sessions (node-pty). In-memory, process-local, and
   // killed on daemon shutdown — see shutdownDaemonRuns below.
   const terminalService = createTerminalService();
@@ -7914,7 +7903,11 @@ export async function startServer({
       if (reportedRuns.has(run.id)) return;
       if (run.assistantMessageId) {
         const messageTelemetry = getMessageTelemetryFinalizationState(db, run.assistantMessageId);
-        if (messageTelemetry.finalizedAt !== null) return;
+        // An empty canceled assistant can be marked finalized by the UI without
+        // ever claiming a Task delivery. For Task-owned Runs, let the durable gates in
+        // reportFinalizedMessage decide whether delivery is already owned.
+        if (messageTelemetry.finalizedAt !== null
+          && !getStrategyTaskExecutionByRunId(db, run.id)) return;
       }
       reportFinalizedMessage(
         {
@@ -7961,7 +7954,53 @@ export async function startServer({
       pinAssistantMessageOnRunCreate(db, run, options),
     analyticsLifecycle: runAnalyticsLifecycle,
   });
-  const reportFeedback = telemetry.reportFeedback;
+  // Runs are process-local, but their terminal obligations are durable. On a
+  // fresh daemon boot, repair stale message rows and replay any PostHog or
+  // Langfuse terminal work whose checkpoint was not committed. Network work
+  // stays off the startup critical path.
+  void reconcileDurableRunTerminals({
+    analytics: analyticsService,
+    appVersion: currentAppVersion(),
+    appVersionInfo: currentAppVersionInfo(),
+    db,
+    recoverBeforeInterrupt: (state, states, now) => recoverPlanningIntentResolution(db, state, states, now),
+    reportLangfuse: reportRunCompletedFromDaemon,
+    finalizeTerminalLocally: createAmrTerminalReportFinalizer(amrTerminalReportOutbox),
+    taskObservationModeForRun: (runId) => taskObservationRollout.modeForRun(runId),
+    taskObservationRepresentationForRun: (runId) =>
+      taskObservationRollout.representationForRun(runId),
+    taskObservationNotExpectedReasonForRun: (runId) =>
+      taskObservationRollout.notExpectedReasonForRun(runId),
+    seedTaskObservationRunFact: (runId, fact) =>
+      taskObservationRollout.seedRepresentationFromRunFact(runId, fact),
+    beginTaskObservationForRun: (runId) => taskObservationRollout.beginFinalizeForRun(runId),
+    runsLogDir: path.join(RUNTIME_DATA_DIR, 'runs'),
+  }).then(async (reconciled) => {
+    if (reconciled.interrupted > 0 || reconciled.messagesReconciled > 0) {
+      console.warn('[runs] reconciled interrupted run terminals', reconciled);
+    }
+    const taskObservationsRecovered = await taskObservationRollout.reconcileCrashWindows();
+    if (taskObservationsRecovered > 0) {
+      console.warn('[telemetry] reconciled task observation crash windows', {
+        recovered: taskObservationsRecovered,
+      });
+    }
+  }).catch((error) => {
+    console.warn('[runs] terminal reconciliation failed', error);
+  });
+
+  const reportFeedback = (req) => {
+    // Resolve Task ownership on the server, using the same representation as
+    // completed-run telemetry. The client does not choose a trace or sink.
+    const representation = taskObservationRollout.representationForRun(req.runId);
+    const task = (representation === 'task_accepted' || representation === 'task_pending')
+      ? getStrategyTaskExecutionByRunId(db, req.runId)
+      : null;
+    return telemetry.reportFeedback({
+      ...req,
+      ...(task ? { traceId: `strategy-task:${task.taskExecutionId}` } : {}),
+    });
+  };
 
   // DNS-aware wrapper. The sync `validateBaseUrl` only inspects the literal
   // hostname string, so a public DNS name pointing at an internal address
@@ -8520,9 +8559,15 @@ export async function startServer({
     });
   });
   registerSocialShareRoutes(app, { http: httpDeps });
+  const projectCreatePreparationTimeoutMs = projectCreatePreparationTimeoutMsFromEnv();
   registerProjectRoutes(app, {
     db,
     design,
+    // Test seam for the POST /api/projects preparation deadline; production
+    // keeps the route's 15s default when the variable is unset or invalid.
+    ...(projectCreatePreparationTimeoutMs != null
+      ? { projectCreatePreparationTimeoutMs }
+      : {}),
     http: httpDeps,
     paths: pathDeps,
     projectStore: projectStoreDeps,
@@ -10758,15 +10803,15 @@ export async function startServer({
       );
     }
     const persistedStrategyFinalText = strategyRunMapping?.finalText.text ?? null;
-    const isOdNextRequestStage = strategyRunMapping?.inputStage === 'request';
+    const isOdNextInitialRun = Boolean(strategyTaskAtStart && isInitialStrategyTaskRun(strategyTaskAtStart, run.id));
+    const isIntentResolution = Boolean(strategyTaskAtStart && isStrategyIntentResolutionRun(strategyTaskAtStart, run.id));
     const hasExplicitCurrentPrompt = Object.prototype.hasOwnProperty.call(
       chatBody,
       'currentPrompt',
     );
     const strategyProtocol = strategyTaskAtStart
-      ? new OdNextMachineProtocolStream()
+      ? createOdNextRunProtocol(strategyRunMapping)
       : null;
-    let strategyVisibleEmitted = '';
     let strategyProtocolResult = null;
     let strategyToolUseCount = 0;
     let pendingStrategyContinuation = null;
@@ -11033,7 +11078,7 @@ export async function startServer({
           error instanceof Error ? error.message : String(error),
         );
       }
-    } else if (isOdNextRequestStage) {
+    } else if (isOdNextInitialRun) {
       return failRun(
         'OD_NEXT_INPUT_SNAPSHOT_INVALID',
         'OD Next request Run is missing its immutable task input snapshot.',
@@ -11457,6 +11502,8 @@ export async function startServer({
         designSystemCreated: runDesignSystemCreatedForRun(run),
         previewModuleCount: runPreviewModuleCountForRun(run),
         filesWritten: runFilesWrittenForRun(run),
+        filesWrittenSource: 'tool_stream' as const,
+        filesWrittenUnknown: true,
       });
       let outcome;
       if (!artifactBaseline || artifactBaseline.contended) {
@@ -11474,6 +11521,8 @@ export async function startServer({
             designSystemCreated: diff.designSystemCreated,
             previewModuleCount: diff.previewModuleCount,
             filesWritten: diff.filesWritten,
+            filesWrittenSource: 'filesystem' as const,
+            filesWrittenUnknown: diff.filesWrittenUnknown === true,
             projectRoot: artifactBaseline.cwd,
             diff,
           };
@@ -11492,6 +11541,7 @@ export async function startServer({
       }
       run.artifactCount = outcome.artifactCount;
       run.artifactOutcome = outcome;
+      strategyWriteEvidence.finish(run);
       return outcome;
     };
     const resolveRunArtifactOutcomeBeforeFinishAsync = async () => {
@@ -11693,7 +11743,7 @@ export async function startServer({
     ];
     const researchCommandContract = resolveResearchCommandContract(
       research,
-      isOdNextRequestStage
+      isOdNextInitialRun
         ? resolveOdNextRequestUserPrompt({
             message,
             currentPrompt,
@@ -11833,7 +11883,7 @@ export async function startServer({
     // directly. Public chat requests cannot reach this branch.
     const forceInternalResume =
       pendingNativeSessionContinue != null &&
-      runtimeResumesSessionById(def) &&
+      (runtimeResumesSessionById(def) || (def.id === 'amr' && !!pendingNativeSessionContinue.amrContinuation)) &&
       pendingNativeSessionContinue.sessionId.length > 0;
     const agentResumeCtx = forceInternalResume
       ? {
@@ -11852,7 +11902,7 @@ export async function startServer({
       : resolvedAgentResumeCtx;
     if (
       strategyTaskAtStart
-      && strategyTaskAtStart.inputStage !== 'request'
+      && !isOdNextInitialRun
       && !agentResumeCtx.isResuming
     ) {
       const blocked = blockAutomaticContinuation(db, { runId: run.id });
@@ -11936,7 +11986,7 @@ export async function startServer({
             resumeContinuationSeed.anchorAssistantMessageId,
           )
         : null;
-    const userRequestPrompt = isOdNextRequestStage
+    const userRequestPrompt = isOdNextInitialRun
       ? resolveOdNextRequestUserPrompt({
           message,
           currentPrompt,
@@ -12109,15 +12159,15 @@ export async function startServer({
         : formIdForOverride !== null
           ? FORM_ANSWERED_GENERIC_OVERRIDE
           : '';
-    const agentFormOverride = isOdNextRequestStage && formIdForOverride
+    const agentFormOverride = isOdNextInitialRun && formIdForOverride
       ? formIdForOverride === 'discovery' || formIdForOverride === 'task-type'
         ? `The <user_first_prompt> contains submitted answers for the ${formIdForOverride} form. Apply them to the active OD Next plan. Do not re-emit that answered form or repeat fields it already answered.`
         : `The <user_first_prompt> contains submitted answers for the ${formIdForOverride} form. Treat them as the active user turn and do not replay the answered form.`
       : formOverride;
-    const agentEchoGuard = isOdNextRequestStage
+    const agentEchoGuard = isOdNextInitialRun
       ? OD_NEXT_BUNDLE_ECHO_GUARD_V2
       : ECHO_GUARD;
-    const includeStableForPayload = isOdNextRequestStage || includeStableInstructions;
+    const includeStableForPayload = isOdNextInitialRun || includeStableInstructions;
     const promptImagePaths = selectPromptImagePaths(
       def.id,
       transportSourceImages,
@@ -12129,10 +12179,10 @@ export async function startServer({
           odNextTaskInputSnapshot.attachmentPaths,
         )
       : promptImagePaths;
-    const taskConfigPendingFact = isOdNextRequestStage
+    const taskConfigPendingFact = isOdNextInitialRun
       ? odNextTaskInputSnapshot?.taskConfigText ?? ''
       : '';
-    const requestInputPendingFact = isOdNextRequestStage
+    const requestInputPendingFact = isOdNextInitialRun
       ? [
           strategyTaskAtStart?.frozenSkillPackage
             ? renderFrozenSkillRosterContext(strategyTaskAtStart.frozenSkillPackage)
@@ -12265,6 +12315,7 @@ export async function startServer({
             finalText: composed,
             persisted: strategyRunMapping.finalText,
             stage: strategyRunMapping.inputStage,
+            ...(strategyRunMapping.purpose ? { purpose: strategyRunMapping.purpose } : {}),
           })
         : promptTelemetry;
     } catch (error) {
@@ -12385,7 +12436,6 @@ export async function startServer({
       ) {
         const delta = strategyProtocol.push(data.delta);
         if (!delta) return;
-        strategyVisibleEmitted += delta;
         data = { ...data, delta };
       } else if (
         strategyProtocol
@@ -12394,7 +12444,6 @@ export async function startServer({
       ) {
         const chunk = strategyProtocol.push(data.chunk);
         if (!chunk) return;
-        strategyVisibleEmitted += chunk;
         data = { ...data, chunk };
       }
       recordRunTelemetry(`stream event ${event}`, () => {
@@ -12832,7 +12881,10 @@ export async function startServer({
         ...runSideEffectsForRun(run),
         cancelRequested: !!run.cancelRequested,
       };
-      const liveSessionId = agentResumeCtx.isResuming
+      const amrContinuationRecovery = def.id === 'amr' ? acpSession?.getContinuationRecovery?.() : null;
+      const liveSessionId = def.resumesSessionViaAcpLoad === true
+        ? acpSession?.getDurableSessionId?.() ?? null
+        : agentResumeCtx.isResuming
         ? agentResumeCtx.resumeSessionId
         : agentCapturesSessionId
           ? capturedSessionId
@@ -12844,11 +12896,12 @@ export async function startServer({
           run.nativeSessionContinueAttemptCount ?? 0,
         totalRetryAttemptCount: run.retryAttemptCount ?? 0,
         sideEffects,
-        supportsNativeSessionContinue: runtimeResumesSessionById(def),
+        supportsNativeSessionContinue: runtimeResumesSessionById(def) || !!amrContinuationRecovery,
+        hasVerifiedAmrContinuation: !!amrContinuationRecovery && amrContinuationRecovery.sessionId === liveSessionId,
         hasNativeSession: !!run.conversationId && !!liveSessionId,
       });
       if (
-        allowRetry &&
+        allowRetry && !isIntentResolution &&
         postToolResumeDecision?.shouldRetry &&
         !design.runs.isTerminal(run.status) &&
         run.conversationId &&
@@ -12888,6 +12941,7 @@ export async function startServer({
           retry_delay_ms: postToolResumeDecision.retryDelayMs,
         });
         run.nativeSessionContinuePending = {
+          amrContinuation: amrContinuationRecovery?.cursor ?? null,
           sessionId: liveSessionId,
           stablePromptHash: currentStableHash,
           stablePromptSections: currentStableSections,
@@ -12907,7 +12961,7 @@ export async function startServer({
         attemptCount: run.retryAttemptCount ?? 0,
         sideEffects,
       });
-      if (allowRetry && decision.shouldRetry && !design.runs.isTerminal(run.status)) {
+      if (allowRetry && !isIntentResolution && decision.shouldRetry && !design.runs.isTerminal(run.status)) {
         run.retryOriginalFailure ??= failure ?? undefined;
         if ((run.retryAttemptCount ?? 0) === 0) {
           run.retryOriginFailure = failure ? { ...failure } : null;
@@ -12956,7 +13010,7 @@ export async function startServer({
         sideEffects.liveArtifactSeen
       );
       const resumableFailure =
-        result === 'failed' &&
+        !isIntentResolution && result === 'failed' &&
         runtimeResumesSessionById(def) &&
         !!run.conversationId &&
         !!liveSessionId &&
@@ -14277,6 +14331,16 @@ export async function startServer({
       }
       lifecycle.mark('launch_preflight_end');
       lifecycle.mark('process_spawn_start');
+      if (isIntentResolution) {
+        if (run.cancelRequested || design.runs.isTerminal(run.status)) {
+          cleanupPromptFile();
+          revokeToolToken('child_exit');
+          unregisterChatAgentEventSink();
+          cleanupOdNextRunInputProjection();
+          return;
+        }
+        startIntentResolution(db, strategyTaskAtStart.taskExecutionId, run.id);
+      }
       child = spawn(invocation.command, invocation.args, {
         env,
         stdio: [stdinMode, 'pipe', 'pipe'],
@@ -15534,6 +15598,7 @@ export async function startServer({
         ...(def.resumesSessionViaAcpLoad === true && agentResumePromptPolicy.resumeSessionId
           ? { resumeSessionId: agentResumePromptPolicy.resumeSessionId }
           : {}),
+        nativeContinuation: forceInternalResume ? pendingNativeSessionContinue?.amrContinuation : null,
         onCliReady: () => noteCliReadyAt(),
         onSessionInit: () => noteSessionInitDoneAt(),
         onPromptComplete: () => clearFirstOutputWatchdog(),
@@ -16045,6 +16110,7 @@ export async function startServer({
       // re-seed the full transcript: one cold turn, never a broken conversation.
       if (
         !run.cancelRequested &&
+        !forceInternalResume &&
         (runtimeResumesSessionById(def) || def.resumesSessionViaAcpLoad === true) &&
         run.conversationId &&
         resolveAgentResumeFailurePolicy({
@@ -16055,7 +16121,7 @@ export async function startServer({
           resumeSessionId: agentResumePromptPolicy.resumeSessionId,
         }).autoReseedFullTranscript
       ) {
-        if (strategyTaskAtStart && strategyTaskAtStart.inputStage !== 'request') {
+        if (strategyTaskAtStart && !isOdNextInitialRun) {
           const blocked = blockAutomaticContinuation(db, { runId: run.id });
           if (blocked) run.strategyTask = projectStrategyTask(blocked, run.id);
           send('error', createSseErrorPayload(
@@ -16556,8 +16622,9 @@ export async function startServer({
       }
       if (status === 'succeeded') {
         if (strategyProtocol && !strategyProtocolResult) {
-          strategyProtocolResult = strategyProtocol.finish();
-          const tail = strategyProtocolResult.visibleText.slice(strategyVisibleEmitted.length);
+          const finishedProtocol = strategyProtocol.finish();
+          strategyProtocolResult = finishedProtocol.parsed;
+          const tail = finishedProtocol.visibleTail;
           if (tail) {
             const tailEvent = def.streamFormat === 'plain' ? 'stdout' : 'agent';
             const tailData = tailEvent === 'stdout'
@@ -16580,7 +16647,6 @@ export async function startServer({
             });
             persistRunEventToAssistantMessage(db, run, tailEvent, tailData);
             design.runs.emit(run, tailEvent, tailData);
-            strategyVisibleEmitted += tail;
             // The frozen Harness prompt currently does not receive the nonce,
             // so its authoritative completion signal remains the verified
             // strategy verdict. Still fold a marker if a future frozen bundle
@@ -16619,8 +16685,11 @@ export async function startServer({
             )
           ),
         );
+        const strategyPlanningOnly = isIntentResolution || strategyTaskAtStart?.executionIntent === 'plan_only'
+          || strategyProtocolResult?.runtimeState?.executionIntent === 'plan_only';
         const strategyCompletionCandidate = Boolean(
           strategyTaskAtStart
+          && !strategyPlanningOnly
           && (
             strategyProtocolResult?.runtimeState?.outcome === 'completed'
             || mayInferDirectEditCompletion
@@ -16815,27 +16884,42 @@ export async function startServer({
         }
         if (strategyTaskAtStart && strategyProtocolResult) {
           let automaticContinuationChatBody = null;
-          const plan = strategyProtocolResult.planContract
-            ?? strategyProtocolResult.repairPlanContract;
           let executionPreflight;
           let complexRuntimeEvidence;
           try {
-            const lockedPlan = plan ?? strategyTaskAtStart.planContract;
-            const evidence = await resolveAutomaticContinuationEvidence({
-              plan: lockedPlan,
-              phase: strategyProtocolResult.runtimeState?.outcome === 'completed'
-                ? 'completion'
-                : 'eligibility',
-              task: strategyTaskAtStart,
-              run,
-              localSyntheticCanary: readOdNextRolloutPolicy().localSyntheticCanary
-                && process.env.NODE_ENV !== 'production',
-              executionPreflightResolver: odNextExecutionPreflightResolver,
-              complexProductionResolver: odNextComplexProductionResolver,
-              runtimeCapabilitySnapshot: chatBody.runtimeCapabilitySnapshot,
-            });
-            executionPreflight = evidence.executionPreflight;
-            complexRuntimeEvidence = evidence.complexRuntimeEvidence;
+            let resolution: ReturnType<typeof validateStrategyIntentResolutionReply> | null = null;
+            if (isIntentResolution) {
+              try {
+                resolution = validateStrategyIntentResolutionReply(strategyTaskAtStart, {
+                  runId: run.id, parsed: strategyProtocolResult, toolUseCount: strategyToolUseCount,
+                  completionEvidence: { physicalStatus: 'succeeded', deliverableValid, ...strategyRunWriteEvidence(run) },
+                });
+              } catch {
+                // The coordinator below persists and rejects the actual reply.
+                // Invalid supplemental output must never prepare production facts.
+              }
+            }
+            const effectiveParsed = resolution?.parsed ?? strategyProtocolResult;
+            const planningOnly = resolution ? resolution.executionIntent === 'plan_only' : strategyPlanningOnly;
+            const intentPending = requiresStrategyIntentResolution(strategyTaskAtStart, effectiveParsed);
+            if (!planningOnly && !intentPending) {
+              const lockedPlan = effectiveParsed.planContract ?? effectiveParsed.repairPlanContract ?? strategyTaskAtStart.planContract;
+              const evidence = await resolveAutomaticContinuationEvidence({
+                plan: lockedPlan,
+                phase: effectiveParsed.runtimeState?.outcome === 'completed'
+                  ? 'completion'
+                  : 'eligibility',
+                task: strategyTaskAtStart,
+                run,
+                localSyntheticCanary: readOdNextRolloutPolicy().localSyntheticCanary
+                  && process.env.NODE_ENV !== 'production',
+                executionPreflightResolver: odNextExecutionPreflightResolver,
+                complexProductionResolver: odNextComplexProductionResolver,
+                runtimeCapabilitySnapshot: chatBody.runtimeCapabilitySnapshot,
+              });
+              executionPreflight = evidence.executionPreflight;
+              complexRuntimeEvidence = evidence.complexRuntimeEvidence;
+            }
           } catch (error) {
             if (run.cancelRequested || design.runs.isTerminal(run.status)) return;
             send('error', createSseErrorPayload(
@@ -16866,12 +16950,15 @@ export async function startServer({
               ...(executionPreflight ? { executionPreflight } : {}),
               ...(complexRuntimeEvidence ? { complexRuntimeEvidence } : {}),
               ...(
-                strategyProtocolResult.runtimeState?.outcome === 'completed'
+                strategyTaskAtStart.intentResolution
+                || strategyProtocolResult.runtimeState?.outcome === 'completed'
+                || strategyPlanningOnly
                 || mayInferDirectEditCompletion
                   ? {
                       completionEvidence: {
                         physicalStatus: 'succeeded',
                         deliverableValid,
+                        ...strategyRunWriteEvidence(run),
                       },
                     }
                   : {}),
@@ -17824,6 +17911,7 @@ export async function startServer({
       terminalTelemetryFallbackTimers.clear();
     };
     const cleanupDaemonBackgroundWork = () => {
+      stopEvidenceDelivery();
       clearTerminalTelemetryFallbackTimers();
       amrTerminalReportDelivery.stop();
       telemetry.disposeFatalHandlers();
