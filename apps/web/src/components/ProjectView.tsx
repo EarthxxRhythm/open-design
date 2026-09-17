@@ -328,13 +328,9 @@ import { persistCommentAnchors } from '../collab/comment-anchor-client';
 import type { AnchorWriteBack } from '../comments';
 import { PluginDetailsModal } from './PluginDetailsModal';
 import { DesignSystemPreviewModal } from './DesignSystemPreviewModal';
-<<<<<<< HEAD
-import { ChatPane } from './ChatPane';
-import historyDockStyles from './chat/ConversationHistoryDock.module.css';
-=======
 import { ChatPane, foldStrategyTaskTurns } from './ChatPane';
 import { trailingMessageIgnoringHostCards } from '../runtime/chat/host-authored-message';
->>>>>>> eca7c7ab98 (fix(web): align ChatPanel failures with approved product copy (#8140))
+import historyDockStyles from './chat/ConversationHistoryDock.module.css';
 import type { ChatSendMeta, ChatSendOutcome } from './ChatComposer';
 import {
   CritiqueTheaterMount,
