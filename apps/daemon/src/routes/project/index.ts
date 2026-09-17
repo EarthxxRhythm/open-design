@@ -1956,6 +1956,8 @@ function buildStreamingUrlPreviewBridgeInjection(
   }
   if (wantsUrlPreviewObservabilityBridge(requestedBridge)) injection += buildPreviewObservabilityBridge();
   if (wantsUrlPreviewFocusGuard(requestedBridge)) injection += buildPreviewFocusGuard();
+  // Head-safe: the build-focus bridge defers its DOM walk to DOMContentLoaded.
+  if (wantsUrlPreviewBuildFocusBridge(requestedBridge)) injection += buildPreviewBuildFocusBridge();
   if (wantsUrlPreviewScrollBridge(requestedBridge)) injection += URL_PREVIEW_SCROLL_BRIDGE;
   if (wantsUrlPreviewSelectionBridge(requestedBridge)) injection += URL_PREVIEW_SELECTION_BRIDGE;
   if (wantsUrlPreviewSnapshotBridge(requestedBridge)) injection += URL_PREVIEW_SNAPSHOT_BRIDGE;

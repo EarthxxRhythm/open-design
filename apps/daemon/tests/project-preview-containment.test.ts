@@ -2,6 +2,7 @@ import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { PREVIEW_URL_GUARD_MAX_HTML_BYTES } from '@open-design/contracts/runtime/preview-guards';
 import { ensureWorkspaceProject, openDatabase } from '../src/db.js';
 import { startServer } from '../src/server.js';
 import { rewriteOutsideExecutableHtmlRanges } from '../src/routes/project/index.js';
@@ -655,6 +656,27 @@ describe('project preview containment routes', () => {
       `${baseUrl}/api/projects/${projectId}/raw/notes.txt?odPreviewBridge=buildfocus`,
     );
     expect(await text.text()).not.toContain('data-od-preview-build-focus');
+  });
+
+  // Documents above the buffered-guard ceiling take the streamed injection
+  // path; the build-focus bridge must arrive there too, exactly once.
+  it('streams the build-focus bridge into an HTML file too large to buffer', async () => {
+    const projectId = await createProject();
+    const pad = 'x'.repeat(PREVIEW_URL_GUARD_MAX_HTML_BYTES + 256);
+    await writeProjectFile(
+      projectId,
+      'large.html',
+      `<!doctype html><html><head><title>Large</title></head><body><h1>Studio Nine</h1><!-- ${pad} --></body></html>`,
+    );
+
+    const bridged = await fetch(
+      `${baseUrl}/api/projects/${projectId}/raw/large.html?odPreviewBridge=buildfocus`,
+    );
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    expect(html.length).toBeGreaterThan(PREVIEW_URL_GUARD_MAX_HTML_BYTES);
+    expect(html.split('data-od-preview-build-focus').length - 1).toBe(1);
+    expect(html).toContain(pad);
   });
 
   it('rejects invalid preview scopes and escaping preview-url paths', async () => {
