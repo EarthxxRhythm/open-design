@@ -97,6 +97,7 @@ import {
 import { PrivacyConsentModal } from './components/PrivacyConsentModal';
 import { TestCampaignModal } from './components/TestCampaignModal';
 import { ProductionCampaignModal } from './components/ProductionCampaignModal';
+import { prefetchProductionTouchpointDecisions } from './components/production-touchpoint-loader';
 import {
   clearHomeComposerAttachments,
   stashHomeComposerAttachments,
@@ -936,7 +937,7 @@ export function App() {
 }
 
 function AppInner() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const iframeKeepAlivePool = useIframeKeepAlivePool();
   const clientType = useMemo(() => detectClientType(), []);
   const hostPlatform = useMemo(() => getOpenDesignHost()?.client.platform, []);
@@ -2034,6 +2035,20 @@ function AppInner() {
       document.removeEventListener('visibilitychange', onReturnToApp);
     };
   }, [applyAmrLoginStatus, clearAmrAuthRetryContinuation, daemonLive]);
+
+  // Cold-start timing only: send the campaign modal and account-badge decision
+  // requests beside the login status above instead of after it. Display is
+  // unchanged — each host still waits for its own sign-in gates, and the
+  // loader drops unused responses on any login status change. Onboarding
+  // renders no campaign host, so it prefetches nothing.
+  const campaignPrefetched = useRef(false);
+  const onboardingVisible = route.kind === 'home' && route.view === 'onboarding';
+  useEffect(() => {
+    if (campaignPrefetched.current || onboardingVisible || !locale) return;
+    if (getOpenDesignHost()?.client.type !== 'desktop') return;
+    campaignPrefetched.current = true;
+    prefetchProductionTouchpointDecisions(['opend.home.campaign-modal', 'opend.home.account-badge'], locale);
+  }, [locale, onboardingVisible]);
 
   useEffect(() => {
     analytics.setUserId(

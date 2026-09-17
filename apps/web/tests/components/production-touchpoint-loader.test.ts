@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ProductionTouchpointLoadError, loadProductionTouchpointDecision } from "../../src/components/production-touchpoint-loader";
+import { ProductionTouchpointLoadError, loadProductionTouchpointDecision, prefetchProductionTouchpointDecisions } from "../../src/components/production-touchpoint-loader";
+import { AMR_LOGIN_STATUS_EVENT } from "../../src/components/amrLoginPolling";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 describe("production touchpoint decision loader", () => {
 	it("keeps 404 absence quiet while bounding network, HTTP, and malformed response failures", async () => {
 		const signal = new AbortController().signal;
@@ -28,5 +29,43 @@ describe("production touchpoint decision loader", () => {
 		const abort = new DOMException("aborted", "AbortError");
 		vi.stubGlobal("fetch", vi.fn().mockRejectedValue(abort));
 		await expect(loadProductionTouchpointDecision("opend.home.account-badge", "en-US", new AbortController().signal)).rejects.toBe(abort);
+	});
+
+	describe("cold-start prefetch", () => {
+		const badge = "opend.home.account-badge";
+		const ok = () => new Response(JSON.stringify({ touchpointDecisionId: "prefetched" }), { status: 200 });
+		const load = (locale = "en-US", active?: string) => loadProductionTouchpointDecision(badge, locale, new AbortController().signal, active);
+		it("serves the first load from a prefetch started beside the login status, reporting its age once", async () => {
+			vi.useFakeTimers({ toFake: ["Date"] });
+			const fetchMock = vi.fn().mockResolvedValueOnce(ok()).mockResolvedValue(new Response(null, { status: 404 }));
+			vi.stubGlobal("fetch", fetchMock);
+			prefetchProductionTouchpointDecisions([badge], "en-US");
+			vi.advanceTimersByTime(800);
+			expect(await load()).toEqual({ kind: "decision", value: { touchpointDecisionId: "prefetched" }, ageMs: 800 });
+			expect(fetchMock).toHaveBeenCalledTimes(1);
+			expect(await load()).toEqual({ kind: "no-decision" });
+			expect(fetchMock).toHaveBeenCalledTimes(2);
+		});
+		it.each([
+			["another locale", (fetchMock: ReturnType<typeof vi.fn>) => load("zh-CN")],
+			["a renewal of a mounted decision", () => load("en-US", "decision-1")],
+			["a prefetch older than fifteen seconds", () => { vi.advanceTimersByTime(15_001); return load(); }],
+			["a login status change", () => { window.dispatchEvent(new CustomEvent(AMR_LOGIN_STATUS_EVENT)); return load(); }],
+		] as const)("fetches fresh for %s", async (_name, run) => {
+			vi.useFakeTimers({ toFake: ["Date"] });
+			const fetchMock = vi.fn().mockResolvedValueOnce(ok()).mockResolvedValue(new Response(null, { status: 404 }));
+			vi.stubGlobal("fetch", fetchMock);
+			prefetchProductionTouchpointDecisions([badge], "en-US");
+			expect(await run(fetchMock)).toEqual({ kind: "no-decision" });
+			expect(fetchMock).toHaveBeenCalledTimes(2);
+			await load();
+		});
+		it("never reuses a signed-out or failed prefetch", async () => {
+			const fetchMock = vi.fn().mockResolvedValueOnce(new Response(null, { status: 401 })).mockResolvedValue(ok());
+			vi.stubGlobal("fetch", fetchMock);
+			prefetchProductionTouchpointDecisions([badge], "en-US");
+			expect(await load()).toMatchObject({ kind: "decision", ageMs: 0 });
+			expect(fetchMock).toHaveBeenCalledTimes(2);
+		});
 	});
 });

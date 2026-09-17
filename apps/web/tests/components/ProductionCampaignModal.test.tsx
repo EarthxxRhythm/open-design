@@ -516,7 +516,7 @@ describe("ProductionCampaignModal", () => {
 		);
 		vi.stubGlobal("fetch", fetchMock);
 		render(<ProductionCampaignModal authenticated sessionSubject="user-a" />);
-		await screen.findByTestId("campaign-custom-element");
+		await screen.findByRole("dialog");
 		window.dispatchEvent(new Event("focus"));
 		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
 		expect(fetchMock.mock.calls[1]?.[0]).toContain(
@@ -1332,6 +1332,62 @@ describe("ProductionCampaignModal mount lifetime", () => {
 	});
 });
 
+describe("ProductionCampaignModal backdrop presentation", () => {
+	const dialogNode = () => document.querySelector('[role="dialog"]');
+	beforeEach(() => {
+		(globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = {
+			client: { osLocale: "en-US", type: "desktop" },
+		};
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => new Response(JSON.stringify(decision()), { status: 200 })),
+		);
+	});
+	it("keeps the backdrop invisible and the page unlocked until the component has mounted", async () => {
+		let resolveVerified!: (value: any) => void;
+		vi.spyOn(touchpointComponent, "verifyWebTouchpoint").mockReturnValue(
+			new Promise<any>((resolve) => {
+				resolveVerified = resolve;
+			}),
+		);
+		render(<ProductionCampaignModal authenticated sessionSubject="user-a" />);
+		await waitFor(() => expect(resolveVerified).toBeTypeOf("function"));
+		await act(async () => {});
+		expect(screen.queryByRole("dialog")).toBeNull();
+		expect(dialogNode()?.getAttribute("data-state")).not.toBe("open");
+		expect(document.body.style.overflow).toBe("");
+		fireEvent.keyDown(document, { key: "Escape" });
+		await act(async () => {
+			resolveVerified({ entryUrl: "blob:modal", resourceUrls: new Map(), dispose: vi.fn() });
+		});
+		await screen.findByRole("dialog");
+		expect(dialogNode()?.getAttribute("data-state")).toBe("open");
+		expect(document.body.style.overflow).toBe("hidden");
+	});
+	it.each([
+		["verification", "verify"],
+		["component mount", "mount"],
+	] as const)("removes the backdrop after a %s failure and does not retry the same decision", async (_name, stage) => {
+		if (stage === "verify")
+			vi.spyOn(touchpointComponent, "verifyWebTouchpoint").mockRejectedValue(
+				new Error("digest mismatch"),
+			);
+		else
+			vi.spyOn(OpenDesignTouchpointElement.prototype, "mount").mockRejectedValue(
+				new Error("mount failed"),
+			);
+		render(<ProductionCampaignModal authenticated sessionSubject="user-a" />);
+		await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(dialogNode()).toBeNull());
+		expect(document.body.style.overflow).toBe("");
+		window.dispatchEvent(new Event("focus"));
+		await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+		await act(async () => {});
+		expect(dialogNode()).toBeNull();
+		expect(document.body.style.overflow).toBe("");
+	});
+});
+
 describe("ProductionCampaignModal device impressions", () => {
 	const marker = (subject = "user-a", activity = "campaign-1") =>
 		`touchpoint-displayed:v1:${encodeURIComponent(subject)}:${encodeURIComponent(activity)}`;
@@ -1515,15 +1571,17 @@ describe("ProductionCampaignModal device impressions", () => {
 		await act(async () => paint(0));
 		expect(localStorage.getItem(marker())).toBeNull();
 	});
-	it("does not persist rejected verification, and permits a subsequent successful retry", async () => {
+	it("does not persist rejected verification, and permits a retry after restart", async () => {
 		const verify = vi
 			.spyOn(touchpointComponent, "verifyWebTouchpoint")
 			.mockRejectedValueOnce(new Error("digest mismatch"));
 		const view = render(
 			<ProductionCampaignModal authenticated sessionSubject="user-a" />,
 		);
-		await screen.findByRole("dialog");
-		await act(async () => {});
+		await waitFor(() => expect(verify).toHaveBeenCalledTimes(1));
+		await waitFor(() =>
+			expect(document.querySelector('[role="dialog"]')).toBeNull(),
+		);
 		expect(localStorage.getItem(marker())).toBeNull();
 		view.unmount();
 		verify.mockRestore();

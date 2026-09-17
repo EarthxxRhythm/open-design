@@ -208,6 +208,14 @@ function TestCampaignHarness({
 	);
 }
 beforeEach(() => {
+	// jsdom cannot import a Blob module; a mounted component is what presents the modal.
+	vi
+		.spyOn(OpenDesignTouchpointElement.prototype, "mount")
+		.mockImplementation(async function (this: OpenDesignTouchpointElement) {
+			this.shadowRoot?.replaceChildren(
+				document.createTextNode("Verified campaign"),
+			);
+		});
 	window.history.replaceState(null, "", "/?cmsTestControls=1");
 	(globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = {
 		version: 2,
@@ -310,6 +318,55 @@ describe("TestCampaignModal", () => {
 		expect(dispose).toHaveBeenCalled();
 		mount.mockRestore();
 		dispose.mockRestore();
+	});
+});
+
+describe("TestCampaignModal backdrop presentation", () => {
+	const dialogNode = () => document.querySelector('[role="dialog"]');
+	const select = async () => {
+		render(<TestCampaignHarness authenticated />);
+		await screen.findByTestId("touchpoint-test-selector");
+		fireEvent.change(screen.getByLabelText("Test activity"), {
+			target: { value: "deployment-1" },
+		});
+	};
+	it("keeps the backdrop invisible and the page unlocked until the component has mounted", async () => {
+		let resolveVerified!: (value: any) => void;
+		vi.spyOn(touchpointComponent, "verifyWebTouchpoint").mockReturnValue(
+			new Promise<any>((resolve) => {
+				resolveVerified = resolve;
+			}),
+		);
+		vi.spyOn(OpenDesignTouchpointElement.prototype, "mount").mockResolvedValue();
+		vi.stubGlobal("fetch", fetches());
+		await select();
+		await waitFor(() => expect(dialogNode()).not.toBeNull());
+		expect(screen.queryByRole("dialog")).toBeNull();
+		expect(dialogNode()?.getAttribute("data-state")).not.toBe("open");
+		expect(document.body.style.overflow).toBe("");
+		await act(async () => {
+			resolveVerified({ entryUrl: "blob:test", resourceUrls: new Map(), dispose: vi.fn() });
+		});
+		await screen.findByRole("dialog");
+		expect(dialogNode()?.getAttribute("data-state")).toBe("open");
+		await waitFor(() => expect(document.body.style.overflow).toBe("hidden"));
+	});
+	it("removes the backdrop when the component fails to mount", async () => {
+		vi.spyOn(touchpointComponent, "verifyWebTouchpoint").mockResolvedValue({
+			entryUrl: "blob:test",
+			resourceUrls: new Map(),
+			dispose: vi.fn(),
+		} as never);
+		vi.spyOn(OpenDesignTouchpointElement.prototype, "mount").mockRejectedValue(
+			new Error("mount failed"),
+		);
+		vi.stubGlobal("fetch", fetches());
+		await select();
+		await waitFor(() =>
+			expect(OpenDesignTouchpointElement.prototype.mount).toHaveBeenCalled(),
+		);
+		await waitFor(() => expect(dialogNode()).toBeNull());
+		expect(document.body.style.overflow).toBe("");
 	});
 });
 
