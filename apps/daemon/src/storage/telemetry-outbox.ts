@@ -15,6 +15,7 @@ export class TelemetryOutbox {
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('busy_timeout = 1000');
     this.db.exec(`
+      CREATE TABLE IF NOT EXISTS telemetry_task_object_reasons_v1 (task_trace_id TEXT PRIMARY KEY, reason_keys TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS telemetry_snapshots_v1 (sha256 TEXT PRIMARY KEY, body BLOB NOT NULL, size_bytes INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS telemetry_object_outbox_v1 (
         key TEXT PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, bytes INTEGER NOT NULL,
@@ -77,11 +78,24 @@ export class TelemetryOutbox {
   objectJobsForConversation(projectId: string, conversationId: string): Array<{ payload: string }> {
     return this.db.prepare(`SELECT payload FROM telemetry_object_outbox_v1 WHERE json_extract(payload, '$.context.projectId') = ? AND json_extract(payload, '$.context.conversationId') = ? ORDER BY created_at, key`).all(projectId, conversationId) as Array<{ payload: string }>;
   }
-  private draining = false;
+  /** Preserve published reason keys so a later empty map can explicitly clear remote deep merges. */
+  rememberTaskObjectReasons(taskTraceId: string, currentKeys: string[]): string[] {
+    const previous = this.db.prepare('SELECT reason_keys FROM telemetry_task_object_reasons_v1 WHERE task_trace_id = ?').get(taskTraceId) as { reason_keys: string } | undefined;
+    const keys = [...new Set<string>([...(previous ? JSON.parse(previous.reason_keys) as string[] : []), ...currentKeys])].sort();
+    this.db.prepare('INSERT INTO telemetry_task_object_reasons_v1 VALUES (?, ?) ON CONFLICT(task_trace_id) DO UPDATE SET reason_keys = excluded.reason_keys').run(taskTraceId, JSON.stringify(keys));
+    return keys;
+  }
+  private draining: Promise<void> | undefined;
   async drain(deliver: (job: OutboxJob) => Promise<DeliveryAttempt>, now = Date.now()): Promise<void> {
-    if (this.draining) return;
-    this.draining = true;
-    try {
+    // Callers need committed receipts, not an early return while another Run uploads.
+    // After joining, take a fresh bounded pass for jobs enqueued during that upload.
+    while (this.draining) await this.draining;
+    const pass = this.drainPass(deliver, now);
+    this.draining = pass;
+    try { await pass; } finally { this.draining = undefined; }
+  }
+  private async drainPass(deliver: (job: OutboxJob) => Promise<DeliveryAttempt>, now: number): Promise<void> {
+
       for (const kind of ['object', 'feedback'] as const) {
         const table = this.table(kind);
         const retryable = kind === 'feedback' ? "('queued')" : "('queued', 'accepted')";
@@ -103,7 +117,6 @@ export class TelemetryOutbox {
           );
         }
       }
-    } finally { this.draining = false; }
   }
   close() { this.db.close(); }
 }

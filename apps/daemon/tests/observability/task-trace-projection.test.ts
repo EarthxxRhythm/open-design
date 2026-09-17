@@ -28,6 +28,17 @@ describe('complete Task trace evidence', () => {
     expect(result?.metadata.run_metadata).toHaveLength(2);
     expect(projectTaskTrace([{ runId: 'x', metadata: {} }], 0)?.metadata.tokens).toBeUndefined();
   });
+  it('aggregates object counts and does not hide an earlier incomplete stage', () => {
+    const stage = (runId: string, status: string) => ({ runId, metadata: {
+      manifest_completeness: status === 'ok' ? 'complete' : 'unavailable',
+      trace_object_summary: { new_file_count: 1, modified_file_count: 0, recovered_file_count: 0, candidate_file_count: 1 },
+      artifact_manifest: [{ artifact_id: runId, status, stored_in_open_design: status === 'ok' }],
+    } });
+    const incomplete = projectTaskTrace([stage('first', 'unavailable'), stage('last', 'ok')], 1)!;
+    expect(incomplete.metadata.manifest_completeness).toBe('unavailable');
+    expect(incomplete.metadata.trace_object_summary).toMatchObject({ candidate_file_count: 2, new_file_count: 2, uploaded_file_count: 1, skipped_file_count: 1, skip_reasons: { unavailable: 1 } });
+    expect(projectTaskTrace([stage('first', 'ok'), stage('last', 'ok')], 1)?.metadata).toMatchObject({ manifest_completeness: 'complete', trace_object_summary: { candidate_file_count: 2, uploaded_file_count: 2, skipped_file_count: 0, skip_reasons: {} } });
+  });
   it('retains policy-redacted output and allowed tools beyond inline limits without weakening tool policy', () => {
     const text = '界'.repeat(40000);
     const quality = buildSafeRunQualityProjectionV1({ prefs: { metrics: true, content: true }, contentStorage: 'object', messageOutput: text,

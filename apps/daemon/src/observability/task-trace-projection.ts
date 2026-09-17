@@ -1,3 +1,4 @@
+import { taskObjectMetadata } from './task-object-summary.js';
 import type { RunUsageAnalytics } from '../run-analytics-observability.js';
 import { codexTurnUsageFromEvents } from './codex-turn-usage.js';
 /** Legacy-compatible summaries of physical Runs without duplicating Run traces. */
@@ -33,6 +34,7 @@ export function projectTaskTrace(runs: TaskRunTraceProjection[], durationMs: num
   for (const key of ['attachment_manifest', 'artifact_manifest', 'input_text_snapshot_manifest', 'artifacts']) {
     metadata[key] = runs.flatMap(run => Array.isArray(run.metadata[key]) ? run.metadata[key] as unknown[] : []);
   }
+  Object.assign(metadata, taskObjectMetadata(runs.map(run => run.metadata)));
   // Physical Run facts remain in run_metadata; they are not Task totals.
   for (const key of ['langfuse_trace_id', 'cost_usd', 'cost_breakdown', 'performance_diagnostics']) delete metadata[key];
   return { input: first.input, output: last.output, metadata };

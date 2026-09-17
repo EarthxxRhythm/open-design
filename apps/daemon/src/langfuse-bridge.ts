@@ -1416,6 +1416,7 @@ export async function buildSafeRunQualityProjectionFromDaemon(
       run: { runId: run.id, status: normalizeStatus(run.status), startedAt: run.createdAt, endedAt: run.updatedAt },
       message: { messageId: run.assistantMessageId ?? '', prompt: '', output: '' },
       artifacts: [], eventsSummary: { toolCalls: 0, errors: 0, durationMs: Math.max(0, run.updatedAt - run.createdAt) },
+      traceObjectSummary: buildTraceObjectSummary({ traceObjectFilesRaw }),
     };
     await enqueueObjectEvidence(dataDir, context, sources, opts.taskTraceId);
     frozen = await readObjectEvidence(dataDir, run.id);

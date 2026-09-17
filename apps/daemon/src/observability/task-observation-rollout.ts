@@ -1,3 +1,4 @@
+import { evidenceStore, reconcileTaskObjectReasons } from '../services/evidence-delivery.js';
 import { createHash } from 'node:crypto';
 import { taskRunUsage, projectTaskTrace, type TaskRunTraceProjection } from './task-trace-projection.js';
 import { getConversation } from '../db.js';
@@ -639,6 +640,9 @@ async function taskAggregate(
     const projection = traceProjections.get(mapping.runId);
     return projection ? [projection] : [];
   }), Math.max(0, aggregate.root.updatedAt - aggregate.root.createdAt));
+  if (aggregate.traceProjection && sendObjects && options.dataDir) {
+    reconcileTaskObjectReasons(await evidenceStore(options.dataDir), `strategy-task:${task.taskExecutionId}`, aggregate.traceProjection.metadata);
+  }
   if (aggregate.traceProjection && telemetry.prefs.content === true) {
     const conversation = getConversation(options.db, task.conversationId);
     if (conversation?.title) aggregate.traceProjection.metadata.sessionTitle = redactPromptText(conversation.title);

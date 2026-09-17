@@ -16,8 +16,10 @@ it('A-04/A-05 freezes bytes and persists idempotent retry across restart', async
     original.fill(0);
     const seen: string[] = [];
     await outbox.drain(async job => { seen.push(job.key); throw new Error('offline'); }, 1000);
+    expect(outbox.rememberTaskObjectReasons('task', ['http_503'])).toEqual(['http_503']);
     outbox.close();
     outbox = new TelemetryOutbox(file);
+    expect(outbox.rememberTaskObjectReasons('task', [])).toEqual(['http_503']);
     expect(outbox.enqueue('object', 'stable-key', { different: true }, [], 1500)).toBe('existing');
     expect(outbox.snapshot(sha).toString()).toBe('immutable synthetic artifact');
     await outbox.drain(async job => { seen.push(job.key); return { status: 'retry', reason: 'http_503' }; }, 2000);
@@ -79,4 +81,25 @@ it('accepted feedback ends submission retries without claiming materialization',
     expect(box.inspect('feedback', 'accepted-score')).toMatchObject({ status: 'accepted', attempts: 1 });
     expect(box.read('feedback', 'accepted-score')?.receipt).toBeUndefined();
   } finally { box.close(); }
+});
+
+it('concurrent drain waits for receipts and delivers jobs enqueued during the active pass', async () => {
+  const box = new TelemetryOutbox(':memory:');
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let first: Promise<void> | undefined;
+  try {
+    box.enqueue('object', 'first', {}, [], 0);
+    first = box.drain(async () => { await gate; return { status: 'uploaded', receipt: { ok: true } }; }, 0);
+    box.enqueue('object', 'second', {}, [], 0);
+    let finished = false;
+    const second = box.drain(async () => ({ status: 'uploaded', receipt: { ok: true } }), 0).then(() => { finished = true; });
+    await Promise.resolve(); await Promise.resolve();
+    expect(finished).toBe(false);
+    release();
+    await Promise.all([first, second]);
+    expect(box.read('object', 'first')?.receipt).toEqual({ ok: true });
+    expect(box.read('object', 'second')?.receipt).toEqual({ ok: true });
+    expect(box.inspect('object', 'first')?.attempts).toBe(1);
+  } finally { release(); await first; box.close(); }
 });

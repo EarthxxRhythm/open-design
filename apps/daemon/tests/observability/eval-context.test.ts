@@ -10,6 +10,13 @@ describe('eval-context/v2', () => {
     expect(context.productOutcome.runStatus).toBe('succeeded');
     expect(context.evaluationOutcome).toBe('failed');
   });
+  it('keeps user cancellation distinct from failure and preserves unknown usage', () => {
+    const context = buildEvalContext({ runStatus: 'canceled', resultDeliveryState: 'no_result', toolErrorCount: 0, attachmentManifest: [], artifactManifest: [], agentId: 'codex' });
+    expect(context.productOutcome.runStatus).toBe('canceled');
+    expect(context.evaluationOutcome).toBe('canceled');
+    expect(context.usage.status).toBe('unavailable');
+    expect(context.usage).not.toHaveProperty('turn');
+  });
   it('A-03 has stable attachment identity across Runs and separates current increment', () => {
     const messages = [
       { id: 'u1', role: 'user', attachments: [{ path: 'image.png', sha256: 'a'.repeat(64), size: 12 }] },

@@ -9,6 +9,7 @@ import {
   reportRunCompletedFromDaemon,
 } from '../src/langfuse-bridge.js';
 import { buildPromptStackTelemetry } from '../src/prompt-telemetry.js';
+import { readObjectEvidence } from '../src/services/evidence-delivery.js';
 
 interface FakeMessage {
   id: string;
@@ -603,12 +604,17 @@ describe('langfuse-bridge.reportRunCompletedFromDaemon', () => {
     expect(serialized).not.toContain('sk-test-');
     expect(serialized).not.toContain('private body');
 
-    expect(await buildSafeRunQualityProjectionFromDaemon({
+    const metricsOnly = await buildSafeRunQualityProjectionFromDaemon({
       db: makeDb(),
       dataDir,
       run,
       prefs: { metrics: true, content: false, artifactManifest: true },
-    })).toBeUndefined();
+    });
+    expect(metricsOnly?.result?.error?.code).toBe('AGENT_EXIT');
+    expect(metricsOnly?.result?.output).toBeUndefined();
+    expect(metricsOnly?.tools).toBeUndefined();
+    expect(metricsOnly?.manifests).toBeUndefined();
+    expect(JSON.stringify(metricsOnly)).not.toMatch(/sk-test-|\/Users\/alice|private body/);
   });
 
   afterEach(async () => {
@@ -1511,7 +1517,16 @@ describe('langfuse-bridge.reportRunCompletedFromDaemon', () => {
       installationId: 'install-uuid-1', taskTraceId: 'strategy-task:test', fetchImpl: fetchSpy as unknown as typeof fetch,
     });
     expect(quality?.manifests?.artifacts ?? []).toEqual([]);
-    expect(fetchSpy).not.toHaveBeenCalled();
+    const frozen = await readObjectEvidence(dataDir, 'run-id-1');
+    expect(frozen?.sources).toHaveLength(1);
+    expect(frozen?.sources[0]?.objectClass).toBe('input_text_snapshot');
+    expect(JSON.parse(frozen!.sources[0]!.body!.toString())).toMatchObject({
+      schema: 'open-design.run-evidence/v1', runId: 'run-id-1', taskTraceId: 'strategy-task:test',
+    });
+    expect(fetchSpy).toHaveBeenCalled();
+    for (const call of fetchSpy.mock.calls) {
+      expect(velaTraceBody(call as [string, RequestInit]).metadata.artifact_manifest ?? []).toEqual([]);
+    }
   });
 
   it('checkpoints a successful artifact even when its sibling attachment is missing', async () => {

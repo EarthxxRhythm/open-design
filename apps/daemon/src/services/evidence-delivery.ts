@@ -1,3 +1,4 @@
+import { taskObjectMetadata } from '../observability/task-object-summary.js';
 import { createHash } from 'node:crypto';
 import { mkdir, chmod } from 'node:fs/promises';
 import path from 'node:path';
@@ -104,26 +105,45 @@ function deliveryAttempt(result: LangfuseDeliveryState): DeliveryAttempt {
   return { status: terminal.has(result.langfuse_drop_reason ?? '') ? 'terminal' : 'retry', reason: result.langfuse_drop_reason ?? 'network_error' };
 }
 
+/** All Task publishers share the same clearing history because the receiver deep-merges maps. */
+export function reconcileTaskObjectReasons(store: TelemetryOutbox, taskTraceId: string, metadata: Record<string, unknown>): void {
+  const summary = metadata.trace_object_summary as { skip_reasons?: Record<string, number> } | undefined;
+  if (!summary?.skip_reasons) return;
+  const reasons = summary.skip_reasons;
+  const keys = store.rememberTaskObjectReasons(taskTraceId, Object.keys(reasons));
+  summary.skip_reasons = Object.fromEntries(keys.map(reason => [reason, reasons[reason] ?? 0]));
+}
+
 async function publishTaskObjectManifests(store: TelemetryOutbox, payload: ObjectJob, dataDir: string, fetchImpl?: typeof fetch): Promise<DeliveryAttempt> {
   const sink = readTaskTelemetrySinkConfig(process.env);
   if (!sink || !payload.taskTraceId) return { status: 'retry', reason: 'task_sink_unavailable' };
   const manifests: TraceObjectUploadManifests[] = [];
+  const runObjectMetadata: Record<string, unknown>[] = [];
   for (const row of store.objectJobsForTask(payload.taskTraceId)) {
-    if (row.receipt) { manifests.push(JSON.parse(row.receipt)); continue; }
     const other = JSON.parse(row.payload) as ObjectJob;
     const frozenSources = other.sources.map(({ snapshotHash, ...source }) => ({ ...source, ...(snapshotHash ? { body: store.snapshot(snapshotHash) } : {}) }));
-    const pending = await buildTraceObjectManifests({
+    const pending: TraceObjectUploadManifests | undefined = row.receipt ? JSON.parse(row.receipt) : await buildTraceObjectManifests({
       installationId: other.context.installationId, projectId: other.context.projectId, runId: other.context.run.runId,
       prefs: other.context.prefs, projectsRoot: path.join(dataDir, 'projects'), prompt: '', frozenSources,
       uploadMode: 'manifest-only', now: () => new Date(other.capturedAt),
     });
-    if (pending) manifests.push(pending);
+    if (pending) {
+      manifests.push(pending);
+      runObjectMetadata.push({
+        artifact_manifest: pending.artifactManifest, attachment_manifest: pending.attachmentManifest,
+        input_text_snapshot_manifest: pending.inputTextSnapshotManifest, manifest_completeness: pending.completeness,
+        trace_object_summary: other.context.traceObjectSummary ?? { candidate_file_count: other.sources.filter(source => source.objectClass === 'artifact').length },
+      });
+    }
   }
+  const objectMetadata = taskObjectMetadata(runObjectMetadata);
+  reconcileTaskObjectReasons(store, payload.taskTraceId, objectMetadata);
   const metadata = {
     artifact_manifest: manifests.flatMap(m => m.artifactManifest ?? []),
     attachment_manifest: manifests.flatMap(m => m.attachmentManifest ?? []),
     input_text_snapshot_manifest: manifests.flatMap(m => m.inputTextSnapshotManifest ?? []),
     projectId: payload.context.projectId,
+    ...objectMetadata,
   };
   const key = `task-objects:${sha(JSON.stringify([payload.taskTraceId, metadata]))}`;
   const result = await postLegacyTelemetryBatch(sink, [{

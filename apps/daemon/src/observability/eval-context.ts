@@ -90,7 +90,7 @@ export function buildEvalContext(input: EvalContextInput) {
     reasons.add('cross_ledger_collision');
     return { ...entry, status: 'partial' as const, reason: 'cross_ledger_collision' };
   });
-  const productFailed = input.runStatus === 'failed' || input.runStatus === 'canceled'
+  const productFailed = input.runStatus === 'failed'
     || input.resultDeliveryState === 'no_result' || input.resultDeliveryState === 'delivery_failed';
   if (!input.resultDeliveryState) reasons.add('product_outcome_missing');
   if (!input.attachments) reasons.add('attachment_context_missing');
@@ -119,7 +119,7 @@ export function buildEvalContext(input: EvalContextInput) {
       ...(input.failureCode ? { failureCode: input.failureCode } : {}),
       ...(input.failureStage ? { failureStage: input.failureStage } : {}),
     },
-    evaluationOutcome: productFailed ? 'failed' : 'unknown',
+    evaluationOutcome: input.runStatus === 'canceled' ? 'canceled' : productFailed ? 'failed' : 'unknown',
     attachments,
     artifacts: { snapshotStatus: reasons.has('snapshot_incomplete') ? 'partial' : 'complete', entries: artifacts },
     usage: {
