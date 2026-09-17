@@ -145,8 +145,10 @@ describe('这把尺子看得见缺陷', () => {
     cleanup();
     const bare = mount({ seam: false });
     expect(bare.querySelector('[data-chat-root]')).toBeNull();
-    // 裸渲染继承全站 body 的 400 —— 正好等于稿子要的值,所以坏的实现也会「对」
-    expect(weightOf(document.body)).toBe(DESIGN_STEP_WEIGHT);
+    // 裸渲染继承全站 body 的 600(全站阶梯默认档,OPEND-2553 C2)—— 既不是接缝的
+    // 500 也不是稿子的 400,所以不挂接缝的夹具量到的根本不是这条链。
+    expect(weightOf(document.body)).toBe('600');
+    expect(weightOf(document.body)).not.toBe(DESIGN_STEP_WEIGHT);
   });
 });
 

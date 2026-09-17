@@ -52,6 +52,7 @@ import {
   getFirstProjectConversation,
   getConversation,
   getProject,
+  listProjectsAwaitingInput,
   normalizeConversationSessionMode,
   updateProject,
   upsertMessage,
@@ -1336,6 +1337,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       nativeSessionResume: true,
       taskExecutionId: task.taskExecutionId,
       taskRunIndex,
+      executionIntent: task.executionIntent ?? 'produce',
       answer,
     });
     meta.taskExecutionId = task.taskExecutionId;
@@ -2901,6 +2903,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
                       snapshotId: resolvedSnapshot.snapshotId,
                       selectedAgentId: candidate.agentId!,
                       initialRunId: candidate.id,
+                      sessionMode: meta.sessionMode === 'chat' || meta.sessionMode === 'plan' ? meta.sessionMode : 'design',
                       frozenSkillPackage,
                       promptBundleText: preparedPromptBundleText,
                       taskInputManifestSha256: initialTaskInputSnapshot.manifestSha256,
@@ -3263,7 +3266,27 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         'projectId is required when listing Workspace-bound runs',
       );
     }
-    const body = { runs: visibleRuns.map(statusWithStrategyTask) };
+    // `ChatRunStatus` cannot say "waiting on the user": the run that asked the
+    // question reports `succeeded` and exits, while the project stays blocked.
+    // Clients rendering a per-project status off this feed would show such a
+    // project as finished, so ship the awaiting-input set alongside — the same
+    // one `GET /api/projects` composes `awaiting_input` from.
+    //
+    // Intersected with the projects `visibleRuns` already reveals: the query
+    // itself is unscoped, and returning it raw would leak the ids of projects
+    // this caller is not authorized to see.
+    const visibleProjectIds = new Set(
+      visibleRuns
+        .map((run) => run.projectId)
+        .filter((id): id is string => typeof id === 'string' && id.length > 0),
+    );
+    const awaitingInputProjectIds = visibleProjectIds.size
+      ? [...listProjectsAwaitingInput(db)].filter((id) => visibleProjectIds.has(id))
+      : [];
+    const body = {
+      runs: visibleRuns.map(statusWithStrategyTask),
+      awaitingInputProjectIds,
+    };
     res.json(body);
   });
 
@@ -3873,8 +3896,16 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     }
     const chatPluginId = clarificationTask?.strategyId
       ?? (typeof requestBody.pluginId === 'string' ? requestBody.pluginId : null);
+    // Same authority as POST /api/runs: the validated task and frozen snapshot
+    // own an internal continuation; it is not a newly requested public plugin.
+    const internalStrategyContinuation = Boolean(
+      clarificationTask?.strategyId === 'od-next-strategy'
+      && clarificationContinuation?.snapshot.pluginId === clarificationTask.strategyId
+      && clarificationContinuation.snapshot.strategy?.id === clarificationTask.strategyId,
+    );
     if (
-      chatPluginId
+      !internalStrategyContinuation
+      && chatPluginId
       && ctx.plugins.authorizePluginRequest
       && !await ctx.plugins.authorizePluginRequest(req, res, chatPluginId)
     ) return;
