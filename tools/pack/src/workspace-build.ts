@@ -49,6 +49,33 @@ export const WORKSPACE_BUILD_COMMANDS = [
 
 export const WORKSPACE_BUILD_CACHE_SCHEMA_VERSION = 11;
 
+/**
+ * V8 old-space ceiling (MB) for the packaged closure build, the stage that runs
+ * `next build` for apps/web. Next type-checks apps/web in-process against the
+ * app tsconfig (src and tests alike: ~3.4k files, ~800k lines, ~2.5 GB of
+ * heap under tsc --extendedDiagnostics), which has sat right at Node's 2 GB
+ * default old-space for a while; the Home entry refresh (#8208) added ~2% and
+ * tipped it over, so on GitHub's macos-14 / macos-15-intel runners the stage
+ * dies deterministically with "JavaScript heap out of memory" during "Running
+ * TypeScript". No single file dominates: the growth is spread across new
+ * modules, and tests alone account for ~45% of the heap. 4 GB fits the 7 GB
+ * runners. The ceiling changes how much memory the build may use, never what
+ * it emits, so it is not a cache-key determinant and does not bump the schema
+ * version.
+ */
+export const WORKSPACE_BUILD_MAX_OLD_SPACE_MB = 4096;
+
+/**
+ * NODE_OPTIONS handed to the closure build: our heap ceiling first, then whatever
+ * the caller already had, so a caller's own `--max-old-space-size` still wins
+ * (Node honours the last occurrence).
+ */
+export function workspaceBuildNodeOptions(inherited: string | undefined): string {
+  return [`--max-old-space-size=${WORKSPACE_BUILD_MAX_OLD_SPACE_MB}`, inherited?.trim()]
+    .filter((part) => part)
+    .join(" ");
+}
+
 export type WorkspaceBuildCacheKeyInputs = {
   buildCommands: unknown;
   node: string;
@@ -148,7 +175,10 @@ export async function runWorkspaceBuild(
     await runPnpm([...WORKSPACE_BUILD_COMMANDS[0].args]);
     await runPnpm(
       [...WORKSPACE_BUILD_COMMANDS[1].args],
-      { OD_WEB_OUTPUT_MODE: config.webOutputMode },
+      {
+        NODE_OPTIONS: workspaceBuildNodeOptions(process.env.NODE_OPTIONS),
+        OD_WEB_OUTPUT_MODE: config.webOutputMode,
+      },
     );
     await runPnpm([...WORKSPACE_BUILD_COMMANDS[2].args]);
     await runPnpm([...WORKSPACE_BUILD_COMMANDS[3].args]);
