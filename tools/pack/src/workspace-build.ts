@@ -14,7 +14,7 @@ import {
 } from "./workspace/units.js";
 export { WORKSPACE_BUILD_COMMANDS, WORKSPACE_BUILD_PACKAGES } from "./workspace/units.js";
 
-export const WORKSPACE_BUILD_CACHE_SCHEMA_VERSION = 12;
+export const WORKSPACE_BUILD_CACHE_SCHEMA_VERSION = 13;
 
 export type WorkspaceBuildCacheKeyInputs = {
   buildCommands: unknown;
@@ -167,6 +167,8 @@ function workspaceBuildOutputFiles(config: WorkspaceBuildConfig): string[] {
     "packages/sidecar/dist/index.d.ts",
     "packages/download/dist/index.mjs",
     "packages/download/dist/index.d.ts",
+    "packages/standalone/dist/index.mjs",
+    "packages/standalone/dist/index.d.ts",
     "packages/host/dist/index.mjs",
     "packages/host/dist/index.d.ts",
     "packages/agui-adapter/dist/index.mjs",
@@ -201,6 +203,7 @@ function workspaceBuildArtifacts(config: WorkspaceBuildConfig): WorkspaceBuildAr
     "packages/platform/dist",
     "packages/sidecar/dist",
     "packages/download/dist",
+    "packages/standalone/dist",
     "packages/host/dist",
     "packages/agui-adapter/dist",
     "packages/plugin-runtime/dist",
