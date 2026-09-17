@@ -76,6 +76,7 @@ import { requestAmrArtifactUpgrade } from '../runtime/amr-artifact-upgrade';
 import {
   resolveQuestionFormStrategyTaskExecutionId,
   strategySettledMessageFields,
+  strategyTaskParkedOnSucceededRun,
 } from '../runtime/strategy-question-continuation';
 import {
   isTodoWriteToolName,
@@ -6529,8 +6530,9 @@ export function ProjectView({
           recoverableGenericDisconnectFailed;
         // A predecessor can be persisted as physically succeeded immediately
         // before the logical task advances. Probe daemon task truth even when
-        // this row otherwise looks terminal; completed task rows bail out
-        // below without replaying their final Run again.
+        // this row otherwise looks terminal; completed task rows, and rows whose
+        // task is parked on the user, bail out below without replaying their
+        // final Run again.
         const needsTaskProjectionProbe = Boolean(
           message.strategyTaskExecutionId
           && message.runId
@@ -6704,7 +6706,11 @@ export function ProjectView({
           needsTaskProjectionProbe
           && !needsReplayForMessage
           && !taskRunAdvanced
-          && (!status.strategyTask || status.strategyTask.terminal)
+          && (
+            !status.strategyTask
+            || status.strategyTask.terminal
+            || strategyTaskParkedOnSucceededRun(status, runId)
+          )
         ) {
           completedReattachRunsRef.current.add(runId);
           findDetachedManualFileWrites(reattachConversationId, runId)?.dispose();
