@@ -70,6 +70,10 @@
       "types": "./dist/runtime/preview-phase-events.d.ts",
       "default": "./dist/runtime/preview-phase-events.mjs"
     },
+    "./runtime/preview-build-focus": {
+      "types": "./dist/runtime/preview-build-focus.d.ts",
+      "default": "./dist/runtime/preview-build-focus.mjs"
+    },
     "./runtime/preview-runtime-state": {
       "types": "./dist/runtime/preview-runtime-state.d.ts",
       "default": "./dist/runtime/preview-runtime-state.mjs"

@@ -1786,6 +1786,7 @@ interface Props {
   onReorderPreviewComment?: (commentId: string, sortKey: number) => Promise<void>;
   onSendBoardCommentAttachments?: (attachments: ChatCommentAttachment[], images?: File[]) => Promise<CommentSendResult> | CommentSendResult;
   onFileSaved?: () => Promise<void> | void;
+  onFileWritten?: (file: ProjectFile) => void;
   onBrandExtractionStopRequest?: () => void;
   // Open `openName` as a tab (focusing it) and close `closeName` in one
   // atomic tab-state update. The React module pointer uses this to jump to the
@@ -1886,6 +1887,7 @@ export const FileViewer = memo(function FileViewer({
   onReorderPreviewComment,
   onSendBoardCommentAttachments,
   onFileSaved,
+  onFileWritten,
   onBrandExtractionStopRequest,
   onOpenFileReplacing,
   commentPortalId,
@@ -2027,6 +2029,7 @@ export const FileViewer = memo(function FileViewer({
         projectId={projectId}
         file={file}
         onFileSaved={onFileSaved}
+        onFileWritten={onFileWritten}
         viewerOnly={viewerOnly}
       />
     );
@@ -20227,11 +20230,13 @@ function MarkdownViewer({
   projectId,
   file,
   onFileSaved,
+  onFileWritten,
   viewerOnly = false,
 }: {
   projectId: string;
   file: ProjectFile;
   onFileSaved?: () => Promise<void> | void;
+  onFileWritten?: (file: ProjectFile) => void;
   viewerOnly?: boolean;
 }) {
   const { t, locale } = useI18n();
@@ -20374,6 +20379,9 @@ function MarkdownViewer({
         try {
           const saved = await writeProjectTextFile(projectId, file.name, nextValue, undefined, workspaceContext);
           if (!saved) throw new Error('write failed');
+          // A successful write remains a write when autosave deliberately
+          // avoids refreshing the file list. No-op saves emit no receipt.
+          onFileWritten?.(saved);
           lastSavedTextRef.current = nextValue;
           bumpSavedRevision((n) => n + 1);
           setSavedAt(Date.now());
@@ -20403,7 +20411,7 @@ function MarkdownViewer({
       };
       void run(value, options);
     },
-    [file.name, onFileSaved, projectId, viewerOnly],
+    [file.name, onFileSaved, onFileWritten, projectId, viewerOnly],
   );
 
   const flushPendingMarkdownSave = useCallback(() => {

@@ -76,7 +76,7 @@ describe('AssistantMessage unfinished todo state', () => {
     expect(screen.queryByText('Modern minimal')).toBeNull();
   });
 
-  it('shows a soft no-output state instead of Done for empty API responses', () => {
+  it('shows the approved failure status instead of Done for empty API responses', () => {
     render(
       <AssistantMessage
         projectKind="prototype"
@@ -94,10 +94,10 @@ describe('AssistantMessage unfinished todo state', () => {
       />,
     );
 
-    expect(screen.getByText('No output')).toBeTruthy();
+    expect(screen.getByText('The task could not be completed')).toBeTruthy();
     expect(screen.getByText(/provider ended the request/i)).toBeTruthy();
-    // 「Done」现在是执行记录壳头的状态词(D10:壳永远出现),但回合状态行仍然只说「没有输出」
-    expect(document.querySelector('[data-testid="assistant-label"]')?.textContent).toBe('No output');
+    // 「Done」现在是执行记录壳头的状态词(D10:壳永远出现),但空回复的回合状态行使用产品批准的失败标题
+    expect(document.querySelector('[data-testid="assistant-label"]')?.textContent).toBe('The task could not be completed');
     expect(screen.queryByText('empty_response')).toBeNull();
   });
 
@@ -239,7 +239,7 @@ describe('AssistantMessage unfinished todo state', () => {
     expect(document.querySelector('[data-testid="assistant-continue-remaining"]')).toBeNull();
   });
 
-  it('surfaces generated plugin next actions in the latest assistant turn', async () => {
+  it('does not surface retired plugin actions in the latest assistant turn', () => {
     const onOpen = vi.fn();
     const onPluginFolderAgentAction = vi.fn(async () => {});
     render(
@@ -274,18 +274,12 @@ describe('AssistantMessage unfinished todo state', () => {
       />,
     );
 
-    expect(screen.getByText('Plugin ready')).toBeTruthy();
-    expect(screen.getByTestId('assistant-plugin-install-generated-plugin')).toBeTruthy();
-    expect(screen.getByTestId('assistant-plugin-publish-generated-plugin')).toBeTruthy();
-    expect(screen.getByTestId('assistant-plugin-contribute-generated-plugin')).toBeTruthy();
+    expect(screen.queryByText('Plugin ready')).toBeNull();
+    for (const action of ['install', 'publish', 'contribute', 'open-manifest']) {
+      expect(screen.queryByTestId(`assistant-plugin-${action}-generated-plugin`)).toBeNull();
+    }
+    expect(onPluginFolderAgentAction).not.toHaveBeenCalled();
+    expect(onOpen).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByTestId('assistant-plugin-contribute-generated-plugin'));
-    expect(onPluginFolderAgentAction).toHaveBeenCalledWith('generated-plugin', 'contribute');
-    expect(
-      screen.queryByText('Sent to the agent. The CLI run will continue in chat.'),
-    ).toBeNull();
-
-    fireEvent.click(screen.getByTestId('assistant-plugin-open-manifest-generated-plugin'));
-    expect(onOpen).toHaveBeenCalledWith('generated-plugin/open-design.json');
   });
 });

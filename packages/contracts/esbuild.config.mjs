@@ -20,6 +20,7 @@ await build({
     "./src/runtime/preview-observability.ts",
     "./src/runtime/preview-runtime.ts",
     "./src/runtime/preview-phase-events.ts",
+    "./src/runtime/preview-build-focus.ts",
     "./src/runtime/preview-runtime-state.ts",
     "./src/runtime/preview-guards.ts",
     "./src/runtime/html-injection-points.ts",

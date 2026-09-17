@@ -9,7 +9,7 @@ import {
 import { activeArtifactPreviewFrame } from '@/playwright/artifact-preview';
 import { startFakeCollabHub } from '@/playwright/fake-collab-hub';
 import { applyStandardMocks } from '@/playwright/mock-factory';
-import { ensureRailOpen } from '@/playwright/rail';
+import { ensureRailOpen, openTeamProjectsTab } from '@/playwright/rail';
 import { clusterTest as test, expect } from '@/playwright/suite';
 import { clickPreviewToolbarAction } from '@/playwright/workspace';
 import { T } from '@/timeouts';
@@ -416,7 +416,7 @@ test('[P0] two isolated clients converge live content, presence, and owner unsha
     ).toContain(projectId);
 
     await ensureRailOpen(memberPage);
-    await memberPage.getByTestId('entry-nav-all-projects').click();
+    await openTeamProjectsTab(memberPage);
     const memberCard = memberPage.locator(
       `.recent-projects__card[data-project-id="${projectId}"]:visible`,
     );
@@ -799,9 +799,10 @@ test('[P0] two isolated clients converge live content, presence, and owner unsha
 
     await memberPage.goto('/', { waitUntil: 'domcontentloaded' });
     await ensureRailOpen(memberPage);
-    await memberPage.getByTestId('entry-nav-all-projects').click();
-    await expect(memberCard).toHaveCount(0);
+    // 全部项目 opens on 最近浏览过, which spans both the shared catalog and the
+    // member's local mirror: neither may carry the unshared project.
     await memberPage.getByTestId('entry-nav-drafts').click();
+    await expect(memberCard).toHaveCount(0);
     const quarantinedMirror = memberPage.locator(
       `.recent-projects__card[data-project-id="${projectId}"]:visible`,
     );
