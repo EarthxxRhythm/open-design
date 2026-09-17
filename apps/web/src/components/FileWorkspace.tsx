@@ -1,3 +1,4 @@
+import type { RecoveryActionBlockReason } from '../runtime/chat/recovery-gating';
 import {
   memo,
   useCallback,
@@ -351,6 +352,8 @@ interface Props {
   onConversationSessionModeChange?: (id: string, mode: ChatSessionMode) => void;
   onNewConversation?: () => void;
   activeConversationChat?: ActiveConversationChatState;
+  onSwitchConversationToCloud?: (conversationId: string, message: ChatMessage) => void;
+  chatRecoveryActionsBlockedReason?: RecoveryActionBlockReason | null;
   onActiveContextChange?: (context: WorkspaceContextItem | null) => void;
   onWorkspaceContextsChange?: (contexts: WorkspaceContextItem[]) => void;
   messages?: ChatMessage[];
@@ -1385,6 +1388,8 @@ export function FileWorkspace({
   onConversationSessionModeChange,
   onNewConversation,
   activeConversationChat,
+  onSwitchConversationToCloud,
+  chatRecoveryActionsBlockedReason,
   onActiveContextChange,
   onWorkspaceContextsChange,
   messages = [],
@@ -4556,6 +4561,8 @@ export function FileWorkspace({
             onSessionModeChange={onConversationSessionModeChange}
             onNewConversation={onNewConversation}
             activeConversationChat={activeConversationChat}
+            onSwitchConversationToCloud={onSwitchConversationToCloud}
+            recoveryActionsBlockedReason={chatRecoveryActionsBlockedReason}
             onRequestOpenFile={openFile}
           />
         ) : isTerminalTabId(activeTab) ? (
