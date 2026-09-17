@@ -163,13 +163,27 @@ async function expectDisplayedStatus(label: string, id = assistantId()) {
   });
 }
 
+// Approved ChatPanel copy (#8140) gives the reason-specific and generic cards
+// the same title and description, so the visible text alone no longer tells
+// which failure was restored. Read the error code the real ChatPane receives:
+// it is what selects that card.
+function errorCodesOnAssistant(id = assistantId()) {
+  const message = observedChat.messages.find((candidate) => candidate.id === id);
+  expect(message).toBeDefined();
+  return (message?.events ?? []).flatMap((event) =>
+    event.kind === 'status' && event.label === 'error' ? [event.code ?? null] : []);
+}
+
 async function expectBlockedRecovery() {
   await expectDisplayedStatus(en['chat.record.failedTurn']);
   expect(screen.getByText(en['chat.runError.title.agentReplyIncomplete'])).toBeTruthy();
   expect(screen.getByTestId('chat-run-error-description').textContent)
     .toBe(en['chat.runError.agentReplyIncompleteMessage']);
+  expect(errorCodesOnAssistant()).toEqual([MISSING_STATE]);
   // Existing recovery control, not a new copy/action. Do not dispatch a model.
-  await waitFor(() => expect((screen.getByTestId('chat-error-retry') as HTMLButtonElement).disabled).toBe(false));
+  // OPEND-2807 (#8140): a CLI run's card offers Switch to Cloud, never Retry.
+  await waitFor(() => expect((screen.getByTestId('chat-error-switch-to-cloud') as HTMLButtonElement).disabled).toBe(false));
+  expect(screen.queryByTestId('chat-error-retry')).toBeNull();
   expect(screen.getByTestId('recovered-files').textContent).toContain(RESULT.name);
 }
 
@@ -312,6 +326,7 @@ describe('blocked task history hydration through real ProjectView and ChatPane (
     await settleExistingTaskProbe();
     await expectDisplayedStatus(en['chat.record.done']);
     expect(screen.queryByTestId('chat-error-retry')).toBeNull();
+    expect(screen.queryByTestId('chat-error-switch-to-cloud')).toBeNull();
   });
 
   it.each(['filesystem-valid', 'agent-declared'] as const)('keeps the existing %s physical-success exception', async (kind) => {
@@ -324,6 +339,7 @@ describe('blocked task history hydration through real ProjectView and ChatPane (
     await settleExistingTaskProbe();
     await expectDisplayedStatus(en['chat.record.done']);
     expect(screen.queryByTestId('chat-error-retry')).toBeNull();
+    expect(screen.queryByTestId('chat-error-switch-to-cloud')).toBeNull();
   });
 
   it.each([
@@ -348,6 +364,7 @@ describe('blocked task history hydration through real ProjectView and ChatPane (
     if (succeeds) {
       await expectDisplayedStatus(en['chat.record.done']);
       expect(screen.queryByTestId('chat-error-retry')).toBeNull();
+      expect(screen.queryByTestId('chat-error-switch-to-cloud')).toBeNull();
     } else {
       await expectBlockedRecovery();
     }
@@ -362,7 +379,8 @@ describe('blocked task history hydration through real ProjectView and ChatPane (
       reasonCodes: [OD_NEXT_AGENT_DECLARED_BLOCK_REASON], visibleText: null } }) }));
     render(view());
     await expectDisplayedStatus(en['chat.record.failedTurn']);
-    expect(screen.getByTestId('chat-error-retry')).toBeTruthy();
+    expect(screen.getByTestId('chat-error-switch-to-cloud')).toBeTruthy();
+    expect(screen.queryByTestId('chat-error-retry')).toBeNull();
   });
 
   it.each([
@@ -373,7 +391,7 @@ describe('blocked task history hydration through real ProjectView and ChatPane (
     proofs.set(runId(), runProof({ status, strategyTask: undefined }));
     render(view());
     await expectDisplayedStatus(en[label]);
-    expect(screen.queryByText(en['chat.runError.title.agentReplyIncomplete'])).toBeNull();
+    expect(errorCodesOnAssistant()).toEqual([]);
   });
 
   it.each([403, 404, 503])('keeps the existing unavailable-proof fallback without inventing a specific blocked reason (%s)', async (status) => {
@@ -383,7 +401,7 @@ describe('blocked task history hydration through real ProjectView and ChatPane (
     // Changing that policy is outside the authoritative-DTO repair. The first
     // draft wrongly assumed it retained succeeded; preserve the actual policy.
     await expectDisplayedStatus(en['chat.record.failedTurn']);
-    expect(screen.queryByText(en['chat.runError.title.agentReplyIncomplete'])).toBeNull();
+    expect(errorCodesOnAssistant()).toEqual([]);
   });
 
   it.each(['conversation', 'principal'] as const)('ignores late old %s proof after switching to another visible history', async (boundary) => {
@@ -417,6 +435,7 @@ describe('blocked task history hydration through real ProjectView and ChatPane (
     expect(screen.getByText(nextMessage.content)).toBeTruthy();
     expect(document.querySelector(`[data-assistant-message-id="${assistantId()}"]`)).toBeNull();
     expect(screen.queryByTestId('chat-error-retry')).toBeNull();
+    expect(screen.queryByTestId('chat-error-switch-to-cloud')).toBeNull();
     expect(unexpectedWrites).toEqual([]);
   });
 });
