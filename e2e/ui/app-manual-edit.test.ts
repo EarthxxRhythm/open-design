@@ -11,9 +11,14 @@ import {
 import type { Page } from '@playwright/test';
 import { pathToFileURL } from 'node:url';
 import { T } from '@/timeouts';
-import { PREVIEW_URL_GUARD_MAX_HTML_BYTES } from '@open-design/contracts/runtime/preview-guards';
 
 const STORAGE_KEY = 'open-design:config';
+/**
+ * A multi-megabyte document: the size above which the daemon used to serve
+ * previews through a separate streaming implementation. Every size now shares
+ * one preview path; decks this large stay covered end to end.
+ */
+const LARGE_DOCUMENT_BYTES = 2 * 1024 * 1024;
 test.describe.configure({ timeout: T.xlong });
 
 function artifactPreview(page: Page) {
@@ -889,20 +894,19 @@ test('[P0] deck presentation host exit remains usable after the sandboxed slide 
 /**
  * The transport this branch is named after, end to end.
  *
- * Every other presentation spec uses a deck small enough for the daemon to
- * buffer. A document over `PREVIEW_URL_GUARD_MAX_HTML_BYTES` takes a different
- * branch: the scoped preview origin streams it and injects the runtime
- * bootstrap on the way past, rather than assembling the response in memory.
- * Nothing covered that combination — scoped origin *and* streaming *and*
- * presentation — which is where both of this branch's red jobs turned out to
- * live. That is not a coincidence worth leaving uncovered.
+ * Every other presentation spec uses a small deck. A document over
+ * `LARGE_DOCUMENT_BYTES` used to take a different branch on the scoped preview
+ * origin; the daemon now serves every size through one streamed preview path,
+ * but scoped origin *and* a multi-megabyte document *and* presentation is where
+ * both of this branch's red jobs turned out to live. That is not a coincidence
+ * worth leaving uncovered.
  *
  * Deliberately not covered here, because the daemon-side unit specs already
  * own them and duplicating them through the UI would only make this slower and
  * flakier: which capabilities the bootstrap advertises, and whether the
  * presentation bridge is injected exactly once. This spec asserts only what the
- * UI can actually observe — that the document really did arrive over the
- * streaming path, and that presenting it works.
+ * UI can actually observe — that the large document really did arrive from the
+ * scoped origin, and that presenting it works.
  */
 test('[P0] a deck too large to buffer presents, advances and exits on the scoped origin', async ({ page }) => {
   await routeMockAgents(page);
@@ -913,7 +917,7 @@ test('[P0] a deck too large to buffer presents, advances and exits on the scoped
     'streaming-deck.html',
     'Streaming Deck',
     ['Slide One', 'Slide Two'],
-    { padBytes: PREVIEW_URL_GUARD_MAX_HTML_BYTES + 4096 },
+    { padBytes: LARGE_DOCUMENT_BYTES + 4096 },
   );
   await page.goto(`/projects/${projectId}/files/streaming-deck.html`);
   await openDesignFile(page, 'streaming-deck.html');
@@ -923,14 +927,14 @@ test('[P0] a deck too large to buffer presents, advances and exits on the scoped
 
   // Prove the transport rather than assuming it: the document has to have come
   // from the scoped preview origin (`n-<session>` / `p-<session>`), and to be
-  // over the threshold that makes the daemon stream it instead of buffering.
+  // the multi-megabyte document this spec seeded.
   // `location.origin` is "null" in this sandbox, so read the URL itself.
   const served = await frame.locator('body').evaluate(() => ({
     href: location.href,
     bytes: document.documentElement.outerHTML.length,
   }));
   expect(served.href).toMatch(/^https?:\/\/[np]-[^./]+\.localhost(?::\d+)?\//u);
-  expect(served.bytes).toBeGreaterThan(PREVIEW_URL_GUARD_MAX_HTML_BYTES);
+  expect(served.bytes).toBeGreaterThan(LARGE_DOCUMENT_BYTES);
 
   await page.getByRole('button', { name: 'Present', exact: true }).click();
   const popupPromise = page.waitForEvent('popup');
@@ -1277,10 +1281,9 @@ async function seedDeckArtifact(
     handlesKeyboard?: boolean;
     frameworkDeck?: boolean;
     /**
-     * Pad the document past `PREVIEW_URL_GUARD_MAX_HTML_BYTES` so the daemon
-     * serves it through the streaming branch of the scoped preview origin
-     * instead of buffering it. The padding is an HTML comment, so it changes
-     * the transport without changing what the deck renders.
+     * Pad the document to a multi-megabyte size. The padding is an HTML
+     * comment, so it changes the document's size without changing what the
+     * deck renders.
      */
     padBytes?: number;
   } = {},

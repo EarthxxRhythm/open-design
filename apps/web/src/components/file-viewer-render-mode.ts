@@ -37,9 +37,8 @@ export function parseForceInline(search: string | URLSearchParams | null | undef
  * The preview needs `injectSandboxShim` before any user script, which
  * polyfills `localStorage` / `sessionStorage` so artifacts that read them at
  * mount don't throw `SecurityError` and unmount the React tree. Settled
- * on-disk HTML can receive this guard from the daemon URL response, including
- * large documents through streaming injection; only in-memory HTML remains on
- * srcDoc.
+ * on-disk HTML of any size can receive this guard from the daemon URL
+ * response; only in-memory HTML remains on srcDoc.
  *
  * Scope is narrow on purpose. This helper detects three reliable signals
  * visible in the *document* source and requests the corresponding guard:

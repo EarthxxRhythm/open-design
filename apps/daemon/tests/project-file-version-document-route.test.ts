@@ -19,7 +19,7 @@
 //     the same prefix, so a browser's native relative-URL resolution lands on
 //     the project's real assets,
 //   * carries the same `?odPreviewBridge=` injection the current document gets
-//     on /raw (buffered under the guard size, streamed above it),
+//     on /raw, through the same preview plan whatever the document size,
 //   * and is gated by the same project read authority as /raw.
 //
 // Harness note: the routes are mounted on a bare Express app and driven
@@ -386,7 +386,7 @@ describe('historical file version served as a real document URL', () => {
     expect(bridgedHtml).not.toContain('version-two-marker');
   });
 
-  it('streams the bridge injection for a version above the guard size', async () => {
+  it('injects the bridge into a multi-megabyte version', async () => {
     const projectId = createProject('version-doc-large');
     const filler = `<p>${'v'.repeat(64)}</p>`.repeat(Math.ceil((2 * 1024 * 1024 + 4096) / 71));
     const large = '<!doctype html><html><head><title>Big</title></head>'

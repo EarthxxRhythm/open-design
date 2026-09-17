@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import { StringDecoder } from 'node:string_decoder';
 
 import { legacyDeckScreenNumber } from '@open-design/contracts/runtime/deck-stage-fallback';
 import {
@@ -10,7 +9,6 @@ import {
   previewHtmlNeedsSandboxShim,
 } from '@open-design/contracts/runtime/preview-guards';
 import { scanDeckSourceSignalFlags } from '@open-design/preview-runtime/srcdoc';
-import { ManualEditSourceAnnotator } from '@open-design/preview-runtime/manual-edit-source';
 
 const MAX_TAG_BYTES = 256 * 1024;
 const RAW_TEXT_TAGS = new Set(['noscript', 'script', 'style', 'title', 'textarea']);
@@ -441,88 +439,4 @@ export async function scanHtmlHeadForStreamingInjection(
   }
 
   return finish();
-}
-
-export interface InjectedFileRange {
-  start: number;
-  end: number;
-}
-
-/** Yield a virtual file made from source-prefix + injection + source-suffix. */
-export async function* streamFileWithInjection(
-  filePath: string,
-  sourceSize: number,
-  insertionOffset: number,
-  injection: Buffer,
-  range: InjectedFileRange,
-): AsyncGenerator<Buffer> {
-  const safeOffset = Math.max(0, Math.min(sourceSize, insertionOffset));
-  const segments = [
-    { virtualStart: 0, length: safeOffset, sourceStart: 0, content: null as Buffer | null },
-    { virtualStart: safeOffset, length: injection.byteLength, sourceStart: 0, content: injection },
-    {
-      virtualStart: safeOffset + injection.byteLength,
-      length: sourceSize - safeOffset,
-      sourceStart: safeOffset,
-      content: null as Buffer | null,
-    },
-  ];
-
-  for (const segment of segments) {
-    if (segment.length <= 0) continue;
-    const segmentEnd = segment.virtualStart + segment.length - 1;
-    const start = Math.max(range.start, segment.virtualStart);
-    const end = Math.min(range.end, segmentEnd);
-    if (start > end) continue;
-    const relativeStart = start - segment.virtualStart;
-    const relativeEnd = end - segment.virtualStart;
-    if (segment.content) {
-      yield segment.content.subarray(relativeStart, relativeEnd + 1);
-      continue;
-    }
-    const sourceStart = segment.sourceStart + relativeStart;
-    const sourceEnd = segment.sourceStart + relativeEnd;
-    for await (const chunk of fs.createReadStream(filePath, { start: sourceStart, end: sourceEnd })) {
-      yield Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    }
-  }
-}
-
-/**
- * Stream a UTF-8 HTML document with one parser-safe injection while assigning
- * manual-edit source identities. The response length is intentionally not
- * precomputed: HTML document navigations do not need byte ranges, and keeping
- * this transform chunked avoids retaining a multi-megabyte artifact or an
- * unbounded list of tag offsets.
- */
-export async function* streamFileWithInjectionAndManualEditSourceAnnotations(
-  filePath: string,
-  sourceSize: number,
-  insertionOffset: number,
-  injection: Buffer,
-): AsyncGenerator<Buffer> {
-  const safeOffset = Math.max(0, Math.min(sourceSize, insertionOffset));
-  const decoder = new StringDecoder('utf8');
-  const annotator = new ManualEditSourceAnnotator();
-
-  const emit = function* (bytes: Buffer): Generator<Buffer> {
-    const transformed = annotator.push(decoder.write(bytes));
-    if (transformed) yield Buffer.from(transformed);
-  };
-
-  if (safeOffset > 0) {
-    for await (const chunk of fs.createReadStream(filePath, { start: 0, end: safeOffset - 1 })) {
-      yield* emit(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    }
-  }
-  yield* emit(injection);
-  if (safeOffset < sourceSize) {
-    for await (const chunk of fs.createReadStream(filePath, { start: safeOffset, end: sourceSize - 1 })) {
-      yield* emit(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    }
-  }
-
-  const decodedTail = decoder.end();
-  const tail = annotator.push(decodedTail, true);
-  if (tail) yield Buffer.from(tail);
 }

@@ -987,12 +987,19 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(res.headers.get('content-range')).toBe(`bytes */${FILE_SIZE}`);
   });
 
-  it('does not stream small transformed HTML files (HTML returns full 200 without Accept-Ranges)', async () => {
+  // HTML transport semantics do not depend on size either: a seven-byte
+  // document gets the same byte ranges a multi-megabyte one does, addressed
+  // over the exact bytes the read returns.
+  it('serves small HTML with the same range semantics as large HTML', async () => {
     const res = await fetch(rawUrl('page.html'));
     expect(res.status).toBe(200);
-    expect(res.headers.get('accept-ranges')).toBeNull();
-    const text = await res.text();
-    expect(text).toBe('<html/>');
+    expect(res.headers.get('accept-ranges')).toBe('bytes');
+    expect(await res.text()).toBe('<html/>');
+
+    const partial = await fetch(rawUrl('page.html'), { headers: { Range: 'bytes=1-4' } });
+    expect(partial.status).toBe(206);
+    expect(partial.headers.get('content-range')).toBe('bytes 1-4/7');
+    expect(await partial.text()).toBe('html');
   });
 
   it('returns a truncated text preview for large HTML without reading the full file', async () => {

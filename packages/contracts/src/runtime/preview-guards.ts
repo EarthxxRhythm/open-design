@@ -10,11 +10,6 @@ export const PREVIEW_REDIRECT_GUARD_MAX_HOPS = 15;
 export const PREVIEW_REDIRECT_GUARD_WINDOW_MS = 4000;
 export const PREVIEW_REDIRECT_GUARD_SELF_REFRESH_MIN_DELAY_MS = 2000;
 export const PREVIEW_REDIRECT_LOOP_MESSAGE = 'od:redirect-loop-blocked';
-/**
- * Above this size the daemon injects URL-preview bridges with a composite
- * source-prefix/injection/source-suffix stream instead of buffering the HTML.
- */
-export const PREVIEW_URL_GUARD_MAX_HTML_BYTES = 2 * 1024 * 1024;
 
 export function previewHtmlNeedsFocusGuard(source: string): boolean {
   if (/\.\s*focus\s*\(/i.test(source)) return true;

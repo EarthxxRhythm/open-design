@@ -3,10 +3,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import {
-  scanHtmlHeadForStreamingInjection,
-  streamFileWithInjectionAndManualEditSourceAnnotations,
-} from '../../src/http/html-stream-injection.js';
+import { scanHtmlHeadForStreamingInjection } from '../../src/http/html-stream-injection.js';
+import { streamHtmlPreviewDocumentWithManualEditSource } from '../../src/http/html-preview-document.js';
 
 describe('scanHtmlHeadForStreamingInjection', () => {
   const dirs: string[] = [];
@@ -32,11 +30,9 @@ describe('scanHtmlHeadForStreamingInjection', () => {
     const filePath = path.join(dir, 'index.html');
     await writeFile(filePath, source);
     const chunks: Buffer[] = [];
-    for await (const chunk of streamFileWithInjectionAndManualEditSourceAnnotations(
-      filePath,
-      Buffer.byteLength(source),
-      insertionOffset,
-      Buffer.from(injection),
+    for await (const chunk of streamHtmlPreviewDocumentWithManualEditSource(
+      { kind: 'file', filePath, size: Buffer.byteLength(source) },
+      [{ offset: insertionOffset, deleteLength: 0, insert: Buffer.from(injection) }],
     )) chunks.push(chunk);
     return Buffer.concat(chunks).toString('utf8');
   }

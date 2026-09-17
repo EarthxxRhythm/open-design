@@ -2,9 +2,9 @@
 //
 // Full-screen presentation must act on the document that is already running at
 // its real project URL, so the bridge has to arrive through the same
-// `odPreviewBridge=` negotiation as scroll/selection/snapshot — on the buffered
-// path and on the streamed path for large decks alike — and must stay out of
-// responses that did not ask for it.
+// `odPreviewBridge=` negotiation as scroll/selection/snapshot — for a small deck
+// and a multi-megabyte one alike — and must stay out of responses that did not
+// ask for it.
 
 import http from 'node:http';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -12,10 +12,10 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { DECK_PRESENTATION_BRIDGE_MARKER } from '@open-design/contracts/runtime/deck-presentation';
-import { PREVIEW_URL_GUARD_MAX_HTML_BYTES } from '@open-design/contracts/runtime/preview-guards';
 import { startServer } from '../src/server.js';
 
-const PAD = 'x'.repeat(PREVIEW_URL_GUARD_MAX_HTML_BYTES + 256);
+const LARGE_DOCUMENT_BYTES = 2 * 1024 * 1024;
+const PAD = 'x'.repeat(LARGE_DOCUMENT_BYTES + 256);
 
 
 /**
@@ -108,11 +108,11 @@ describe('deck presentation bridge injection', () => {
     expect(html.split(DECK_PRESENTATION_BRIDGE_MARKER)).toHaveLength(2);
   });
 
-  it('streams the bridge into a deck too large to buffer', async () => {
+  it('installs the bridge into a multi-megabyte deck', async () => {
     const response = await fetch(`${rawUrl('large-deck.html')}?odPreviewBridge=presentation`);
     expect(response.status).toBe(200);
     const html = await response.text();
-    expect(html.length).toBeGreaterThan(PREVIEW_URL_GUARD_MAX_HTML_BYTES);
+    expect(html.length).toBeGreaterThan(LARGE_DOCUMENT_BYTES);
     expect(html).toContain(DECK_PRESENTATION_BRIDGE_MARKER);
     expect(html).toContain(PAD);
   });

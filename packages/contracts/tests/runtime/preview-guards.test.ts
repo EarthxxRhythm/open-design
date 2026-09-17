@@ -3,7 +3,6 @@ import {
   buildPreviewFocusGuard,
   buildPreviewRedirectGuard,
   buildPreviewSandboxShim,
-  PREVIEW_URL_GUARD_MAX_HTML_BYTES,
   previewHtmlHasLoadTimeLocationNavigation,
   previewHtmlNeedsFocusGuard,
   previewHtmlNeedsPoweredPreview,
@@ -52,9 +51,5 @@ describe('preview document guards', () => {
     expect(previewHtmlNeedsPoweredPreview('<script src="./support.js"></script>')).toBe(false);
     expect(previewHtmlNeedsPoweredPreview('<script type="text/babel">const value = 1;</script>')).toBe(false);
     expect(previewHtmlNeedsPoweredPreview('<main>Static document</main>')).toBe(false);
-  });
-
-  it('keeps the URL injection limit aligned with the streaming boundary', () => {
-    expect(PREVIEW_URL_GUARD_MAX_HTML_BYTES).toBe(2 * 1024 * 1024);
   });
 });
