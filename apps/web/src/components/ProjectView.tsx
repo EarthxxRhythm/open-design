@@ -327,13 +327,8 @@ import { persistCommentAnchors } from '../collab/comment-anchor-client';
 import type { AnchorWriteBack } from '../comments';
 import { PluginDetailsModal } from './PluginDetailsModal';
 import { DesignSystemPreviewModal } from './DesignSystemPreviewModal';
-<<<<<<< HEAD
 import { ChatPane } from './ChatPane';
-=======
-import { ChatPane, foldStrategyTaskTurns } from './ChatPane';
-import { trailingMessageIgnoringHostCards } from '../runtime/chat/host-authored-message';
 import historyDockStyles from './chat/ConversationHistoryDock.module.css';
->>>>>>> 7245f543a7 (feat(web): land the Home entry refresh (feat/home-entry-refresh → main) (#8208))
 import type { ChatSendMeta, ChatSendOutcome } from './ChatComposer';
 import {
   CritiqueTheaterMount,
