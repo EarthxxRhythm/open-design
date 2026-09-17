@@ -25,6 +25,7 @@ import {
   type DaemonAgentReconnectState,
   type DaemonAgentRetryState,
   type DaemonReconnectState,
+  createStrategyTaskBlockedError,
   fetchChatRunStatus,
   GENERIC_DAEMON_DISCONNECT_CODE,
   GENERIC_DAEMON_DISCONNECT_MESSAGE,
@@ -44,7 +45,9 @@ import {
   settledSignalFromMessages,
 } from '../runtime/chat/reconnect-state';
 import { forkBoundaryMessageIndex } from '../runtime/chat/fork-boundary';
+import { assistantMessageNeverHadARun } from '../runtime/chat/host-authored-message';
 import { resolveRecoveryActionBlockReason } from '../runtime/chat/recovery-gating';
+import { canRetainSuccessfulRunForBlockedStrategy } from '../runtime/blocked-strategy-result';
 import { loadConversationTranscript } from '../state/load-conversation-transcript';
 import { normalizeCustomReason } from '@open-design/contracts/analytics';
 import {
@@ -76,6 +79,7 @@ import { requestAmrArtifactUpgrade } from '../runtime/amr-artifact-upgrade';
 import {
   resolveQuestionFormStrategyTaskExecutionId,
   strategySettledMessageFields,
+  strategyTaskParkedOnSucceededRun,
   strategyTaskRunIndex,
 } from '../runtime/strategy-question-continuation';
 import {
@@ -644,6 +648,7 @@ function mergeServerMessageWithLocal(
   server: ChatMessage,
   local?: ChatMessage,
   absorbedASuccessorRun = false,
+  locallyStreaming = false,
 ): ChatMessage {
   if (!local) return server;
   const merged: ChatMessage = { ...server };
@@ -673,6 +678,19 @@ function mergeServerMessageWithLocal(
     merged.preTurnFileNames = local.preTurnFileNames;
   }
   if (!server.lastRunEventId && local.lastRunEventId) {
+    merged.lastRunEventId = local.lastRunEventId;
+  }
+  if (
+    locallyStreaming && !absorbedASuccessorRun
+    && local.role === 'assistant' && server.role === 'assistant'
+    && local.runId && local.runId === server.runId
+  ) {
+    // A live stream owns its transcript until its controller releases it.
+    // A GET can be ahead of both the SSE reader and its pending text buffer;
+    // accepting that text here would append the same frames again on flush.
+    // Keep the event cursor with the transcript, without deduplicating prose.
+    merged.content = local.content;
+    merged.events = local.events;
     merged.lastRunEventId = local.lastRunEventId;
   }
   if (!server.startedAt && local.startedAt) {
@@ -726,6 +744,7 @@ function mergeServerMessageWithLocal(
 export function mergeServerMessagesIntoConversation(
   current: ChatMessage[],
   serverMessages: ChatMessage[],
+  options: { liveAssistantMessageIds?: ReadonlySet<string> } = {},
 ): ChatMessage[] {
   const currentById = new Map(current.map((message) => [message.id, message]));
   const serverIds = new Set(serverMessages.map((message) => message.id));
@@ -735,6 +754,7 @@ export function mergeServerMessagesIntoConversation(
       message,
       currentById.get(message.id),
       absorbed.has(message.id),
+      options.liveAssistantMessageIds?.has(message.id) === true,
     ),
   );
   for (const message of current) {
@@ -2781,12 +2801,13 @@ export function ProjectView({
     runId: string | null;
     detached: boolean;
     files: Map<string, ProjectFile>;
-    dispose: () => void;
+    dispose: (force?: boolean) => void;
+    retain: () => () => void;
   }>());
   useEffect(() => () => {
     for (const run of manualFileWritesByRunRef.current.values()) {
       if (run.projectId === project.id && run.authorityKey === projectRunAuthorityKey) {
-        run.dispose();
+        run.dispose(true);
       }
     }
   }, [project.id, projectRunAuthorityKey]);
@@ -4064,6 +4085,7 @@ export function ProjectView({
       }
     }
     const preservingLiveConversation = liveReloadMessageIds.size > 0;
+    const liveReloadController = preservingLiveConversation ? abortRef.current : null;
     // Reset the initialized flag so auto-send waits for this authoritative DB
     // read to settle before checking messages.length. A confirmed readable
     // scope for the same principal may keep already-loaded history visible;
@@ -4122,11 +4144,25 @@ export function ProjectView({
           transcriptController.signal,
         );
         if (cancelled) return;
+        // Capture ownership when this GET is admitted, before queuing React's
+        // updater. The same batch may next clear the controller on terminal
+        // status and enqueue its final buffer flush. Reading refs inside the
+        // delayed updater would accept the full GET and then append that flush
+        // again. A GET admitted after termination still takes normal history.
+        const liveAssistantMessageIds =
+          liveReloadController !== null
+          && abortRef.current === liveReloadController
+          && !liveReloadController.signal.aborted
+          && streamingConversationIdRef.current === activeConversationId
+          && projectResourceAuthorityRef.current !== 'denied'
+            ? liveReloadMessageIds
+            : undefined;
         setMessages((current) =>
           preservingLiveConversation
             ? mergeServerMessagesIntoConversation(
                 current.filter((message) => liveReloadMessageIds.has(message.id)),
                 list,
+                { liveAssistantMessageIds },
               )
             : normalizeConversationMessageOrder(list),
         );
@@ -4610,21 +4646,50 @@ export function ProjectView({
       for (const [name, file] of previous.files) files.set(name, file);
       previous.dispose();
     }
-    const dispose = () => {
+    let retained = 0;
+    let generation = 0;
+    let disposalRequested = false;
+    let disposed = false;
+    const onAbort = () => dispose(true);
+    const dispose = (force = false) => {
+      if (disposed) return;
+      if (!force && retained > 0) {
+        disposalRequested = true;
+        return;
+      }
+      disposed = true;
       manualFileWritesByRunRef.current.delete(controller);
-      controller.signal.removeEventListener('abort', dispose);
+      controller.signal.removeEventListener('abort', onAbort);
     };
     const entry = {
       projectId: project.id, authorityKey: projectRunAuthorityKey,
       conversationId, runId, detached: false, files, dispose,
+      retain: () => {
+        if (disposed) return () => {};
+        const retainedGeneration = generation;
+        retained += 1;
+        let released = false;
+        return () => {
+          if (released || generation !== retainedGeneration) return;
+          released = true;
+          retained -= 1;
+          if (retained === 0 && disposalRequested) dispose();
+        };
+      },
     };
     manualFileWritesByRunRef.current.set(controller, entry);
-    controller.signal.addEventListener('abort', dispose, { once: true });
+    controller.signal.addEventListener('abort', onAbort, { once: true });
     return {
       bindRun: (nextRunId: string) => {
         // A strategy successor can reuse the assistant and transport, but its
         // physical run must not inherit a predecessor's ownership receipts.
-        if (entry.runId && entry.runId !== nextRunId) files.clear();
+        if (entry.runId && entry.runId !== nextRunId) {
+          files.clear();
+          // An older recovery's finally must not dispose a successor's writer.
+          generation += 1;
+          retained = 0;
+          disposalRequested = false;
+        }
         entry.runId = nextRunId;
       },
       release: (recoverable = false) => {
@@ -4632,7 +4697,7 @@ export function ProjectView({
           // Keep observing real writes between transports, including during
           // the status probe/backoff. Only the same scoped physical run adopts it.
           entry.detached = true;
-          controller.signal.removeEventListener('abort', dispose);
+          controller.signal.removeEventListener('abort', onAbort);
         } else dispose();
       },
     };
@@ -4840,8 +4905,15 @@ export function ProjectView({
       art: Artifact,
       projectFilesSnapshot?: ProjectFile[],
       sourceText?: string,
-      options: { pointerMinMtime?: number } = {},
+      options: {
+        pointerMinMtime?: number;
+        isCurrent?: () => boolean;
+        shouldOpen?: () => boolean;
+      } = {},
     ) => {
+      if (options.isCurrent && !options.isCurrent()) {
+        return { ok: false as const, cancelled: true as const, error: undefined };
+      }
       const persistedHtml = resolvePersistedArtifactHtml({
         artifactHtml: art.html,
         identifier: art.identifier,
@@ -4884,7 +4956,7 @@ export function ProjectView({
             return { ok: true as const, fileName: pointerTarget };
           }
           savedArtifactRef.current = pointerTarget;
-          requestOpenFile(pointerTarget);
+          if (options.shouldOpen?.() !== false) requestOpenFile(pointerTarget);
           return { ok: true as const, fileName: pointerTarget };
         }
       }
@@ -4933,6 +5005,11 @@ export function ProjectView({
       const file = await writeProjectTextFile(project.id, fileName, artifactToPersist.html, {
         artifactManifest: manifest ?? undefined,
       }, projectRunWorkspaceContext);
+      // The server may have accepted the file before navigation, a new turn,
+      // or access revocation. Do not apply that old response to the current UI.
+      if (options.isCurrent && !options.isCurrent()) {
+        return { ok: false as const, cancelled: true as const, error: undefined };
+      }
       if (file) {
         savedArtifactRef.current = file.name;
         bumpFilesRefresh();
@@ -4949,7 +5026,8 @@ export function ProjectView({
         // Auto-open the freshly-persisted artifact as a tab so the user
         // sees it without an extra click. The Write-tool path already does
         // this for tool-emitted files; this handles the artifact-tag path.
-        requestOpenFile(file.name);
+        // Evaluate at response time: a user can select another tab during POST.
+        if (options.shouldOpen?.() !== false) requestOpenFile(file.name);
         return { ok: true as const, fileName: file.name };
       } else {
         // writeProjectTextFile collapses all failure paths (non-OK HTTP
@@ -6510,8 +6588,9 @@ export function ProjectView({
           recoverableGenericDisconnectFailed;
         // A predecessor can be persisted as physically succeeded immediately
         // before the logical task advances. Probe daemon task truth even when
-        // this row otherwise looks terminal; completed task rows bail out
-        // below without replaying their final Run again.
+        // this row otherwise looks terminal; completed task rows, and rows whose
+        // task is parked on the user, bail out below without replaying their
+        // final Run again.
         const needsTaskProjectionProbe = Boolean(
           message.strategyTaskExecutionId
           && message.runId
@@ -6685,8 +6764,46 @@ export function ProjectView({
           needsTaskProjectionProbe
           && !needsReplayForMessage
           && !taskRunAdvanced
-          && (!status.strategyTask || status.strategyTask.terminal)
+          && (
+            !status.strategyTask
+            || status.strategyTask.terminal
+            || strategyTaskParkedOnSucceededRun(status, runId)
+          )
         ) {
+          const strategyTask = status.strategyTask;
+          if (
+            status.status === 'succeeded'
+            && status.id === runId
+            && status.projectId === project.id
+            && status.conversationId === reattachConversationId
+            && status.assistantMessageId === message.id
+            && strategyTask?.outcome === 'blocked'
+            && strategyTask.taskExecutionId === message.strategyTaskExecutionId
+            && strategyTask.activeRunId === runId
+            && !canRetainSuccessfulRunForBlockedStrategy(
+              status.status, strategyTask, status.deliverableValid,
+              status.projectDeliverableValid, message.content,
+            )
+          ) {
+            // A cold history row keeps the daemon's physical success. Restore
+            // the same logical failure/reason as live SSE from this existing
+            // authorized probe, without rewriting the persisted physical row.
+            const failure = createStrategyTaskBlockedError(strategyTask);
+            updateMessageById(message.id, (prev) => {
+              if (
+                activeConversationIdRef.current !== reattachConversationId
+                || projectRunAuthorityKeyRef.current !== projectRunAuthorityKey
+                || prev.runId !== runId
+                || prev.strategyTaskExecutionId !== strategyTask.taskExecutionId
+                || prev.runStatus !== 'succeeded'
+              ) return prev;
+              return appendErrorStatusEvent({
+                ...prev,
+                ...(strategySettledMessageFields(strategyTask) ?? {}),
+                runStatus: 'failed',
+              }, failure.message, failure.code);
+            });
+          }
           completedReattachRunsRef.current.add(runId);
           findDetachedManualFileWrites(reattachConversationId, runId)?.dispose();
           continue;
@@ -7918,6 +8035,7 @@ export function ProjectView({
     daemonLive,
     config.mode,
     activeConversationId,
+    projectRunAuthorityKey,
     currentProject.metadata,
     streaming,
     messages,
@@ -7952,7 +8070,25 @@ export function ProjectView({
     const recoverArtifacts = async () => {
       if (recovering) return;
       recovering = true;
+      const retainedReceipts = new Map<string, NonNullable<ReturnType<typeof findDetachedManualFileWrites>>>();
+      const releaseReceipts: Array<() => void> = [];
+      const retainReceipt = (runId: string) => {
+        const existing = retainedReceipts.get(runId);
+        if (existing) return existing;
+        const receipt = findDetachedManualFileWrites(activeConversationId, runId);
+        if (receipt) {
+          retainedReceipts.set(runId, receipt);
+          releaseReceipts.push(receipt.retain());
+        }
+        return receipt;
+      };
       try {
+        // Pin the live writer before the first HTTP await. A sibling terminal
+        // finalizer may accept an earlier output meanwhile; late manual saves
+        // still have to update this same run's proof until recovery finishes.
+        for (const message of messagesRef.current) {
+          if (message.runId && hasRecoverableArtifactMessage(message)) retainReceipt(message.runId);
+        }
         const serverMessages = await listMessages(
           project.id,
           activeConversationId,
@@ -7968,6 +8104,32 @@ export function ProjectView({
           if (recoveredArtifactMessagesRef.current.has(message.id)) continue;
           const runId = message.runId;
           if (!runId) continue;
+          retainReceipt(runId);
+          const recoveryAuthority = canonicalProjectRunWorkspaceContextRef.current;
+          const latestAssistantMessage = () => {
+            for (let index = messagesRef.current.length - 1; index >= 0; index -= 1) {
+              const item = messagesRef.current[index];
+              // A host memory card belongs to the preceding turn; it does not
+              // supersede that run's pending artifact persistence.
+              if (item?.role === 'assistant' && !assistantMessageNeverHadARun(item)) return item;
+            }
+            return undefined;
+          };
+          const latestAssistantAtStart = latestAssistantMessage();
+          // Match the terminal reattach policy: a deliberate user selection
+          // wins over automatic recovery, without canceling file persistence.
+          const shouldOpenRecoveredArtifact = () => !userTookOverPreviewRef.current;
+          const recoveryTargetIsCurrent = () => {
+            const latestAssistant = latestAssistantMessage();
+            return mountedRef.current
+              && projectIdRef.current === project.id
+              && activeConversationIdRef.current === activeConversationId
+              && canonicalProjectRunWorkspaceContextRef.current === recoveryAuthority
+              && (projectResourceAuthorityRef.current === 'local' || projectResourceAuthorityRef.current === 'workspace')
+              && latestAssistant?.id === latestAssistantAtStart?.id
+              && latestAssistant?.runId === latestAssistantAtStart?.runId
+              && messagesRef.current.some((item) => item.id === message.id && item.runId === runId);
+          };
 
           const sourceText = message.content.trim().length > 0
             ? message.content
@@ -8008,6 +8170,7 @@ export function ProjectView({
             runId,
             projectRunWorkspaceContext,
           ).catch(() => null);
+          if (cancelled || !recoveryTargetIsCurrent()) return;
           let nextFiles = await refreshProjectFiles();
           if (cancelled) return;
           const beforeFileNames = new Set(
@@ -8028,17 +8191,23 @@ export function ProjectView({
               nextFiles,
               { minMtime: runStartedAt },
             );
+          if (!recoveryTargetIsCurrent()) return;
           if (recoveredExistingArtifact) {
             savedArtifactRef.current = recoveredExistingArtifact.name;
-            requestOpenFile(recoveredExistingArtifact.name);
+            if (shouldOpenRecoveredArtifact()) requestOpenFile(recoveredExistingArtifact.name);
           } else {
             savedArtifactRef.current = null;
             await persistArtifact(
               artifactToPersist,
               nextFiles,
               sourceText,
-              { pointerMinMtime: runStartedAt },
+              {
+                pointerMinMtime: runStartedAt,
+                isCurrent: recoveryTargetIsCurrent,
+                shouldOpen: shouldOpenRecoveredArtifact,
+              },
             );
+            if (!recoveryTargetIsCurrent()) return;
             nextFiles = await refreshProjectFiles();
             recoveredExistingArtifact = findExistingArtifactProjectFile(
               artifactToPersist,
@@ -8046,8 +8215,12 @@ export function ProjectView({
               { minMtime: runStartedAt },
             );
           }
-          if (cancelled) return;
-          const recoveredManualFileWrites = findDetachedManualFileWrites(activeConversationId, runId);
+          // Another terminal finalizer can accept an earlier output while this
+          // artifact POST is pending. That changes recovery eligibility and
+          // cleans up this effect, but the successful write still belongs to
+          // this same scoped run and must finish its message projection.
+          if (!recoveryTargetIsCurrent() || (cancelled && !recoveredExistingArtifact)) return;
+          const recoveredManualFileWrites = retainReceipt(runId);
           const manualWrites = recoveredManualFileWrites?.files ?? new Map<string, ProjectFile>();
           const agentPaths = [
             ...extractTouchedFilePathsFromEvents(message.events),
@@ -8067,7 +8240,9 @@ export function ProjectView({
             ...autoOpenArtifactOptions,
             preTurnFileNames: beforeFileNames,
           });
-          if (producedArtifactToOpen) requestOpenFile(producedArtifactToOpen);
+          if (producedArtifactToOpen && shouldOpenRecoveredArtifact()) {
+            requestOpenFile(producedArtifactToOpen);
+          }
           // This message's persisted runStatus was already terminal (a
           // precondition of hasRecoverableArtifactMessage); when it has no
           // stored endedAt, fall back to the daemon's authoritative terminal
@@ -8078,9 +8253,19 @@ export function ProjectView({
             latestRunStatus,
             projectRunWorkspaceContext,
           );
+          if (!recoveryTargetIsCurrent()) return;
+          const strategyTask = latestRunStatus?.strategyTask;
+          const taskBlocked = strategyTask?.terminal === true && strategyTask.outcome === 'blocked';
+          // Saving the inline file repairs delivery, not the strategy verdict.
+          // Apply the same success exceptions as the normal provider path.
+          const blockedRunCanSucceed = latestRunStatus != null
+            && canRetainSuccessfulRunForBlockedStrategy(
+              latestRunStatus.status, strategyTask, latestRunStatus.deliverableValid,
+              latestRunStatus.projectDeliverableValid, sourceText,
+            );
           updateMessageById(
             message.id,
-            (prev) => ({
+            (prev) => prev.runId !== runId ? prev : ({
               ...prev,
               content: sourceText,
               producedFiles: produced,
@@ -8095,6 +8280,7 @@ export function ProjectView({
               resultDeliveryState: 'delivered',
               runStatus:
                 latestRunStatus?.status === 'succeeded'
+                  && ((prev.strategyTaskBlocked !== true && !taskBlocked) || blockedRunCanSucceed)
                   ? 'succeeded'
                   : prev.runStatus,
               endedAt: prev.endedAt ?? recoveredArtifactEndedAt,
@@ -8108,6 +8294,7 @@ export function ProjectView({
           onProjectsRefresh();
         }
       } finally {
+        for (const release of releaseReceipts) release();
         recovering = false;
       }
     };
@@ -9488,6 +9675,27 @@ export function ProjectView({
             };
           });
           const finalizingRunId = currentRunId;
+          // File persistence can finish after the user has selected another
+          // preview or moved on to a new run. Recheck focus ownership at each
+          // open boundary without interrupting this run's output persistence.
+          const shouldOpenCompletedArtifact = () => {
+            let latestRunMessage: ChatMessage | undefined;
+            for (let index = messagesRef.current.length - 1; index >= 0; index -= 1) {
+              const message = messagesRef.current[index];
+              if (message?.role === 'assistant' && !assistantMessageNeverHadARun(message)) {
+                latestRunMessage = message;
+                break;
+              }
+            }
+            return mountedRef.current
+              && !userTookOverPreviewRef.current
+              && !supersededRunsRef.current.has(controller)
+              && projectIdRef.current === project.id
+              && activeConversationIdRef.current === runConversationId
+              && canonicalProjectRunWorkspaceContextRef.current.authorityKey === projectRunAuthorityKey
+              && projectResourceAuthorityRef.current !== 'denied'
+              && latestRunMessage?.id === assistantId;
+          };
           if (finalizingRunId) finalizingLocalRunIdsRef.current.add(finalizingRunId);
           if (runCommentAttachments.length > 0) {
             void patchAttachedStatuses(runCommentAttachments, 'needs_review');
@@ -9539,9 +9747,11 @@ export function ProjectView({
                   artifactPersistenceSucceeded = true;
                   savedArtifactRef.current = sameTurnWrite.name;
                   completionSelectedAutoOpen = true;
-                  requestOpenFile(sameTurnWrite.name);
+                  if (shouldOpenCompletedArtifact()) requestOpenFile(sameTurnWrite.name);
                 } else {
-                  const persistence = await persistArtifact(artifactToPersist, nextFiles, finalText);
+                  const persistence = await persistArtifact(artifactToPersist, nextFiles, finalText, {
+                    shouldOpen: shouldOpenCompletedArtifact,
+                  });
                   if (persistence.ok) artifactPersistenceSucceeded = true;
                   else artifactPersistenceError = persistence.error;
                   nextFiles = await refreshProjectFiles({ fresh: true });
@@ -9627,7 +9837,9 @@ export function ProjectView({
               );
               if (producedArtifactToOpen) {
                 completionSelectedAutoOpen = true;
-                requestOpenTurnArtifacts(turnArtifacts.open, producedArtifactToOpen);
+                if (shouldOpenCompletedArtifact()) {
+                  requestOpenTurnArtifacts(turnArtifacts.open, producedArtifactToOpen);
+                }
               }
               const deliveryCandidate: ChatMessage = {
                 ...latestAssistantMsg,

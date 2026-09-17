@@ -292,7 +292,6 @@ const PREPARATION = 'Palette confirmed; prepare production.';
 const WORKING = 'Native production is running.';
 let conversationMessages: ChatMessage[];
 let strategyEnabled: boolean;
-let replayCompleted: boolean;
 let mappingMode: 'valid' | 'legacy' | 'wrong-run' | 'different-task';
 
 function projection(stage: 'request' | 'clarification' | 'production', runId: string): StrategyTaskProjectionV2 {
@@ -331,7 +330,6 @@ beforeEach(() => {
   window.localStorage.clear();
   window.sessionStorage.clear();
   strategyEnabled = true;
-  replayCompleted = false;
   mappingMode = 'valid';
   conversationMessages = initialMessages(true);
   workspaceScopeMocks.ambientContext = workspaceScopeMocks.personalContext();
@@ -354,10 +352,11 @@ beforeEach(() => {
   listActiveChatRuns.mockResolvedValue([]);
   listProjectRuns.mockResolvedValue([]);
   saveMessage.mockImplementation(async (_project: string, _conversation: string, message: ChatMessage) => message);
-  // A succeeded request with a non-terminal clarification_required task is
-  // legitimately replayed by the host before the user can answer. Match its
-  // real payload and completion; an undefined mock promise would erase the
-  // form during hydration and throw in ProjectView's .catch handler.
+  // A succeeded request whose task is parked on the user
+  // (clarification_required) is sealed after the status probe, not replayed
+  // (OPEND-3230). Keep a real replay payload anyway: if the host ever replays
+  // it again, the form must not be erased by an undefined mock promise before
+  // answerAndStartProduction rejects the replay.
   reattachDaemonRun.mockImplementation(async (options: DaemonReattachOptions) => {
     expect(options.runId).toBe('request-run');
     options.handlers.onAgentEvent({ kind: 'done_key', key: 'request-key' });
@@ -365,7 +364,6 @@ beforeEach(() => {
     options.handlers.onAgentEvent({ kind: 'text', text: FORM });
     options.onRunStatus?.('succeeded');
     await options.handlers.onDone(FORM);
-    replayCompleted = true;
   });
   streamViaDaemon.mockImplementation(() => new Promise<void>(() => {}));
   checkAmrBalanceGate.mockResolvedValue({ kind: 'allow' });
@@ -379,7 +377,16 @@ afterEach(() => {
 });
 
 async function answerAndStartProduction() {
-  if (strategyEnabled) await waitFor(() => expect(replayCompleted).toBe(true));
+  if (strategyEnabled) {
+    // Let hydration's daemon task probe for the parked request settle before
+    // answering, so the answer races neither the probe nor a replay.
+    await waitFor(() => expect(fetchChatRunStatus.mock.calls.map((call) => call[0])).toContain('request-run'));
+    await act(async () => {
+      await Promise.allSettled(fetchChatRunStatus.mock.results.map((result) => result.value));
+    });
+    await act(async () => {});
+    expect(reattachDaemonRun).not.toHaveBeenCalled();
+  }
   expect(streamViaDaemon).not.toHaveBeenCalled();
   const warm = await screen.findByRole('radio', { name: 'Warm' });
   fireEvent.click(warm);
