@@ -88,6 +88,8 @@ interface Props {
   amrSessionState?: import('@open-design/contracts').AmrSessionState;
   /** Forwarded to EntryShell for personal free campaign audience resolution. */
   amrAccountPlan?: string | null;
+  /** Stable account boundary for CMS authorization instances. */
+  amrAccountId?: string | null;
   // Execution / model-switching context forwarded to the EntryShell so the
   // sticky top-bar can expose the active CLI/BYOK + model and persist
   // changes through the same channels as the project view.
@@ -270,6 +272,7 @@ export function EntryView({
   amrLoggedIn,
   amrSessionState,
   amrAccountPlan,
+  amrAccountId,
   config,
   providerModelsCache,
   onProviderModelsCacheChange,
@@ -406,6 +409,7 @@ export function EntryView({
       {...(amrLoggedIn !== undefined ? { amrLoggedIn } : {})}
       {...(amrSessionState !== undefined ? { amrSessionState } : {})}
       {...(amrAccountPlan !== undefined ? { amrAccountPlan } : {})}
+      {...(amrAccountId !== undefined ? { amrAccountId } : {})}
       daemonLive={daemonLive}
       onModeChange={onModeChange}
       onAgentChange={onAgentChange}

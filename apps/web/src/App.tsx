@@ -95,6 +95,8 @@ import {
   type SettingsHighlight,
 } from './components/SettingsDialog';
 import { PrivacyConsentModal } from './components/PrivacyConsentModal';
+import { TestCampaignModal } from './components/TestCampaignModal';
+import { ProductionCampaignModal } from './components/ProductionCampaignModal';
 import {
   clearHomeComposerAttachments,
   stashHomeComposerAttachments,
@@ -5586,6 +5588,7 @@ function AppInner() {
           || amrLoginStatus?.user?.plan?.trim()
           || null
         }
+        amrAccountId={amrLoginStatus?.user?.id ?? amrLoginStatus?.credentialRevision ?? null}
         config={config}
         providerModelsCache={providerModelsCache}
         onProviderModelsCacheChange={setProviderModelsCache}
@@ -5729,6 +5732,7 @@ function AppInner() {
               || amrLoginStatus?.user?.plan?.trim()
               || null
             }
+            amrAccountId={amrLoginStatus?.user?.id ?? amrLoginStatus?.credentialRevision ?? null}
             metricsConsent={config.telemetry?.metrics === true}
             installationId={config.installationId}
           />
@@ -5749,6 +5753,20 @@ function AppInner() {
           onOpenProject={handleOpenProject}
           dockLine
         />
+      )}
+      {/* Account restoration can finish while login/onboarding is still visible.
+          Keep campaign hosts out of that flow, independently of authentication. */}
+      {!(route.kind === 'home' && route.view === 'onboarding') && (
+        <>
+          <TestCampaignModal
+            authenticated={isAmrSessionAuthenticated(amrLoginStatus)}
+            sessionSubject={amrLoginStatus?.user?.id ?? null}
+          />
+          <ProductionCampaignModal
+            authenticated={isAmrSessionAuthenticated(amrLoginStatus)}
+            sessionSubject={amrLoginStatus?.user?.id ?? null}
+          />
+        </>
       )}
       <TooltipLayer />
       <UpdateDialog />
