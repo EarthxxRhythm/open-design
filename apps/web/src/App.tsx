@@ -2036,19 +2036,21 @@ function AppInner() {
     };
   }, [applyAmrLoginStatus, clearAmrAuthRetryContinuation, daemonLive]);
 
-  // Cold-start timing only: send the campaign modal and account-badge decision
-  // requests beside the login status above instead of after it. Display is
-  // unchanged — each host still waits for its own sign-in gates, and the
-  // loader drops unused responses on any login status change. Onboarding
-  // renders no campaign host, so it prefetches nothing.
-  const campaignPrefetched = useRef(false);
-  const onboardingVisible = route.kind === 'home' && route.view === 'onboarding';
+  // Cold-start timing only: at launch, send the campaign modal and account-badge
+  // decision requests beside the login status above instead of after it.
+  // Display is unchanged — each host still waits for its own sign-in gates, and
+  // the loader drops unused responses on any login status change. It runs once,
+  // for the first render only: leaving onboarding mounts the hosts in the same
+  // commit, and their own requests already start before this effect would.
+  const campaignPrefetchChecked = useRef(false);
+  const launchedOnOnboarding = route.kind === 'home' && route.view === 'onboarding';
   useEffect(() => {
-    if (campaignPrefetched.current || onboardingVisible || !locale) return;
+    if (campaignPrefetchChecked.current) return;
+    campaignPrefetchChecked.current = true;
+    if (launchedOnOnboarding || !locale) return;
     if (getOpenDesignHost()?.client.type !== 'desktop') return;
-    campaignPrefetched.current = true;
     prefetchProductionTouchpointDecisions(['opend.home.campaign-modal', 'opend.home.account-badge'], locale);
-  }, [locale, onboardingVisible]);
+  }, [launchedOnOnboarding, locale]);
 
   useEffect(() => {
     analytics.setUserId(

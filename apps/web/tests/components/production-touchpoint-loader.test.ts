@@ -60,8 +60,30 @@ describe("production touchpoint decision loader", () => {
 			expect(fetchMock).toHaveBeenCalledTimes(2);
 			await load();
 		});
-		it("never reuses a signed-out or failed prefetch", async () => {
-			const fetchMock = vi.fn().mockResolvedValueOnce(new Response(null, { status: 401 })).mockResolvedValue(ok());
+		it("keeps the prefetch for the retry of a load aborted while it waited", async () => {
+			const fetchMock = vi.fn().mockResolvedValueOnce(ok()).mockResolvedValue(new Response(null, { status: 404 }));
+			vi.stubGlobal("fetch", fetchMock);
+			prefetchProductionTouchpointDecisions([badge], "en-US");
+			const aborted = new AbortController();
+			const first = loadProductionTouchpointDecision(badge, "en-US", aborted.signal);
+			const retry = load();
+			aborted.abort();
+			await expect(first).rejects.toMatchObject({ name: "AbortError" });
+			expect(await retry).toMatchObject({ kind: "decision", value: { touchpointDecisionId: "prefetched" } });
+			expect(fetchMock).toHaveBeenCalledTimes(1);
+		});
+		it("reuses a signed-in no-decision answer instead of asking again", async () => {
+			const fetchMock = vi.fn().mockResolvedValueOnce(new Response(null, { status: 404 })).mockResolvedValue(ok());
+			vi.stubGlobal("fetch", fetchMock);
+			prefetchProductionTouchpointDecisions([badge], "en-US");
+			expect(await load()).toEqual({ kind: "no-decision" });
+			expect(fetchMock).toHaveBeenCalledTimes(1);
+		});
+		it.each([
+			["a signed-out", () => Promise.resolve(new Response(null, { status: 401 }))],
+			["a failed", () => Promise.reject(new TypeError("offline"))],
+		] as const)("never reuses %s prefetch", async (_name, first) => {
+			const fetchMock = vi.fn().mockImplementationOnce(first).mockResolvedValue(ok());
 			vi.stubGlobal("fetch", fetchMock);
 			prefetchProductionTouchpointDecisions([badge], "en-US");
 			expect(await load()).toMatchObject({ kind: "decision", ageMs: 0 });

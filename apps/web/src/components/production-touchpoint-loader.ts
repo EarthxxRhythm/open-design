@@ -39,7 +39,9 @@ const discardPrefetched = () => prefetched.clear();
  * Cold-start timing only: sends the first decision request beside the login
  * status instead of after it. It grants nothing — hosts still wait for their
  * own authentication gates, and a login status change discards every unused
- * response. Only a 200 is reused, once, for the same placement and locale.
+ * response. A prefetch is reused once, for the same placement and locale;
+ * a signed-out (401) or failed one is asked again, while a signed-in answer —
+ * including 404 "no campaign" — is final, so the host never pays two trips.
  */
 export function prefetchProductionTouchpointDecisions(placementKeys: readonly string[], locale: string): void {
 	window.removeEventListener(AMR_LOGIN_STATUS_EVENT, discardPrefetched);
@@ -51,12 +53,17 @@ export function prefetchProductionTouchpointDecisions(placementKeys: readonly st
 	}
 }
 
-async function takePrefetched(placementKey: string, locale: string, activeDecisionId?: string) {
+/** A load aborted while waiting leaves the prefetch for its retry; only the load that reads it consumes it. */
+async function takePrefetched(placementKey: string, locale: string, signal: AbortSignal, activeDecisionId?: string) {
 	const entry = prefetched.get(placementKey);
-	prefetched.delete(placementKey);
-	if (!entry || activeDecisionId || entry.locale !== locale || Date.now() - entry.startedAt > PREFETCH_TTL_MS) return null;
+	if (!entry || activeDecisionId || entry.locale !== locale || Date.now() - entry.startedAt > PREFETCH_TTL_MS) {
+		prefetched.delete(placementKey);
+		return null;
+	}
 	const response = await entry.response;
-	return response?.ok ? { response, ageMs: Date.now() - entry.startedAt } : null;
+	if (signal.aborted || prefetched.get(placementKey) !== entry) return null;
+	prefetched.delete(placementKey);
+	return response && response.status !== 401 ? { response, ageMs: Date.now() - entry.startedAt } : null;
 }
 
 /** Loads a production decision; only a server-authenticated 410 receipt revokes an active lease. */
@@ -65,7 +72,7 @@ export async function loadProductionTouchpointDecision(placementKey: string, loc
 	let ageMs = 0;
 	try {
 		// Without a pending prefetch the request starts synchronously, exactly as before.
-		const reused = prefetched.has(placementKey) ? await takePrefetched(placementKey, locale, activeDecisionId) : null;
+		const reused = prefetched.has(placementKey) ? await takePrefetched(placementKey, locale, signal, activeDecisionId) : null;
 		if (signal.aborted) throw new DOMException("aborted", "AbortError");
 		const query = new URLSearchParams({ placementKey, locale });
 		if (activeDecisionId) query.set("activeDecisionId", activeDecisionId);
