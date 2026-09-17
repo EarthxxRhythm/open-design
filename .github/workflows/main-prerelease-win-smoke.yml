@@ -112,6 +112,32 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         run: pnpm --filter @open-design/e2e test tests/packaged/codex-fixture.test.ts
 
+      # TEMPORARY OPEND-2809 diagnostic branch: fail before packaging if the same
+      # input cannot reach natural terminal in the Windows source daemon.
+      - name: Qualify Windows source daemon thumbnail lifecycle
+        id: source_thumbnail
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        run: |
+          pnpm --filter @open-design/daemon build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --filter @open-design/desktop build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --filter @open-design/web build:sidecar
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --filter @open-design/e2e test specs/dialog/thumbnail.spec.ts
+          exit $LASTEXITCODE
+
+      - name: Upload source daemon thumbnail diagnosis
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && steps.source_thumbnail.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: opend-2809-windows-source-diagnosis
+          path: .tmp/e2e/e2e-dialog-thumbnail-*/report
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Setup NSIS
         shell: pwsh
         run: |
