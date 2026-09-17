@@ -33,15 +33,21 @@
  * ② 壳外正文里的合法卡照旧走 `OdCardView`(OPEND-2607 防回归)。
  */
 
-import { cleanup, render } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { act, cleanup, render } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { AssistantMessage } from '../../../src/components/AssistantMessage';
-import { ThinkingMarkdown } from '../../../src/components/chat/ThinkingMarkdown';
+import {
+  ThinkingMarkdown,
+  THINKING_MARKDOWN_COMMIT_MS,
+} from '../../../src/components/chat/ThinkingMarkdown';
 import { memoryWrittenCardContent } from '../../../src/runtime/useMemoryWrittenCard';
 import type { ChatMessage } from '../../../src/types';
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 /** 合法记忆卡 —— 走**产线那支**生成器,形状变了这条要跟着红。 */
 const VALID_CARD = memoryWrittenCardContent(
@@ -120,6 +126,85 @@ describe('OPEND-2745 ① 流式:半截卡既不闪原文也不吞正文', () => 
       document.querySelector('[data-od-card="memory-applied"]'),
       '推理流里的卡被当噪音删掉了 —— 解析口径要和正文一致,不是「见 od-card 就吞」',
     ).not.toBeNull();
+  });
+});
+
+/**
+ * **卡片不是正在被敲出来的字 —— 它不进逐字化开。**
+ *
+ * `ThinkingMarkdown` 的化开根是外层那只 `<div ref={rootRef}>`,`useCharReveal`
+ * 会遍历**整棵子树**的文本节点。卡片渲染进这棵子树之后,流式期间卡片一闭合,
+ * 可见文本长度会跳一大截,化开逻辑会把**卡片内部**的文本节点当成「刚到的字」
+ * 去截短、往后追加 `data-char-reveal` span。
+ *
+ * 那正是 `useCharReveal` 文件头警告过的形状:那些节点是 React 建的、React 还要
+ * 接着更新,两边打架的表现是「后面的字更新不上去」或多出来的字永久留在正文里。
+ *
+ * 对照组是 `SayBlock`:它给每段散文单独发一个 `SayText`(化开根在 `SayText`
+ * **内部**),卡片天然落在所有化开根**之外** —— 所以壳内那条通道从来不需要处理这件事。
+ */
+describe('OPEND-2745 ① 流式:卡片不进逐字化开', () => {
+  const PROSE = '先看一下用户的偏好。';
+  const HALF_CARD = '<od-card type="memory-applied">{"summary":"已记';
+
+  /**
+   * 半截卡 → 卡片闭合(`tail` 是这一帧同时新写出来的散文)。
+   *
+   * **必须推进到第二帧**:挂载那一帧 `useCharReveal` 按「挂载即落定」原地返回,
+   * 一个 span 都不拆 —— 只看首帧的话这一组会全部假绿。
+   */
+  function advanceToClosedCard(tail = ''): HTMLElement | null {
+    vi.useFakeTimers();
+    const { rerender } = render(
+      <ThinkingMarkdown texts={[`${PROSE}\n\n${HALF_CARD}`]} live />,
+    );
+    rerender(<ThinkingMarkdown texts={[`${PROSE}\n\n${VALID_CARD}${tail}`]} live />);
+    act(() => { vi.advanceTimersByTime(THINKING_MARKDOWN_COMMIT_MS); });
+    return document.querySelector<HTMLElement>('[data-testid="thinking-markdown"]');
+  }
+
+  it('卡片闭合的那一帧,化开逻辑不碰卡片内部的 DOM', () => {
+    advanceToClosedCard();
+
+    const card = document.querySelector('[data-od-card="memory-applied"]');
+    // 正向锚点:卡片**确实**在这一帧上屏了。少了它,下面两条会因为「压根没渲染」而假绿。
+    expect(card, '夹具坏了 —— 卡片这一帧没渲染出来,断言看不到任何东西').not.toBeNull();
+
+    expect(
+      card?.querySelector('[data-char-reveal]'),
+      '逐字化开钻进卡片内部,把卡片的文本节点当成刚到的字拆了',
+    ).toBeNull();
+    expect(
+      card?.textContent ?? '',
+      '卡片正文被化开逻辑截短了',
+    ).toContain('已记住 1 条偏好');
+  });
+
+  it('卡片冒出来**本身**不算新字 —— 没动过的散文不会重播一遍', () => {
+    // `measure()` 和 `collect()` 走同一条子树过滤,所以卡片的字连长度都不计。
+    // 少了这条豁免,卡片闭合会被当成「一大批新字到货」,把这一整帧铺成一批化开。
+    const host = advanceToClosedCard();
+
+    expect(host?.textContent ?? '', '夹具坏了 —— 推理散文没上屏').toContain(PROSE);
+    expect(
+      host?.querySelector('[data-char-reveal]'),
+      '散文一个字都没变,却被重播了一遍化开',
+    ).toBeNull();
+  });
+
+  it('同一帧里**真的新写出来**的散文照旧化开', () => {
+    // 反向锚点:别把「卡片不化开」做成「整棵子树都不化开」。
+    // 这一帧散文确实长出了新的字,它该有的入场不能被这条修复顺手关掉。
+    const TAIL = '\n\n那就按这个偏好来。';
+    const host = advanceToClosedCard(TAIL);
+
+    expect(host?.textContent ?? '', '夹具坏了 —— 新写的散文没上屏').toContain('那就按这个偏好来');
+    const revealed = host?.querySelector('[data-char-reveal]');
+    expect(revealed, '整棵子树的化开被一起关掉了 —— 新写的散文也不再化开').not.toBeNull();
+    expect(
+      document.querySelector('[data-od-card="memory-applied"]')?.contains(revealed ?? null),
+      '化开的字落在卡片里,而不是落在新写的那段散文上',
+    ).toBe(false);
   });
 });
 
