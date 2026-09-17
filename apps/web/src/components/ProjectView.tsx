@@ -327,7 +327,13 @@ import { persistCommentAnchors } from '../collab/comment-anchor-client';
 import type { AnchorWriteBack } from '../comments';
 import { PluginDetailsModal } from './PluginDetailsModal';
 import { DesignSystemPreviewModal } from './DesignSystemPreviewModal';
+<<<<<<< HEAD
 import { ChatPane } from './ChatPane';
+=======
+import { ChatPane, foldStrategyTaskTurns } from './ChatPane';
+import { trailingMessageIgnoringHostCards } from '../runtime/chat/host-authored-message';
+import historyDockStyles from './chat/ConversationHistoryDock.module.css';
+>>>>>>> 7245f543a7 (feat(web): land the Home entry refresh (feat/home-entry-refresh → main) (#8208))
 import type { ChatSendMeta, ChatSendOutcome } from './ChatComposer';
 import {
   CritiqueTheaterMount,
@@ -356,6 +362,7 @@ import {
 } from './design-files/pluginFolderActions';
 import { SHARE_TO_COMMUNITY_PROMPT } from './share-to-community/shareToCommunityPrompt';
 import { CenteredLoader } from './Loading';
+import { ProjectCreationPendingChat } from './ProjectCreationPendingView';
 import type { SettingsSection } from './SettingsDialog';
 import { Toast } from './Toast';
 import { FirstArtifactHint } from './FirstArtifactHint';
@@ -864,6 +871,11 @@ interface Props {
   onClearPendingPrompt: () => void;
   onTouchProject: () => void;
   onProjectChange: (next: Project) => void;
+  /** Rename fences from the era of the inline title rename in the chat card.
+   *  The card no longer renders a title (OPEND-3128: the project is named once,
+   *  in the switcher, whose row menu renames through App's own projection
+   *  fence), so this view invokes neither; the props stay for App's wiring
+   *  until that plumbing is retired. */
   onProjectRenameStarted?: (optimistic: Project) => ProjectRenameFenceToken | null;
   onProjectRenameSettled?: (
     token: ProjectRenameFenceToken | null,
@@ -885,6 +897,18 @@ interface Props {
   /** Lets the shell spend the optional memory-notification SSE slot only while
    * this project can produce a post-run extraction. */
   onRunActivityChange?: (projectId: string, active: boolean) => void;
+  /**
+   * The Home send this project was just created from, while its first
+   * transcript is still settling (OPEND-2170). Non-null keeps the hand-off's
+   * chat card on top of the chat column — the same prompt bubble and
+   * preparing row the pending frame already drew — so the column never shows
+   * the whole-pane spinner, the transcript skeleton, or an empty log between
+   * the create answering and the auto-sent turn painting. App clears it on
+   * `onCreationHandoffSettled`.
+   */
+  creationHandoff?: { prompt: string; files?: readonly File[] } | null;
+  /** The first transcript is on screen (or failed to load): drop the card. */
+  onCreationHandoffSettled?: (projectId: string) => void;
 }
 
 export type ProjectRenameFenceToken = Readonly<{
@@ -922,7 +946,7 @@ const DEFAULT_CHAT_PANEL_WIDTH = 460;
 const MIN_CHAT_PANEL_WIDTH = 345;
 const FALLBACK_MAX_CHAT_PANEL_WIDTH = 720;
 const MIN_WORKSPACE_PANEL_WIDTH = 400;
-const SPLIT_RESIZE_HANDLE_WIDTH = 8;
+const SPLIT_RESIZE_HANDLE_WIDTH = 4;
 const BYOK_OPENCODE_UNAVAILABLE_MESSAGE =
   'BYOK API runs require OpenCode. Install OpenCode, then rescan local agents in Settings before retrying.';
 const BYOK_PROVIDER_REQUIRED_MESSAGE =
@@ -2157,8 +2181,6 @@ export function ProjectView({
   onClearPendingPrompt,
   onTouchProject,
   onProjectChange,
-  onProjectRenameStarted,
-  onProjectRenameSettled,
   onProjectsRefresh,
   onDeleteProject,
   onChangeDefaultDesignSystem,
@@ -2167,6 +2189,8 @@ export function ProjectView({
   onCreateDesignSystemFromProject,
   onDuplicateProject,
   onRunActivityChange,
+  creationHandoff = null,
+  onCreationHandoffSettled,
 }: Props) {
   const { locale, t } = useI18n();
   const amrAuthRetryMountIdRef = useRef<string | null>(null);
@@ -2505,9 +2529,6 @@ export function ProjectView({
     detailedProject,
     authoritativeProjectName,
   );
-  let projectTitleTooltip = currentProject.name;
-  if (readonlyNoticeText) projectTitleTooltip = readonlyNoticeText;
-  if (projectCollab.materializationPending) projectTitleTooltip = t('designFiles.syncing');
   const resolvedProjectDesignSystemId = resolveProjectDesignSystemId(currentProject);
   // A project can outlive a Design System being disabled in Settings. Keep the
   // persisted project value intact for recovery, but do not inject a disabled
@@ -2775,6 +2796,8 @@ export function ProjectView({
   // Chat-column dock host for the workspace tab strip (workspaceTabsDock.ts);
   // FileWorkspace registers its own focus-mode host when the chat collapses.
   const chatTabsDockRef = useWorkspaceTabsDockRef();
+  // Toolbar seat for ChatPane's conversation history control (portal host).
+  const [historyPortalTarget, setHistoryPortalTarget] = useState<HTMLDivElement | null>(null);
   const [commentInspectorActive, setCommentInspectorActive] = useState(false);
   const commentInspectorPortalId = useId();
   // Per-session override for the BYOK chat's generate_image tool. Seeded once
@@ -11832,128 +11855,6 @@ export function ProjectView({
     ],
   );
 
-  const projectRenameStatesRef = useRef<Map<string, {
-    key: string;
-    generation: number;
-    confirmed: Project;
-    pending: number;
-    tail: Promise<void>;
-  }>>(new Map());
-  const handleProjectRename = useCallback(
-    (newName: string) => {
-      if (projectMutationReadOnly) return;
-      const trimmed = newName.trim();
-      if (!trimmed || trimmed === project.name) return;
-      const previousName = project.name;
-      const renameContext = projectRunWorkspaceContextRef.current;
-      const renameWorkspaceIdentity = workspaceIdentityCacheKey(renameContext);
-      const renameKey = JSON.stringify([
-        project.id,
-        project.workspaceId ?? null,
-        renameWorkspaceIdentity,
-      ]);
-      let renameState = projectRenameStatesRef.current.get(renameKey);
-      if (!renameState || renameState.pending === 0) {
-        renameState = {
-          key: renameKey,
-          generation: 0,
-          confirmed: project,
-          pending: 0,
-          tail: Promise.resolve(),
-        };
-        projectRenameStatesRef.current.set(renameKey, renameState);
-      }
-      const renameGeneration = ++renameState.generation;
-      renameState.pending += 1;
-      const metadata = project.metadata
-        ? { ...project.metadata, nameSource: 'user' as const }
-        : undefined;
-      const updated: Project = {
-        ...project,
-        name: trimmed,
-        ...(metadata ? { metadata } : {}),
-        updatedAt: Date.now(),
-      };
-      const renameFenceToken = onProjectRenameStarted?.(updated) ?? null;
-      onProjectChange(updated);
-      const runRename = async () => {
-        const persisted = await patchProject(project.id, {
-          name: trimmed,
-          ...(metadata ? { metadata } : {}),
-        }, renameContext);
-        if (persisted) renameState.confirmed = persisted;
-        const isLatestQueuedRename =
-          projectRenameStatesRef.current.get(renameKey) !== renameState
-          ? false
-          : renameState.generation === renameGeneration;
-        if (!isLatestQueuedRename) return;
-        const settledProject = persisted ?? renameState.confirmed;
-        onProjectRenameSettled?.(renameFenceToken, settledProject);
-        if (
-          projectRef.current.id !== project.id
-          || workspaceIdentityCacheKey(projectRunWorkspaceContextRef.current)
-            !== renameWorkspaceIdentity
-          || (
-            projectRef.current.name !== previousName
-            && projectRef.current.name !== trimmed
-          )
-        ) return;
-        if (!persisted) {
-          if (projectRef.current.name === trimmed) {
-            const rollback = {
-              ...projectRef.current,
-              name: renameState.confirmed.name,
-              metadata: renameState.confirmed.metadata,
-              updatedAt: renameState.confirmed.updatedAt,
-            };
-            onProjectChange(rollback);
-            try {
-              await onProjectsRefresh();
-            } catch {
-              // The rollback is already projected locally. A later list read
-              // closes the stale-request fence if this refresh is unavailable.
-            }
-          }
-          return;
-        }
-        const confirmed = {
-          ...projectRef.current,
-          name: persisted.name,
-          metadata: persisted.metadata,
-          updatedAt: persisted.updatedAt,
-        };
-        onProjectChange(confirmed);
-        try {
-          await onProjectsRefresh();
-        } catch {
-          // The rename is already persisted. Existing list retry/reconnect
-          // paths will reconcile a transient projection refresh failure.
-        }
-      };
-      const queued = renameState.tail.then(runRename, runRename);
-      renameState.tail = queued.then(
-        () => undefined,
-        () => undefined,
-      ).finally(() => {
-        renameState.pending -= 1;
-        if (
-          renameState.pending === 0
-          && projectRenameStatesRef.current.get(renameKey) === renameState
-        ) {
-          projectRenameStatesRef.current.delete(renameKey);
-        }
-      });
-    },
-    [
-      onProjectChange,
-      onProjectRenameSettled,
-      onProjectRenameStarted,
-      onProjectsRefresh,
-      project,
-      projectMutationReadOnly,
-    ],
-  );
-
   const activeConversationChatState = useMemo(
     () =>
       activeConversationId
@@ -12088,37 +11989,6 @@ export function ProjectView({
       projectRunWorkspaceContext,
     ],
   );
-
-  // Canonical project-type chip shown next to the editable title. We label
-  // by the resolved skill/template `mode` (the real type taxonomy) rather
-  // than the skill's display name, so every project kind — prototype, deck,
-  // template, image, video, audio, design system — reads as one consistent,
-  // short type just like "Design system". Returns null for freeform projects
-  // (no resolvable type), which hides the chip.
-  const projectTypeLabel = useMemo<string | null>(() => {
-    if (projectIsDesignSystemProject) return t('dsManager.tabDesignSystem');
-    const summary =
-      skills.find((s) => s.id === project.skillId) ??
-      designTemplates.find((s) => s.id === project.skillId);
-    switch (summary?.mode) {
-      case 'prototype':
-        return t('project.typePrototype');
-      case 'deck':
-        return t('project.typeDeck');
-      case 'template':
-        return t('project.typeTemplate');
-      case 'design-system':
-        return t('dsManager.tabDesignSystem');
-      case 'image':
-        return t('project.typeImage');
-      case 'video':
-        return t('project.typeVideo');
-      case 'audio':
-        return t('project.typeAudio');
-      default:
-        return null;
-    }
-  }, [projectIsDesignSystemProject, skills, designTemplates, project.skillId, t]);
 
   const activeDesignSystemSummary = useMemo(() => {
     if (!projectDesignSystemId) return null;
@@ -13244,6 +13114,49 @@ export function ProjectView({
     return () => window.removeEventListener('keydown', onKeyDown, { capture: true });
   }, [designMdState.exists, handleContinueInCli]);
 
+  // OPEND-2170: the hand-off card App keeps over this column comes down only
+  // once the column has something real to show — the auto-sent turn painted,
+  // or a transcript that is loaded and has nothing to send, or a load that
+  // failed (the error surface is the real thing then). Fired once per mount;
+  // App owns the fallback deadline, so a send parked behind a gate dialog
+  // cannot pin the card forever.
+  const creationHandoffActive = creationHandoff !== null;
+  const creationHandoffSettledRef = useRef(false);
+  useEffect(() => {
+    if (!creationHandoffActive || creationHandoffSettledRef.current) return;
+    const transcriptLoaded =
+      Boolean(activeConversationId)
+      && messagesConversationId === activeConversationId
+      && messagesInitialized;
+    const transcriptFailed =
+      Boolean(conversationLoadError)
+      || (Boolean(activeConversationId) && failedMessagesConversationId === activeConversationId);
+    const firstTurnPainted = messages.length > 0;
+    const nothingToSend =
+      !autoSendFirstMessageRef.current
+      || projectIsProgrammaticBrandExtraction
+      || (
+        !(autoSendSeedRef.current ?? '').trim()
+        && (autoSendAttachmentsRef.current?.length ?? 0) === 0
+        && homeAttachmentUploads.length === 0
+      );
+    if (!(transcriptFailed || (transcriptLoaded && (firstTurnPainted || nothingToSend)))) return;
+    creationHandoffSettledRef.current = true;
+    onCreationHandoffSettled?.(project.id);
+  }, [
+    activeConversationId,
+    conversationLoadError,
+    creationHandoffActive,
+    failedMessagesConversationId,
+    homeAttachmentUploads.length,
+    messages.length,
+    messagesConversationId,
+    messagesInitialized,
+    onCreationHandoffSettled,
+    project.id,
+    projectIsProgrammaticBrandExtraction,
+  ]);
+
   // PluginLoopHome auto-send: when the user submits on Home, app.tsx
   // sets `sessionStorage['od:auto-send-first:<projectId>']` and routes
   // through createProject. Once the conversation id resolves and the
@@ -13478,6 +13391,7 @@ export function ProjectView({
           className={[
             'split-chat-slot',
             chatSlotHidden ? 'split-chat-slot-hidden' : '',
+            creationHandoffActive ? 'split-chat-slot--creation-handoff' : '',
           ].filter(Boolean).join(' ')}
           aria-hidden={chatSlotHidden || undefined}
         >
@@ -13493,9 +13407,11 @@ export function ProjectView({
               data-testid="workspace-tabs-dock"
               ref={chatTabsDockRef}
             >
-              {/* Collapse-chat control, lifted out of the chat card header to
-                  sit left of the docked tab dropdown (the dropdown portals in
-                  after this button, so flex order stays button → dropdown). */}
+              {/* Conversation controls follow the docked project dropdown:
+                  dropdown → history dock (order 1) → collapse (order 2). The
+                  dropdown portals in after these, so CSS `order` fixes the
+                  visual sequence. */}
+              <div className={historyDockStyles.dock} ref={setHistoryPortalTarget} data-testid="chat-history-dock" />
               <button
                 type="button"
                 className="split-chat-collapse od-tooltip"
@@ -13512,6 +13428,8 @@ export function ProjectView({
           ) : null}
           {activeConversationId || conversationLoadError || emptyConversationReadOnlySettled ? (
             <ChatPane
+              historyPortalTarget={historyPortalTarget}
+              composerLayerHidden={creationHandoffActive}
               // The conversation id is part of the key so switching conversations
               // resets internal scroll/draft state inside ChatPane and ChatComposer.
               key={`${project.id}:${activeConversationId ?? 'conversation-unavailable'}:${chatSeed?.id ?? 'ready'}`}
@@ -13785,37 +13703,9 @@ export function ProjectView({
               collapseControlLifted={!workspaceFocused}
               backLabel={t('project.backToProjects')}
               composerFooterAccessory={executionControls}
-              projectHeader={(
-                <span className="chat-project-title-line">
-                  <span
-                    className={`title${projectMutationReadOnly ? ' readonly' : ' editable'}`}
-                    data-testid="project-title"
-                    title={projectTitleTooltip}
-                    tabIndex={projectMutationReadOnly ? -1 : 0}
-                    role={projectMutationReadOnly ? undefined : 'textbox'}
-                    suppressContentEditableWarning
-                    contentEditable={!projectMutationReadOnly}
-                    onBlur={(e) => {
-                      if (projectMutationReadOnly) return;
-                      handleProjectRename(e.currentTarget.textContent ?? '');
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        (e.currentTarget as HTMLElement).blur();
-                      }
-                    }}
-                  >
-                    {currentProject.name}
-                  </span>
-                  {projectTypeLabel ? (
-                    <span className="meta" data-testid="project-meta">{projectTypeLabel}</span>
-                  ) : null}
-                </span>
-              )}
               designSystemPicker={(
                 <DesignSystemPicker
-                  variant="icon"
+                  variant="home"
                   designSystems={designSystems}
                   selectedId={projectDesignSystemId ?? null}
                   workspaceContext={projectRunWorkspaceContext}
@@ -13824,11 +13714,22 @@ export function ProjectView({
                 />
               )}
             />
-          ) : (
+          ) : creationHandoffActive ? null : (
             <div className="pane" data-testid="chat-pane-loading">
               <CenteredLoader />
             </div>
           )}
+          {creationHandoff ? (
+            /* The hand-off card stays the column's visible pane until the
+               first transcript settles; ChatPane above keeps its layout
+               hidden underneath (see `.split-chat-slot--creation-handoff`). */
+            <ProjectCreationPendingChat
+              projectName={project.name}
+              prompt={creationHandoff.prompt}
+              files={creationHandoff.files}
+              agentId={config.agentId}
+            />
+          ) : null}
         </div>
         {/* The comment panel is a floating card over the workspace in EVERY
             state (per product: 任何状态下评论卡片都在这个位置). It used to dock
@@ -13888,6 +13789,11 @@ export function ProjectView({
           onManualFileWritten={recordManualFileWrite}
           isDeck={isDeck}
           streaming={currentConversationActionDisabled}
+          // The building preview needs a real run, not the disabled-actions
+          // state above (which a read-only viewer also has, with nothing
+          // running). An attached-but-not-yet-streaming run counts: it is
+          // already writing.
+          runInFlight={currentConversationStreaming || currentConversationHasActiveRun}
           commentQueueOnSend={commentQueueOnSend}
           commentSendDisabled={currentConversationQueueDisabled}
           openRequest={openRequest}
