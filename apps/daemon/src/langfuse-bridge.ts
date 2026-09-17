@@ -87,12 +87,7 @@ import {
 } from './run-failure-classification.js';
 import { deriveRunErrorCode, runResultFromStatus } from './run-result.js';
 import { runAdmissionEvidenceForRun } from './runtimes/run-lifecycle-analytics.js';
-<<<<<<< HEAD
-import { buildTraceObjectManifests } from './trace-object-manifest.js';
-=======
-import type { PerRequestUsageLedger } from './run-analytics-observability.js';
 import { buildTraceObjectManifests, freezeTraceObjectSources } from './trace-object-manifest.js';
->>>>>>> 8e372744dd (fix(telemetry): preserve complete Task evidence and feedback delivery (#8141))
 import type { TraceArtifactObjectSource, TraceObjectUploadManifests } from './trace-object-manifest.js';
 import { getDetectedRuntimeVersions } from './runtimes/detection.js';
 import { runTelemetryDeliveryIdempotencyKey } from './observability/delivery-state.js';

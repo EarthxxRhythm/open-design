@@ -7775,11 +7775,7 @@ export async function startServer({
       readRunTelemetrySinkConfig(process.env, configuredAmrEnv()),
     ),
   );
-<<<<<<< HEAD
-=======
   const stopEvidenceDelivery = startEvidenceDelivery(RUNTIME_DATA_DIR);
-  const strategyWriteEvidence = createStrategyRunWriteEvidenceRecorder(db);
->>>>>>> 8e372744dd (fix(telemetry): preserve complete Task evidence and feedback delivery (#8141))
   const codexThreadCleanupOwner = createCodexThreadCleanupOwner();
   const design = {
     runs: createChatRunService({
@@ -7979,44 +7975,6 @@ export async function startServer({
       pinAssistantMessageOnRunCreate(db, run, options),
     analyticsLifecycle: runAnalyticsLifecycle,
   });
-<<<<<<< HEAD
-  const reportFeedback = telemetry.reportFeedback;
-=======
-  // Runs are process-local, but their terminal obligations are durable. On a
-  // fresh daemon boot, repair stale message rows and replay any PostHog or
-  // Langfuse terminal work whose checkpoint was not committed. Network work
-  // stays off the startup critical path.
-  void reconcileDurableRunTerminals({
-    analytics: analyticsService,
-    appVersion: currentAppVersion(),
-    appVersionInfo: currentAppVersionInfo(),
-    db,
-    recoverBeforeInterrupt: (state, states, now) => recoverPlanningIntentResolution(db, state, states, now),
-    reportLangfuse: reportRunCompletedFromDaemon,
-    finalizeTerminalLocally: createAmrTerminalReportFinalizer(amrTerminalReportOutbox),
-    taskObservationModeForRun: (runId) => taskObservationRollout.modeForRun(runId),
-    taskObservationRepresentationForRun: (runId) =>
-      taskObservationRollout.representationForRun(runId),
-    taskObservationNotExpectedReasonForRun: (runId) =>
-      taskObservationRollout.notExpectedReasonForRun(runId),
-    seedTaskObservationRunFact: (runId, fact) =>
-      taskObservationRollout.seedRepresentationFromRunFact(runId, fact),
-    beginTaskObservationForRun: (runId) => taskObservationRollout.beginFinalizeForRun(runId),
-    runsLogDir: path.join(RUNTIME_DATA_DIR, 'runs'),
-  }).then(async (reconciled) => {
-    if (reconciled.interrupted > 0 || reconciled.messagesReconciled > 0) {
-      console.warn('[runs] reconciled interrupted run terminals', reconciled);
-    }
-    const taskObservationsRecovered = await taskObservationRollout.reconcileCrashWindows();
-    if (taskObservationsRecovered > 0) {
-      console.warn('[telemetry] reconciled task observation crash windows', {
-        recovered: taskObservationsRecovered,
-      });
-    }
-  }).catch((error) => {
-    console.warn('[runs] terminal reconciliation failed', error);
-  });
-
   const reportFeedback = (req) => {
     // Resolve Task ownership on the server, using the same representation as
     // completed-run telemetry. The client does not choose a trace or sink.
@@ -8029,7 +7987,6 @@ export async function startServer({
       ...(task ? { traceId: `strategy-task:${task.taskExecutionId}` } : {}),
     });
   };
->>>>>>> 8e372744dd (fix(telemetry): preserve complete Task evidence and feedback delivery (#8141))
 
   // DNS-aware wrapper. The sync `validateBaseUrl` only inspects the literal
   // hostname string, so a public DNS name pointing at an internal address
