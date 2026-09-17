@@ -1214,6 +1214,18 @@ import {
 import { renderOAuthResultPage } from './http/oauth-result-page.js';
 import { bearerTokenFromRequest, createToolRequestAuth } from './http/tool-request-auth.js';
 
+/**
+ * `OD_PROJECT_CREATE_PREPARATION_TIMEOUT_MS` shortens the POST /api/projects
+ * preparation deadline for end-to-end tests. Only a positive finite number is
+ * honoured; anything else leaves the route on its production default.
+ */
+function projectCreatePreparationTimeoutMsFromEnv(): number | null {
+  const raw = process.env.OD_PROJECT_CREATE_PREPARATION_TIMEOUT_MS;
+  if (raw == null || raw.trim() === '') return null;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
 /** @typedef {import('@open-design/contracts').ApiErrorCode} ApiErrorCode */
 /** @typedef {import('@open-design/contracts').ApiError} ApiError */
 /** @typedef {import('@open-design/contracts').ApiErrorResponse} ApiErrorResponse */
@@ -8516,9 +8528,15 @@ export async function startServer({
     });
   });
   registerSocialShareRoutes(app, { http: httpDeps });
+  const projectCreatePreparationTimeoutMs = projectCreatePreparationTimeoutMsFromEnv();
   registerProjectRoutes(app, {
     db,
     design,
+    // Test seam for the POST /api/projects preparation deadline; production
+    // keeps the route's 15s default when the variable is unset or invalid.
+    ...(projectCreatePreparationTimeoutMs != null
+      ? { projectCreatePreparationTimeoutMs }
+      : {}),
     http: httpDeps,
     paths: pathDeps,
     projectStore: projectStoreDeps,

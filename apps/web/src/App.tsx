@@ -38,7 +38,14 @@ import type {
 } from '@open-design/contracts';
 import { DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID } from '@open-design/contracts';
 import { EntryView } from './components/EntryView';
-import type { ProjectTitleHint } from './components/EntryShell';
+import type {
+  OptimisticProjectCreationHandoff,
+  ProjectTitleHint,
+} from './components/EntryShell';
+import {
+  HomeAmrBalanceGateDialogs,
+  type HomeAmrBalanceGateBlock,
+} from './components/HomeAmrBalanceGateDialogs';
 import type { IntegrationTab } from './components/IntegrationsView';
 import { MarketplaceView } from './components/MarketplaceView';
 import { PluginDetailView } from './components/PluginDetailView';
@@ -58,6 +65,7 @@ import {
   type ProjectNameAuthorityResolution,
 } from './components/ProjectView';
 import { ProjectCreationPendingView } from './components/ProjectCreationPendingView';
+import { projectsForWorkspaceChrome } from './runtime/workspace-chrome-projects';
 import { AmrArtifactUpgradeGate } from './components/AmrArtifactUpgradeGate';
 import { AmrArtifactUpgradeHomeCard } from './components/AmrArtifactUpgradeHomeCard';
 import { ExperienceSurvey } from './components/ExperienceSurvey';
@@ -87,6 +95,10 @@ import {
   type SettingsHighlight,
 } from './components/SettingsDialog';
 import { PrivacyConsentModal } from './components/PrivacyConsentModal';
+import {
+  clearHomeComposerAttachments,
+  stashHomeComposerAttachments,
+} from './state/home-composer-stash';
 import {
   daemonIsLive,
   fetchAppVersionInfo,
@@ -219,6 +231,7 @@ import {
   duplicatePluginAsProject,
   patchProject,
   resolvedWorkspaceContextForWrite,
+  ProjectCreateError,
 } from './state/projects';
 import { useModalWindowDragGuard } from './hooks/useModalWindowDragGuard';
 import { resumeThumbnailLoads, suspendThumbnailLoads } from './lib/thumbnail-load-gate';
@@ -273,6 +286,12 @@ type AppCreateProjectInput = Omit<CreateInput, 'metadata'> & {
   autoSendFirstMessage?: boolean;
   /** Exact workspace/member authority checked by the Home AMR preflight. */
   amrGatePrecheckWitness?: AmrBalanceGateScope;
+  /**
+   * The optimistic project `beginOptimisticProjectCreation` already flushed
+   * for this send (Home hands off before its admission check). The create
+   * reuses the id instead of opening a second frame.
+   */
+  optimisticProjectId?: string;
   requestId?: string;
   pendingFiles?: File[];
   userWorkingDirToken?: string;
@@ -280,9 +299,32 @@ type AppCreateProjectInput = Omit<CreateInput, 'metadata'> & {
   onboardingEntry?: OnboardingEntry;
 };
 
+/**
+ * How long the hand-off card may stay over a mounted ProjectView before App
+ * drops it on its own (OPEND-2170). ProjectView releases it as soon as the
+ * first transcript settles; this only covers a first send that is parked
+ * behind a dialog or a read that never answers.
+ */
+const CREATION_HANDOFF_SETTLE_DEADLINE_MS = 8_000;
+
+/**
+ * Everything the optimistic project surface shows while POST /api/projects is
+ * in flight. It is self-contained on purpose: the pending frame must render on
+ * the tick the request is sent and keep rendering even if a project-list
+ * refresh drops the optimistic row before the daemon confirms the id.
+ */
 interface PendingProjectCreation {
   projectId: string;
+  name: string;
   prompt: string;
+  /**
+   * `POST /api/projects` has answered and the row is persisted. Until then
+   * the standalone pending frame is the whole surface and the real
+   * ProjectView stays unmounted (an unpersisted id must not fan out reads);
+   * from then on ProjectView mounts and keeps drawing this record's chat
+   * card until its first transcript settles (OPEND-2170).
+   */
+  created?: boolean;
   /**
    * The files the user staged on Home, still as local `File` objects. The
    * preparing surface draws them from these bytes, so the first project frame
@@ -1096,6 +1138,11 @@ function AppInner() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [pendingProjectCreation, setPendingProjectCreation] =
     useState<PendingProjectCreation | null>(null);
+  // Hard block from the Home pre-run balance gate. Hosted here, not in
+  // EntryShell: the gate answers behind the optimistic pending frame, where
+  // EntryShell is already unmounted (OPEND-2614).
+  const [homeAmrBalanceGateBlock, setHomeAmrBalanceGateBlock] =
+    useState<HomeAmrBalanceGateBlock | null>(null);
   const [appliedProjectListWitness, setAppliedProjectListWitness] = useState<{
     scopeKey: string;
     generation: number;
@@ -1257,6 +1304,11 @@ function AppInner() {
     },
     [],
   );
+  const handleCreationHandoffSettled = useCallback((projectId: string) => {
+    setPendingProjectCreation((current) =>
+      current?.projectId === projectId ? null : current,
+    );
+  }, []);
   const pendingLocalProjectIdsRef = useRef<Set<string>>(new Set());
   const currentProjectListScope = projectListScopeKey(workspaceContext);
   const currentPendingLocalProjectScope = [
@@ -2941,6 +2993,116 @@ function AppInner() {
     return () => window.removeEventListener(APP_CONFIG_CHANGED_EVENT, handleAppConfigChanged);
   }, [refreshAgents, restartAmrPolling]);
 
+  /**
+   * Undo an optimistic hand-off that will not become a project: drop the
+   * optimistic row and pending frame, return to Home if the user is still on
+   * that route, and hand the staged files back so the retry sends the same
+   * payload. Home remounts on the way back and restores its prompt draft on
+   * its own. `notice` surfaces as the create-error toast; a caller whose own
+   * UI already explained the outcome (the balance dialog) passes none.
+   */
+  const rollbackOptimisticProjectCreation = useCallback(
+    (projectId: string, stagedFiles: readonly File[], notice: string | null) => {
+      clearLocalProject(projectId);
+      removeWorkspaceProjectTabs(projectId);
+      setProjects((current) => current.filter((project) => project.id !== projectId));
+      setPendingProjectCreation((current) =>
+        current?.projectId === projectId ? null : current);
+      stashHomeComposerAttachments(stagedFiles);
+      if (
+        routeRef.current.kind === 'project'
+        && routeRef.current.projectId === projectId
+      ) {
+        navigate({ kind: 'home', view: 'home' });
+      }
+      if (notice) setProjectCreateError(notice);
+    },
+    [clearLocalProject],
+  );
+
+  /**
+   * Enter the project frame for a Home send NOW, before anything is awaited.
+   * The id is client-owned and the daemon accepts that exact id for
+   * idempotent retries. Keep the real ProjectView unmounted until the response
+   * settles; the pending surface is deliberately read-free so an unpersisted
+   * project cannot fan out unauthorized conversation/file/presence requests.
+   *
+   * Home calls this on the click tick and only then runs its admission check
+   * (the AMR balance gate), so the user never waits on that round trip in a
+   * frozen composer (OPEND-2614). `handleCreateProject` calls it itself for
+   * auto-send creates that did not come through Home's composer.
+   */
+  const beginOptimisticProjectCreation = useCallback(
+    (input: AppCreateProjectInput): OptimisticProjectCreationHandoff => {
+      const derivedPendingPrompt =
+        input.pendingPrompt ??
+        (input.metadata?.promptTemplate?.prompt?.trim() || undefined);
+      const metadata = mergeLinkedDirsIntoMetadata(input.metadata, input.linkedDirs);
+      const stagedFiles = Array.isArray(input.pendingFiles)
+        ? input.pendingFiles.filter((file): file is File => file instanceof File)
+        : [];
+      // PRODUCT INVARIANT: ordinary project creation is local. Reuse a
+      // current in-memory Workspace snapshot for `personal` + `local_only`
+      // attribution when available, but never start identity discovery or
+      // block creation on Workspace availability.
+      const createWorkspaceState = workspaceContextStateRef.current;
+      const createWorkspaceContext = createWorkspaceState.failure === 'unsupported'
+        ? null
+        : workspaceResourceReadContext(createWorkspaceState);
+      const optimisticProjectId = randomUUID();
+      const now = Date.now();
+      const optimisticProject: Project = {
+        id: optimisticProjectId,
+        name: input.name.trim(),
+        skillId: input.skillId,
+        designSystemId: input.designSystemId,
+        createdAt: now,
+        updatedAt: now,
+        ...(derivedPendingPrompt ? { pendingPrompt: derivedPendingPrompt } : {}),
+        ...(metadata ? { metadata } : {}),
+        ...(input.appliedPluginSnapshotId
+          ? { appliedPluginSnapshotId: input.appliedPluginSnapshotId }
+          : {}),
+        ...(createWorkspaceContext?.workspaceId
+          ? { workspaceId: createWorkspaceContext.workspaceId }
+          : {}),
+      };
+      rememberLocalProject(optimisticProjectId);
+      // A previous rollback's snapshot must not outlive the retry that
+      // carries the same files; the new attempt owns them from here.
+      clearHomeComposerAttachments();
+      flushSync(() => {
+        setPendingProjectCreation({
+          projectId: optimisticProjectId,
+          name: optimisticProject.name,
+          prompt: derivedPendingPrompt ?? '',
+          files: stagedFiles,
+        });
+        setProjects((current) => [
+          optimisticProject,
+          ...current.filter((project) => project.id !== optimisticProjectId),
+        ]);
+      });
+      const optimisticRoute = {
+        kind: 'project',
+        projectId: optimisticProjectId,
+        fileName: null,
+      } as const;
+      openWorkspaceTab(optimisticRoute);
+      navigate(optimisticRoute);
+      return {
+        projectId: optimisticProjectId,
+        rollback: (options) =>
+          rollbackOptimisticProjectCreation(
+            optimisticProjectId,
+            stagedFiles,
+            options?.notice ?? null,
+          ),
+      };
+    },
+    [rememberLocalProject, rollbackOptimisticProjectCreation],
+  );
+
   const handleCreateProject = useCallback(
     async (
       input: AppCreateProjectInput,
@@ -2959,7 +3121,7 @@ function AppInner() {
       const creationSource: 'blank' | 'template' | 'zip' | 'folder' =
         kind === 'template' ? 'template' : 'blank';
       let createWorkspaceContext: WorkspaceCollabContext | null = null;
-      let optimisticProjectId: string | null = null;
+      let optimisticProjectId: string | null = input.optimisticProjectId ?? null;
       let result;
       const stagedFiles = Array.isArray(input.pendingFiles)
         ? input.pendingFiles.filter((file): file is File => file instanceof File)
@@ -2983,50 +3145,10 @@ function AppInner() {
         ) {
           throw new Error('AMR_WORKSPACE_GATE_STALE');
         }
-        // Home already accepted the run (including its balance gate), so move
-        // into the project frame immediately. The id is client-owned and the
-        // daemon already accepts that exact id for idempotent retries. Keep the
-        // real ProjectView unmounted until the response settles; the pending
-        // surface is deliberately read-free so an unpersisted project cannot
-        // fan out unauthorized conversation/file/presence requests.
-        if (input.autoSendFirstMessage) {
-          optimisticProjectId = randomUUID();
-          const now = Date.now();
-          const optimisticProject: Project = {
-            id: optimisticProjectId,
-            name: input.name.trim(),
-            skillId: input.skillId,
-            designSystemId: input.designSystemId,
-            createdAt: now,
-            updatedAt: now,
-            ...(derivedPendingPrompt ? { pendingPrompt: derivedPendingPrompt } : {}),
-            ...(metadata ? { metadata } : {}),
-            ...(input.appliedPluginSnapshotId
-              ? { appliedPluginSnapshotId: input.appliedPluginSnapshotId }
-              : {}),
-            ...(createWorkspaceContext?.workspaceId
-              ? { workspaceId: createWorkspaceContext.workspaceId }
-              : {}),
-          };
-          rememberLocalProject(optimisticProjectId);
-          flushSync(() => {
-            setPendingProjectCreation({
-              projectId: optimisticProjectId!,
-              prompt: derivedPendingPrompt ?? '',
-              files: stagedFiles,
-            });
-            setProjects((current) => [
-              optimisticProject,
-              ...current.filter((project) => project.id !== optimisticProjectId),
-            ]);
-          });
-          const optimisticRoute = {
-            kind: 'project',
-            projectId: optimisticProjectId,
-            fileName: null,
-          } as const;
-          openWorkspaceTab(optimisticRoute);
-          navigate(optimisticRoute);
+        // An auto-send create that did not come through Home's composer opens
+        // its frame here; Home's own sends arrive with the frame already up.
+        if (input.autoSendFirstMessage && !optimisticProjectId) {
+          optimisticProjectId = beginOptimisticProjectCreation(input).projectId;
         }
         result = await createProject({
           ...(optimisticProjectId ? { id: optimisticProjectId } : {}),
@@ -3076,18 +3198,14 @@ function AppInner() {
           { requestId: input.requestId },
         );
         if (optimisticProjectId) {
-          clearLocalProject(optimisticProjectId);
-          removeWorkspaceProjectTabs(optimisticProjectId);
-          setProjects((current) => current.filter((project) => project.id !== optimisticProjectId));
-          setPendingProjectCreation((current) =>
-            current?.projectId === optimisticProjectId ? null : current);
-          if (
-            routeRef.current.kind === 'project'
-            && routeRef.current.projectId === optimisticProjectId
-          ) {
-            navigate({ kind: 'home', view: 'home' });
-          }
-          setProjectCreateError(errorCode);
+          rollbackOptimisticProjectCreation(
+            optimisticProjectId,
+            stagedFiles,
+            err instanceof ProjectCreateError
+            && err.code === 'PROJECT_CREATE_PREPARATION_TIMEOUT'
+              ? t('home.createTimedOut')
+              : errorCode,
+          );
           return false;
         }
         throw err;
@@ -3118,6 +3236,9 @@ function AppInner() {
           }
         : result.project;
       if (optimisticProjectId) {
+        // The files now belong to this project (uploaded below); a later Home
+        // visit must not revive them into the composer.
+        clearHomeComposerAttachments();
         rememberLocalProject(project.id);
         flushSync(() => {
           setProjects((curr) => [
@@ -3169,11 +3290,17 @@ function AppInner() {
         // ProjectView's very first render already has cards to draw for them,
         // then drop the gate. Everything below this line happens behind an
         // interactive project instead of behind a frozen hand-off screen.
+        //
+        // "Drop the gate" marks the record persisted rather than clearing it
+        // (OPEND-2170): ProjectView mounts now, but keeps drawing this
+        // record's chat card until its first transcript settles
+        // (`handleCreationHandoffSettled`), so the column never flips through
+        // the view's own loaders in between.
         if (!workingDirHandoffFailed) {
           beginHomeAttachmentUploads(result.project.id, pendingFiles);
         }
         setPendingProjectCreation((current) =>
-          current?.projectId === optimisticProjectId ? null : current,
+          current?.projectId === optimisticProjectId ? { ...current, created: true } : current,
         );
         let firstMessageAttachments: ChatAttachment[] = [];
         if (!workingDirHandoffFailed && pendingFiles.length > 0) {
@@ -3346,9 +3473,10 @@ function AppInner() {
         // rest of the session, and no card may sit in the tray for a file that
         // is never coming.
         endHomeAttachmentUploads(project.id);
-        setPendingProjectCreation((current) =>
-          current?.projectId === optimisticProjectId ? null : current,
-        );
+        // The creation record outlives the request on purpose (OPEND-2170):
+        // ProjectView keeps drawing the hand-off's chat card from it until
+        // its first transcript settles (`handleCreationHandoffSettled`), so
+        // the column never flips through the view's own loaders in between.
       }
       const projectRoute = {
         kind: 'project',
@@ -3365,7 +3493,13 @@ function AppInner() {
       }
       return true;
     },
-    [analytics.track, clearLocalProject, rememberLocalProject],
+    [
+      analytics.track,
+      beginOptimisticProjectCreation,
+      rememberLocalProject,
+      rollbackOptimisticProjectCreation,
+      t,
+    ],
   );
 
   const handleCreateProjectFromDesignSystem = useCallback(
@@ -4536,6 +4670,18 @@ function AppInner() {
           )
         ]
       : undefined;
+  // The switcher names the open project once (OPEND-3128), so it reads the
+  // same catalog-title authority ProjectView reconciles the record with; a
+  // deep-linked row the ambient list lacks is appended for its tab only.
+  const workspaceChromeProjects = useMemo(
+    () => projectsForWorkspaceChrome({
+      projects,
+      activeProject,
+      activeProjectId: route.kind === 'project' ? route.projectId : null,
+      authoritativeProjectName: activeAuthoritativeProjectName,
+    }),
+    [projects, activeProject, route, activeAuthoritativeProjectName],
+  );
   const activeProjectAuthorizationKey =
     route.kind === 'project'
       ? projectViewAuthorizationLifetimeKey(
@@ -5073,6 +5219,23 @@ function AppInner() {
   // /marketplace and /marketplace/:id routes render outside the
   // EntryView / ProjectView split so the discovery surface stays
   // independent of any active project.
+  // Once the row is persisted the record gets a deadline: ProjectView
+  // normally releases it within a few hundred ms, but a first send parked
+  // behind a gate dialog or a read that never answers must not pin the card
+  // forever. (The record is keyed on the route, so leaving the project hides
+  // it without clearing; the deadline retires it either way.)
+  const pendingCreationProjectId = pendingProjectCreation?.created
+    ? pendingProjectCreation.projectId
+    : null;
+  useEffect(() => {
+    if (!pendingCreationProjectId) return;
+    const timer = window.setTimeout(() => {
+      setPendingProjectCreation((current) =>
+        current?.projectId === pendingCreationProjectId ? null : current,
+      );
+    }, CREATION_HANDOFF_SETTLE_DEADLINE_MS);
+    return () => window.clearTimeout(timer);
+  }, [pendingCreationProjectId]);
   let appMain: ReactNode;
   const pendingFirstRunOnboardingRoute =
     route.kind === 'home' &&
@@ -5212,8 +5375,11 @@ function AppInner() {
   } else if (route.kind === 'home' && route.view === 'settings') {
     appMain = renderSettingsSurface('page');
   } else if (route.kind === 'project') {
+    // Keyed on the route, not on `activeProject`: the pending frame is built
+    // from the creation record alone so it shows on the tick the create request
+    // leaves, and survives a list refresh that has not seen the new row yet.
     const pendingCreation =
-      activeProject && pendingProjectCreation?.projectId === activeProject.id
+      pendingProjectCreation?.projectId === route.projectId
         ? pendingProjectCreation
         : null;
     const routeSurfaceState = projectRouteSurfaceState({
@@ -5225,23 +5391,28 @@ function AppInner() {
           ? deepLinkResolutionFailure.failure
           : undefined,
     });
-    if (pendingCreation && activeProject) {
-      // Same `div.app` element as the ProjectView branch below, deliberately.
-      // React reconciles one element across the pending -> real hand-off, so
-      // the `.app` entrance animation plays once for the whole transition
-      // instead of restarting when ProjectView takes over (the pending surface
-      // lives ~150ms, shorter than the 180ms animation, so a second mount read
-      // as the project frame flashing twice).
-      appMain = (
-        <div className="app">
-          <ProjectCreationPendingView
-            project={activeProject}
-            prompt={pendingCreation.prompt}
-            files={pendingCreation.files}
-            agentId={config.agentId}
-          />
-        </div>
-      );
+    // Same `div.app` element as the ProjectView branch below, deliberately.
+    // React reconciles one element across the pending -> real hand-off, so
+    // the `.app` entrance animation plays once for the whole transition
+    // instead of restarting when ProjectView takes over.
+    //
+    // The frame stands in for EVERY surface the route would otherwise show
+    // before ProjectView can mount (project list loading, workspace context
+    // resolving, a materialisation failure); once ProjectView mounts, the
+    // same record hands its chat card to the view (`creationHandoff`), which
+    // keeps it up until the first transcript settles (OPEND-2170).
+    const pendingFrame = pendingCreation ? (
+      <div className="app">
+        <ProjectCreationPendingView
+          projectName={activeProject?.name ?? pendingCreation.name}
+          prompt={pendingCreation.prompt}
+          files={pendingCreation.files}
+          agentId={config.agentId}
+        />
+      </div>
+    ) : null;
+    if (pendingFrame && !pendingCreation?.created) {
+      appMain = pendingFrame;
     } else if (
       routeSurfaceState === 'loading-projects'
       || routeSurfaceState === 'resolving-deep-link'
@@ -5254,14 +5425,14 @@ function AppInner() {
         && projectRouteWorkspaceContext.loading
       )
     ) {
-      appMain = (
+      appMain = pendingFrame ?? (
         <div className="entry-shell entry-shell--no-header">
           <CenteredLoader label={t('entry.loadingWorkspace')} />
         </div>
       );
     } else if (routeSurfaceState !== 'ready') {
       const canRetry = routeSurfaceState === 'materialization-failed';
-      appMain = (
+      appMain = pendingFrame ?? (
         <div className="entry-shell entry-shell--no-header">
           <div className="centered-loader">
             <span role="alert">
@@ -5291,7 +5462,7 @@ function AppInner() {
         || activeProjectWorkspaceContext === null
       )
     ) {
-      appMain = (
+      appMain = pendingFrame ?? (
         <div className="entry-shell entry-shell--no-header">
           <div className="centered-loader">
             <span role="alert">
@@ -5383,6 +5554,12 @@ function AppInner() {
           onCreateDesignSystemFromProject={handleCreateDesignSystemFromProject}
           onDuplicateProject={handleDuplicateProject}
           onRunActivityChange={handleProjectRunActivityChange}
+          creationHandoff={
+            pendingCreation
+              ? { prompt: pendingCreation.prompt, files: pendingCreation.files }
+              : null
+          }
+          onCreationHandoffSettled={handleCreationHandoffSettled}
         />
         </div>
       );
@@ -5390,6 +5567,8 @@ function AppInner() {
   } else {
     appMain = (
       <EntryView
+        onBeginProjectCreation={beginOptimisticProjectCreation}
+        onAmrBalanceGateBlockChange={setHomeAmrBalanceGateBlock}
         skills={enabledSkills}
         designTemplates={enabledDesignTemplates}
         designSystems={enabledDS}
@@ -5505,11 +5684,7 @@ function AppInner() {
           // selected Workspace) while a deep-linked project is already open.
           // Supply only that route-owned row to chrome; never insert it into
           // the ambient Home catalogue.
-          projects={
-            activeProject && !projects.some((project) => project.id === activeProject.id)
-              ? [...projects, activeProject]
-              : projects
-          }
+          projects={workspaceChromeProjects}
           activeProjectWorkspaceId={
             route.kind === 'project' && activeProject
               ? activeProject.workspaceId ?? null
@@ -5517,6 +5692,10 @@ function AppInner() {
           }
           onboardingCompleted={config.onboardingCompleted === true}
           identityScopeKey={workspaceTabsIdentityScopeKey}
+          workspaceContext={workspaceContext}
+          onRenameProject={handleRenameProject}
+          onDuplicateProject={handleDuplicateProject}
+          onDeleteProject={handleDeleteProject}
         />
         {/* Avatar + credits keep their home-view spot (the top-right actions
             host inside the tabs chrome) while a project tab is open, even
@@ -5640,6 +5819,11 @@ function AppInner() {
           onDismiss={() => setProjectCreateError(null)}
         />
       ) : null}
+      <HomeAmrBalanceGateDialogs
+        block={homeAmrBalanceGateBlock}
+        metricsConsent={config.telemetry?.metrics === true}
+        installationId={config.installationId}
+      />
       {projectOpenError ? (
         <Toast
           message={projectOpenError}
