@@ -36,7 +36,7 @@ describe("production touchpoint decision loader", () => {
 		const ok = () => new Response(JSON.stringify({ touchpointDecisionId: "prefetched" }), { status: 200 });
 		const load = (locale = "en-US", active?: string) => loadProductionTouchpointDecision(badge, locale, new AbortController().signal, active);
 		it("serves the first load from a prefetch started beside the login status, reporting its age once", async () => {
-			vi.useFakeTimers({ toFake: ["Date"] });
+			vi.useFakeTimers({ toFake: ["Date", "performance"] });
 			const fetchMock = vi.fn().mockResolvedValueOnce(ok()).mockResolvedValue(new Response(null, { status: 404 }));
 			vi.stubGlobal("fetch", fetchMock);
 			prefetchProductionTouchpointDecisions([badge], "en-US");
@@ -52,13 +52,21 @@ describe("production touchpoint decision loader", () => {
 			["a prefetch older than fifteen seconds", () => { vi.advanceTimersByTime(15_001); return load(); }],
 			["a login status change", () => { window.dispatchEvent(new CustomEvent(AMR_LOGIN_STATUS_EVENT)); return load(); }],
 		] as const)("fetches fresh for %s", async (_name, run) => {
-			vi.useFakeTimers({ toFake: ["Date"] });
+			vi.useFakeTimers({ toFake: ["Date", "performance"] });
 			const fetchMock = vi.fn().mockResolvedValueOnce(ok()).mockResolvedValue(new Response(null, { status: 404 }));
 			vi.stubGlobal("fetch", fetchMock);
 			prefetchProductionTouchpointDecisions([badge], "en-US");
 			expect(await run(fetchMock)).toEqual({ kind: "no-decision" });
 			expect(fetchMock).toHaveBeenCalledTimes(2);
 			await load();
+		});
+		it("measures prefetch age on a monotonic clock, so a wall clock stepping back cannot lengthen a lease", async () => {
+			vi.useFakeTimers({ toFake: ["Date", "performance"] });
+			vi.stubGlobal("fetch", vi.fn().mockResolvedValue(ok()));
+			prefetchProductionTouchpointDecisions([badge], "en-US");
+			vi.advanceTimersByTime(500);
+			vi.setSystemTime(Date.now() - 60_000);
+			expect(await load()).toMatchObject({ kind: "decision", ageMs: 500 });
 		});
 		it("keeps the prefetch for the retry of a load aborted while it waited", async () => {
 			const fetchMock = vi.fn().mockResolvedValueOnce(ok()).mockResolvedValue(new Response(null, { status: 404 }));

@@ -351,6 +351,20 @@ describe("TestCampaignModal backdrop presentation", () => {
 		expect(dialogNode()?.getAttribute("data-state")).toBe("open");
 		await waitFor(() => expect(document.body.style.overflow).toBe("hidden"));
 	});
+	it("still presents a later decision for an activity whose earlier decision failed to mount", async () => {
+		vi.spyOn(OpenDesignTouchpointElement.prototype, "mount")
+			.mockRejectedValueOnce(new Error("mount failed"))
+			.mockImplementation(async function (this: OpenDesignTouchpointElement) {
+				this.shadowRoot?.replaceChildren(document.createTextNode("Verified campaign"));
+			});
+		const failed = runtime() as TestDecision;
+		authorizeMount(failed);
+		render(<ProductionCampaignModal authenticated sessionSubject="account-a" />);
+		await waitFor(() => expect(OpenDesignTouchpointElement.prototype.mount).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(dialogNode()).toBeNull());
+		act(() => authorizeMount({ ...failed, content: { ...failed.content, locale: "en-US" } } as TestDecision));
+		await screen.findByRole("dialog");
+	});
 	it("removes the backdrop when the component fails to mount", async () => {
 		vi.spyOn(touchpointComponent, "verifyWebTouchpoint").mockResolvedValue({
 			entryUrl: "blob:test",

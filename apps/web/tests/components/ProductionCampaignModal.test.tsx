@@ -439,7 +439,8 @@ describe("ProductionCampaignModal", () => {
 				.getByTestId("campaign-custom-element")
 				.querySelector("opend-touchpoint"),
 		).not.toBeNull();
-		expect(document.body.style.overflow).toBe("hidden");
+		// The replacement deployment remounts; the page locks again once it presents.
+		await waitFor(() => expect(document.body.style.overflow).toBe("hidden"));
 		expect(document.querySelector("iframe,webview")).toBeNull();
 		// The fixture declares the SDK capability but exposes no actual close
 		// control, so the host fallback remains available.
@@ -1363,6 +1364,26 @@ describe("ProductionCampaignModal backdrop presentation", () => {
 		await screen.findByRole("dialog");
 		expect(dialogNode()?.getAttribute("data-state")).toBe("open");
 		expect(document.body.style.overflow).toBe("hidden");
+	});
+	it("hides a visible modal again while a replacement decision for the same activity is still mounting", async () => {
+		const realVerify = touchpointComponent.verifyWebTouchpoint;
+		let rejectReplacement!: (error: Error) => void;
+		vi.spyOn(touchpointComponent, "verifyWebTouchpoint")
+			.mockImplementationOnce(realVerify)
+			.mockImplementationOnce(() => new Promise((_, reject) => { rejectReplacement = reject; }));
+		vi.mocked(fetch)
+			.mockResolvedValueOnce(new Response(JSON.stringify(decision()), { status: 200 }))
+			.mockResolvedValue(new Response(JSON.stringify(decision({ deploymentId: "deployment-2" })), { status: 200 }));
+		render(<ProductionCampaignModal authenticated sessionSubject="user-a" />);
+		await screen.findByRole("dialog");
+		expect(document.body.style.overflow).toBe("hidden");
+		window.dispatchEvent(new Event("focus"));
+		await waitFor(() => expect(rejectReplacement).toBeTypeOf("function"));
+		await act(async () => {});
+		expect(screen.queryByRole("dialog")).toBeNull();
+		expect(document.body.style.overflow).toBe("");
+		await act(async () => rejectReplacement(new Error("replacement failed")));
+		await waitFor(() => expect(dialogNode()).toBeNull());
 	});
 	it.each([
 		["verification", "verify"],

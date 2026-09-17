@@ -45,6 +45,16 @@ type Decision = {
 	staticActions: TouchpointStaticAction[];
 	content: WebTouchpointContent;
 };
+const testDecisionIds = new WeakMap<TestDecision, number>();
+let nextTestDecisionId = 0;
+/** A stable per-object key: a Test decision object is exactly one mount. */
+function testDecisionMountKey(decision: TestDecision): number {
+	const known = testDecisionIds.get(decision);
+	if (known !== undefined) return known;
+	const id = ++nextTestDecisionId;
+	testDecisionIds.set(decision, id);
+	return id;
+}
 const displayedKey = (subject: string, activity: string) =>
 	`touchpoint-displayed:v1:${encodeURIComponent(subject)}:${encodeURIComponent(activity)}`;
 
@@ -179,9 +189,9 @@ export async function dispatchProductionCampaignAction(
  * never leaves an empty grey layer over the app; scroll lock, focus trap and
  * Escape exist only while something is actually presented.
  *
- * Once presented, the shell stays presented while it remains mounted, so a
- * renewal that remounts the same activity does not flicker. Callers key the
- * shell by activity and unmount it when a mount fails.
+ * Callers key the shell by mount identity (a Production generation, a Test
+ * decision), so every replacement mount starts hidden again; a renewal that
+ * keeps its mount keeps the shell presented.
  */
 function CampaignModalShell({
 	label,
@@ -282,12 +292,12 @@ export function ProductionCampaignModal({
 		}
 	}, [testCampaignKey]);
 	const [readyTestDecision, setReadyTestDecision] = useState<TestDecision | null>(null);
-	const onTestFailed = useCallback(
-		(failed: TestDecision) => {
-			if (failed === testDecision) closeTestModal();
-		},
-		[closeTestModal, testDecision],
-	);
+	// A failed component suppresses only that decision, never the activity:
+	// a later locale or corrected redeployment is a new decision and may present.
+	const [failedTestDecisions, setFailedTestDecisions] = useState<ReadonlySet<TestDecision>>(() => new Set());
+	const onTestFailed = useCallback((failed: TestDecision) => {
+		setFailedTestDecisions(previous => new Set([...previous, failed]));
+	}, []);
 	const [closed, setClosed] = useState(false);
 	const openPresentation = useRef<OpenPresentation | null>(null);
 	const clearOpenPresentation = useCallback(() => {
@@ -433,10 +443,10 @@ export function ProductionCampaignModal({
 		},
 		[sessionSubject, testRuntime],
 	);
-	if (authenticated && testRuntime && testDecision && !testClosed) {
+	if (authenticated && testRuntime && testDecision && !testClosed && !failedTestDecisions.has(testDecision)) {
 		return (
 			<CampaignModalShell
-				key={testCampaignKey}
+				key={testDecisionMountKey(testDecision)}
 				label="Test campaign"
 				ready={readyTestDecision === testDecision}
 				onClose={closeTestModal}
@@ -456,7 +466,7 @@ export function ProductionCampaignModal({
 	}
 	return authenticated && decision?.sessionSubject === sessionSubject ? (
 		<CampaignModalShell
-			key={JSON.stringify([decision.sessionSubject, decision.activityId])}
+			key={generation}
 			label="Campaign"
 			ready={readyGeneration === generation}
 			onClose={closeProductionModal}

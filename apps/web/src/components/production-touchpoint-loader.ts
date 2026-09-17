@@ -49,21 +49,22 @@ export function prefetchProductionTouchpointDecisions(placementKeys: readonly st
 	for (const placementKey of placementKeys) {
 		const query = new URLSearchParams({ placementKey, locale });
 		const response = fetch(`/api/touchpoints/production-runtime?${query}`, { cache: "no-store" }).catch(() => null);
-		prefetched.set(placementKey, { locale, startedAt: Date.now(), response });
+		prefetched.set(placementKey, { locale, startedAt: performance.now(), response });
 	}
 }
 
 /** A load aborted while waiting leaves the prefetch for its retry; only the load that reads it consumes it. */
 async function takePrefetched(placementKey: string, locale: string, signal: AbortSignal, activeDecisionId?: string) {
 	const entry = prefetched.get(placementKey);
-	if (!entry || activeDecisionId || entry.locale !== locale || Date.now() - entry.startedAt > PREFETCH_TTL_MS) {
+	// Monotonic: a wall clock stepping back must not extend the TTL or the lease.
+	if (!entry || activeDecisionId || entry.locale !== locale || performance.now() - entry.startedAt > PREFETCH_TTL_MS) {
 		prefetched.delete(placementKey);
 		return null;
 	}
 	const response = await entry.response;
 	if (signal.aborted || prefetched.get(placementKey) !== entry) return null;
 	prefetched.delete(placementKey);
-	return response && response.status !== 401 ? { response, ageMs: Date.now() - entry.startedAt } : null;
+	return response && response.status !== 401 ? { response, ageMs: performance.now() - entry.startedAt } : null;
 }
 
 /** Loads a production decision; only a server-authenticated 410 receipt revokes an active lease. */
