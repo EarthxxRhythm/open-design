@@ -20,6 +20,12 @@ const DAEMON_ORIGIN = `http://127.0.0.1:${DAEMON_PORT}`;
 // proxy in front of it at runtime.
 const isProd = process.env.NODE_ENV !== 'development';
 const webOutputMode = process.env.OD_WEB_OUTPUT_MODE;
+// Build callers may supply a stable identity; the app does not calculate or
+// interpret it. Unconfigured builds retain Next.js's default behavior.
+const webBuildId = process.env.OD_WEB_BUILD_ID;
+if (webBuildId !== undefined && !/^[A-Za-z0-9_-]+$/.test(webBuildId)) {
+  throw new Error('OD_WEB_BUILD_ID must be a nonempty URL-safe build identity');
+}
 const isServerOutput = webOutputMode === 'server' || webOutputMode === 'standalone';
 const shouldStaticExport = isProd && !isServerOutput;
 
@@ -156,6 +162,7 @@ function configuredAllowedDevHosts(): string[] {
 }
 
 const nextConfig: NextConfig = {
+  ...(webBuildId !== undefined ? { generateBuildId: () => webBuildId } : {}),
   allowedDevOrigins: configuredAllowedDevHosts(),
   outputFileTracingRoot: WORKSPACE_ROOT,
   reactStrictMode: true,
