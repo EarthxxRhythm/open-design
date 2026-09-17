@@ -694,8 +694,10 @@ export function TestCampaignModal({
 				};
 			const validForMs = Math.min(...decisions.map((item) => item.validForMs));
 			if (validForMs <= 0) return { kind: "clear" };
+			// A refreshed context is a new authorization generation: publish its
+			// decisions under a new lease key instead of renewing the stale session.
 			const session =
-				active?.selectionKey === selectionKey
+				active?.selectionKey === selectionKey && active.context === selectedContext
 					? active
 					: Object.freeze<TestRuntimeValue>({
 							selectionKey,
@@ -708,7 +710,11 @@ export function TestCampaignModal({
 			return {
 				kind: "decision",
 				value: session,
-				key: selectionKey,
+				key: JSON.stringify([
+					selectionKey,
+					selectedContext.updatedAt,
+					selectedContext.testerMemberId ?? null,
+				]),
 				validForMs,
 			};
 		};

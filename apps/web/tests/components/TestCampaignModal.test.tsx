@@ -984,6 +984,31 @@ describe("Test runtime context generation", () => {
 		diagnostics.stop();
 	});
 
+	it("publishes the refreshed context and decisions instead of renewing the stale generation", async () => {
+		let generation = staleUpdatedAt;
+		let published: ReturnType<typeof useTestRuntime> = null;
+		function Probe() {
+			published = useTestRuntime();
+			return null;
+		}
+		const fetchMock = serverWith({
+			context: () => new Response(JSON.stringify(contextWith(generation))),
+			decisionUpdatedAt: () => generation,
+		});
+		vi.stubGlobal("fetch", fetchMock);
+		render(<Probe />);
+		await selectDeployment();
+		await screen.findByRole("dialog");
+		await waitFor(() => expect(published?.context.updatedAt).toBe(staleUpdatedAt));
+		generation = freshUpdatedAt;
+		window.dispatchEvent(new Event("focus"));
+		await waitFor(() => expect(published?.context.updatedAt).toBe(freshUpdatedAt));
+		const decision = published!.decisions.get("opend.home.campaign-modal");
+		expect(decision?.testContext.updatedAt).toBe(freshUpdatedAt);
+		expect(published!.isAuthorized()).toBe(true);
+		expect(screen.getByRole("dialog")).toBeInTheDocument();
+	});
+
 	it("refetches at most once per attempt and stays closed while decisions keep disagreeing", async () => {
 		const diagnostics = recordDiagnostics();
 		const fetchMock = serverWith({
