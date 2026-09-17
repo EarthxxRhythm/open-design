@@ -201,20 +201,31 @@ export function ProductionCampaignModal({
 	// own visibility record, lease renewal, redeployment or locale swap); any new
 	// offer of a recorded activity stays closed, as does a dismissed one.
 	const [dismissedTestCampaigns, setDismissedTestCampaigns] = useState<ReadonlySet<string>>(() => new Set());
-	const openTestCampaign = useRef<string | null>(null);
+	const openTestCampaign = useRef<{ campaign: string; deployment: string } | null>(null);
 	const testActivityId = testDecision?.activityId;
 	const testCampaignKey = testDecision
 		? JSON.stringify([sessionSubject, testActivityId])
 		: null;
+	const testDeploymentKey = testRuntime
+		? JSON.stringify([testRuntime.deployment.id, testRuntime.deployment.snapshotHash])
+		: null;
+	// A locale swap or lease renewal republishes the same deployment with no
+	// decisions until the new ones load. That gap is not a withdrawal, so the open
+	// presentation survives it; a different deployment or no session ends it.
+	if (!authenticated || openTestCampaign.current?.deployment !== testDeploymentKey)
+		openTestCampaign.current = null;
 	const testClosed =
 		testCampaignKey === null ||
 		dismissedTestCampaigns.has(testCampaignKey) ||
-		(openTestCampaign.current !== testCampaignKey &&
+		(openTestCampaign.current?.campaign !== testCampaignKey &&
 			!!sessionSubject &&
 			!!testActivityId &&
 			wasDisplayed(sessionSubject, testActivityId));
-	openTestCampaign.current =
-		authenticated && testRuntime && !testClosed ? testCampaignKey : null;
+	if (testCampaignKey !== null && testDeploymentKey !== null)
+		openTestCampaign.current =
+			authenticated && !testClosed
+				? { campaign: testCampaignKey, deployment: testDeploymentKey }
+				: null;
 	const closeTestModal = useCallback(() => {
 		if (testCampaignKey !== null) {
 			setDismissedTestCampaigns(previous => new Set([...previous, testCampaignKey]));
