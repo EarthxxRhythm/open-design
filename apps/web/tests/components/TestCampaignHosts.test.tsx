@@ -107,6 +107,7 @@ function decision(placementKey: (typeof placements)[number]): TestDecision {
 
 describe("Test decisions at the existing host touchpoints", () => {
 	beforeEach(() => {
+		localStorage.clear();
 		vi.stubEnv("NEXT_PUBLIC_CMS_HOST_RELEASE", `sha256:${"a".repeat(64)}`);
 		document.documentElement.lang = "zh-CN";
 		vi.stubGlobal(
@@ -153,6 +154,11 @@ describe("Test decisions at the existing host touchpoints", () => {
 		let ended = false;
 		let startsAt = Date.parse("2029-12-31T23:00:00.000Z");
 		const requested: string[] = [];
+		// Each activity auto-presents once; later deployments carry new activities.
+		const activityOf = (id: string) =>
+			id === "deployment-c" || id === "deployment-future"
+				? `activity-${id}`
+				: "activity-four";
 		vi.stubGlobal(
 			"fetch",
 			vi.fn(async (input: string, init?: RequestInit) => {
@@ -161,7 +167,7 @@ describe("Test decisions at the existing host touchpoints", () => {
 					return Response.json({
 						deployments: catalog.map((id) => ({
 							id,
-							activityId: "activity-four",
+							activityId: activityOf(id),
 							snapshotHash: "sha256:four-snapshot",
 							snapshot: {
 								contentVersionId: "version-four-placement",
@@ -186,6 +192,7 @@ describe("Test decisions at the existing host touchpoints", () => {
 					return Response.json({
 						...decision(placement),
 						deploymentId: id,
+						activityId: activityOf(id),
 						serverTime: new Date().toISOString(),
 						authorizationExpiresAt: new Date(Date.now() + 60_000).toISOString(),
 						endsAt: ended
@@ -244,7 +251,8 @@ describe("Test decisions at the existing host touchpoints", () => {
 			catalog = ["deployment-b"];
 			await tick();
 			expect(requested).toContain("deployment-b");
-			expect(nodes()).toHaveLength(4);
+			// Redeploying the presented activity refreshes badge and hover only.
+			expect(nodes()).toHaveLength(3);
 			catalog = [];
 			await tick();
 			expect(nodes()).toHaveLength(0);
@@ -510,7 +518,7 @@ describe("Test decisions at the existing host touchpoints", () => {
 		}
 	});
 
-	it("keeps a dismissed Test campaign closed across temporary session loss, but allows another deployment", async () => {
+	it("keeps a dismissed Test campaign closed across temporary session loss and redeployment of the same activity", async () => {
 		const value = decision("opend.home.campaign-modal");
 		const session: TestRuntimeSession = {
 			selectionKey: "deployment-four",
@@ -559,7 +567,65 @@ describe("Test decisions at the existing host touchpoints", () => {
 				decisions: new Map([["opend.home.campaign-modal", next]]),
 			});
 		});
+		expect(screen.queryByRole("dialog", { name: "Test campaign" })).toBeNull();
+	});
+
+	it("presents a Test campaign modal once per account and activity on this device, sharing the production impression", async () => {
+		const value = decision("opend.home.campaign-modal");
+		const session: TestRuntimeSession = {
+			selectionKey: "deployment-four",
+			deployment: {
+				id: context.deploymentId,
+				activityId: "activity-four",
+				snapshotHash: value.snapshotHash,
+				snapshot: {
+					contentVersionId: value.content.id,
+					manifestHash: value.manifestHash,
+					artifactHash: value.artifactHash,
+					placementKeys: [...placements],
+				},
+			},
+			context,
+			decisions: new Map([["opend.home.campaign-modal", value]]),
+			isAuthorized: () => true,
+		};
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => Response.json({}, { status: 404 })),
+		);
+		setTestRuntimeSession(session);
+		const first = render(
+			<ProductionCampaignModal authenticated sessionSubject="account-a" />,
+		);
+		await screen.findByRole("dialog", { name: "Test campaign" });
+		// Presentation, not dismissal, consumes the impression; the open modal stays.
+		await waitFor(() =>
+			expect(
+				localStorage.getItem("touchpoint-displayed:v1:account-a:activity-four"),
+			).toBe("1"),
+		);
 		expect(screen.getByRole("dialog", { name: "Test campaign" })).toBeVisible();
+		// Restart without closing: the same account and activity must not reopen.
+		first.unmount();
+		render(<ProductionCampaignModal authenticated sessionSubject="account-a" />);
+		await act(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		});
+		expect(screen.queryByRole("dialog", { name: "Test campaign" })).toBeNull();
+		cleanup();
+		// A production impression of the same activity suppresses Test too.
+		localStorage.setItem("touchpoint-displayed:v1:account-b:activity-four", "1");
+		render(<ProductionCampaignModal authenticated sessionSubject="account-b" />);
+		await act(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		});
+		expect(screen.queryByRole("dialog", { name: "Test campaign" })).toBeNull();
+		cleanup();
+		// Another account on this device still gets its own single presentation.
+		render(<ProductionCampaignModal authenticated sessionSubject="account-c" />);
+		expect(
+			await screen.findByRole("dialog", { name: "Test campaign" }),
+		).toBeVisible();
 	});
 
 	it("uses the selected Test session at modal, badge, and paired hover hosts without production reads", async () => {
