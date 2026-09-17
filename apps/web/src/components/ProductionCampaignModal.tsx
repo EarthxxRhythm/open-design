@@ -196,13 +196,25 @@ export function ProductionCampaignModal({
 	const { locale } = useI18n();
 	const testRuntime = useTestRuntime();
 	const testDecision = testRuntime?.decisions.get(PLACEMENT);
-	// Dismissal belongs to the account and deployed campaign, not a transient
-	// runtime response (or its renewed authorization timestamps).
+	// Test follows the production rule: one automatic presentation per account,
+	// activity and device. Only the presentation already open may continue (its
+	// own visibility record, lease renewal, redeployment or locale swap); any new
+	// offer of a recorded activity stays closed, as does a dismissed one.
 	const [dismissedTestCampaigns, setDismissedTestCampaigns] = useState<ReadonlySet<string>>(() => new Set());
+	const openTestCampaign = useRef<string | null>(null);
+	const testActivityId = testDecision?.activityId;
 	const testCampaignKey = testDecision
-		? JSON.stringify([sessionSubject, testDecision.activityId, testDecision.deploymentId])
+		? JSON.stringify([sessionSubject, testActivityId])
 		: null;
-	const testClosed = testCampaignKey !== null && dismissedTestCampaigns.has(testCampaignKey);
+	const testClosed =
+		testCampaignKey === null ||
+		dismissedTestCampaigns.has(testCampaignKey) ||
+		(openTestCampaign.current !== testCampaignKey &&
+			!!sessionSubject &&
+			!!testActivityId &&
+			wasDisplayed(sessionSubject, testActivityId));
+	openTestCampaign.current =
+		authenticated && testRuntime && !testClosed ? testCampaignKey : null;
 	const closeTestModal = useCallback(() => {
 		if (testCampaignKey !== null) {
 			setDismissedTestCampaigns(previous => new Set([...previous, testCampaignKey]));
@@ -492,10 +504,12 @@ export function ProductionCampaignModal({
 	}, [authenticated, testClosed, testDecision, closeTestModal]);
 	const onTestVisible = useCallback(
 		(next: TestDecision, placementKey: TestCampaignPlacement) => {
-			if (testRuntime)
-				recordVisibleTestTouchpoint(testRuntime, next, placementKey);
+			if (!testRuntime) return;
+			if (sessionSubject && next.activityId && placementKey === PLACEMENT)
+				recordDisplayed(sessionSubject, next.activityId);
+			recordVisibleTestTouchpoint(testRuntime, next, placementKey);
 		},
-		[testRuntime],
+		[sessionSubject, testRuntime],
 	);
 	if (authenticated && testRuntime && testDecision && !testClosed) {
 		return (
