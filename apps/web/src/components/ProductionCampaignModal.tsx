@@ -268,11 +268,17 @@ export function ProductionCampaignModal({
 			const loaded = await loadProductionTouchpointDecision(PLACEMENT, locale, signal, active?.touchpointDecisionId);
 			if (signal.aborted) return { kind: "clear" };
 			if (loaded.kind === "revoked") {
-				clearOpenPresentation();
-				return active && loaded.receipt.touchpointDecisionId === active.touchpointDecisionId && loaded.receipt.deploymentId === active.deploymentId && loaded.receipt.activityId === active.activityId && loaded.receipt.contentVersionId === active.content.id ? { kind: "clear" } : { kind: "retain" };
+				const revokesActive =
+					active !== null &&
+					loaded.receipt.touchpointDecisionId === active.touchpointDecisionId &&
+					loaded.receipt.deploymentId === active.deploymentId &&
+					loaded.receipt.activityId === active.activityId &&
+					loaded.receipt.contentVersionId === active.content.id;
+				if (!active || revokesActive) clearOpenPresentation();
+				return revokesActive ? { kind: "clear" } : { kind: "retain" };
 			}
 			if (loaded.kind === "no-decision") {
-				clearOpenPresentation();
+				if (!active) clearOpenPresentation();
 				return active ? { kind: "retain" } : { kind: "clear" };
 			}
 			const next = loaded.value as Decision;

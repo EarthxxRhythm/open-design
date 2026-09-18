@@ -1496,6 +1496,66 @@ describe("ProductionCampaignModal device impressions", () => {
 		expect(document.querySelector("opend-touchpoint")).not.toBeNull();
 		expect(screen.queryByRole("dialog")).not.toBeNull();
 	});
+	it.each(["no-decision", "stale-revocation"] as const)(
+		"keeps the displayed campaign on screen when a retained %s poll recovers",
+		async (interim) => {
+			vi.useFakeTimers({
+				toFake: [
+					"Date",
+					"performance",
+					"setTimeout",
+					"clearTimeout",
+					"setInterval",
+					"clearInterval",
+				],
+			});
+			vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+			const active = decision({
+				authorizationExpiresAt: new Date(
+					Date.now() + 5 * 60_000,
+				).toISOString(),
+			});
+			let calls = 0;
+			const fetchMock = vi.fn(async () => {
+				calls += 1;
+				if (calls !== 2)
+					return new Response(JSON.stringify(active), { status: 200 });
+				if (interim === "no-decision")
+					return new Response(null, { status: 404 });
+				return new Response(
+					JSON.stringify({
+						error: "production_runtime_revoked",
+						receipt: {
+							touchpointDecisionId: active.touchpointDecisionId,
+							deploymentId: "stale-deployment",
+							activityId: active.activityId,
+							contentVersionId: active.content.id,
+						},
+					}),
+					{ status: 410 },
+				);
+			});
+			vi.stubGlobal("fetch", fetchMock);
+			render(<ProductionCampaignModal authenticated sessionSubject="user-a" />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(10);
+			});
+			const host = document.querySelector("opend-touchpoint");
+			expect(host).not.toBeNull();
+			localStorage.setItem(marker(), "1");
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(30_000);
+			});
+			expect(calls).toBe(2);
+			expect(document.querySelector("opend-touchpoint")).toBe(host);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(30_000);
+			});
+			expect(calls).toBeGreaterThanOrEqual(3);
+			expect(document.querySelector("opend-touchpoint")).toBe(host);
+			expect(screen.queryByRole("dialog")).not.toBeNull();
+		},
+	);
 	it("keeps the existing badge and its manual static action usable after automatic suppression", async () => {
 		localStorage.setItem(marker(), "1");
 		const placementKey = "opend.home.account-badge";
