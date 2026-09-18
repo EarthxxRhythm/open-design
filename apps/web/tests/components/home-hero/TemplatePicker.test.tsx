@@ -26,27 +26,30 @@ function labelFor(chipId: string): string {
   return chipById(chipId).label;
 }
 
-// The pill is display + clear: picking a type belongs to the type row under
-// the composer, and the dropdown this used to open was removed (per product)
-// once that row carried the whole catalog one line below.
 describe('TemplatePicker', () => {
-  it('names the committed template and opens nothing when clicked', () => {
+  it('opens all categories and switches the committed template', () => {
     const onClearTemplate = vi.fn();
+    const onPick = vi.fn();
     render(
       <TemplatePicker
         templates={templates}
-        activeChipId="document"
-        onClearTemplate={onClearTemplate}
+        onPick={onPick}
+        activeChipId="deck"
         labelFor={labelFor}
       />,
     );
 
     expect(screen.getByTestId('home-hero-template-picker').className).toContain('has-selection');
-    expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Document');
+    expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain(labelFor('deck'));
 
-    fireEvent.click(screen.getByTestId('home-hero-template-trigger'));
-    expect(screen.queryByTestId('home-hero-template-menu')).toBeNull();
-    expect(screen.queryByTestId('home-hero-template-wedge-prototype')).toBeNull();
+    fireEvent.click(screen.getByTestId('home-hero-template-trigger').querySelector('button')!);
+    expect(screen.getAllByRole('option')).toHaveLength(templates.length);
+    expect(screen.getByRole('option', { name: labelFor('deck') }).getAttribute('aria-selected')).toBe('true');
+    fireEvent.click(screen.getByRole('option', { name: labelFor('prototype'), exact: true }));
+    expect(onPick).toHaveBeenCalledWith(chipById('prototype'));
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(onClearTemplate).not.toHaveBeenCalled();
+
   });
 
   it('renders nothing at all with no template picked', () => {
@@ -60,24 +63,24 @@ describe('TemplatePicker', () => {
     expect(screen.queryByTestId('home-hero-template-trigger')).toBeNull();
   });
 
-  it('clears the template from the leading icon', () => {
+  it('keeps the leading icon without a clear control', () => {
     const onClearTemplate = vi.fn();
     render(
       <TemplatePicker
         templates={templates}
-        activeChipId="document"
-        onClearTemplate={onClearTemplate}
+        activeChipId="deck"
         labelFor={labelFor}
       />,
     );
 
-    fireEvent.click(screen.getByTestId('home-hero-template-clear'));
-    expect(onClearTemplate).toHaveBeenCalledTimes(1);
+    fireEvent.mouseOver(screen.getByTestId('home-hero-template-picker'));
+    expect(screen.queryByTestId('home-hero-template-clear')).toBeNull();
+    expect(onClearTemplate).not.toHaveBeenCalled();
   });
 
   it('offers no clear when the host supplies no handler', () => {
     render(
-      <TemplatePicker templates={templates} activeChipId="document" labelFor={labelFor} />,
+      <TemplatePicker templates={templates} activeChipId="deck" labelFor={labelFor} />,
     );
 
     expect(screen.queryByTestId('home-hero-template-clear')).toBeNull();
@@ -96,7 +99,6 @@ describe('TemplatePicker — the sub-type row cannot move the pill', () => {
       <TemplatePicker
         templates={templates}
         activeChipId="prototype"
-        onClearTemplate={vi.fn()}
         labelFor={labelFor}
       />,
     );
@@ -110,7 +112,6 @@ describe('TemplatePicker — the sub-type row cannot move the pill', () => {
       <TemplatePicker
         templates={templates}
         activeChipId="prototype"
-        onClearTemplate={vi.fn()}
         labelFor={labelFor}
       />,
     );
@@ -123,7 +124,6 @@ describe('TemplatePicker — the sub-type row cannot move the pill', () => {
       <TemplatePicker
         templates={templates}
         activeChipId="prototype"
-        onClearTemplate={onClearTemplate}
         labelFor={labelFor}
       />,
     );
@@ -131,7 +131,8 @@ describe('TemplatePicker — the sub-type row cannot move the pill', () => {
     // The progressive "first × drops the category, second drops the type" pair
     // went away with the retitling that made it legible.
     expect(screen.queryByTestId('home-hero-template-clear-subtype')).toBeNull();
-    fireEvent.click(screen.getByTestId('home-hero-template-clear'));
-    expect(onClearTemplate).toHaveBeenCalledTimes(1);
+    fireEvent.mouseOver(screen.getByTestId('home-hero-template-picker'));
+    expect(screen.queryByTestId('home-hero-template-clear')).toBeNull();
+    expect(onClearTemplate).not.toHaveBeenCalled();
   });
 });

@@ -1,0 +1,51 @@
+.picker[data-type='prototype'] {
+  --brand-ink: #028BFD;
+  --brand-surface: #E5F3FE;
+}
+
+.picker[data-type='deck'] {
+  --brand-ink: #FB9942;
+  --brand-surface: #FFF4EF;
+}
+
+.picker[data-type='document'] {
+  --brand-ink: #4AC26B;
+  --brand-surface: #EDF8F0;
+}
+
+.picker:global(.home-hero__footer-option):global(.home-hero__footer-option--select)[data-field-name='template']:global(.has-selection) {
+  border: 1px solid color-mix(in srgb, var(--brand-ink) 90%, transparent);
+}
+
+.switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--brand-ink);
+  font: inherit;
+  cursor: pointer;
+}
+.switcher:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.switcher:disabled { cursor: default; opacity: 0.5; }
+
+.picker .switcher:hover:not(:disabled) { background: transparent; }
+
+.picker :global(.home-hero__footer-select-menu) {
+  top: calc(100% + 7px);
+  bottom: auto;
+  border-radius: 16px;
+}
+
+.picker :global(.home-hero__footer-select-item) {
+  border-radius: 12px;
+}
+
+.picker[data-field-name='template'] :global(.home-hero__footer-select-menu) :global(.home-hero__footer-select-item.is-selected),
+.picker[data-field-name='template'] :global(.home-hero__footer-select-menu) :global(.home-hero__footer-select-item:hover),
+.picker[data-field-name='template'] :global(.home-hero__footer-select-menu) :global(.home-hero__footer-select-item:focus-visible) {
+  background: color-mix(in srgb, var(--bg-subtle) 78%, var(--bg-panel));
+  color: var(--text);
+}

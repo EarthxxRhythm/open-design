@@ -2347,16 +2347,9 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
                 style". */}
             <TemplatePicker
               templates={templateChips}
+              onPick={handlePickTaskChip}
+              disabled={pluginsLoading || pendingChipId !== null || pendingPluginId !== null}
               activeChipId={activeChipId}
-              onClearTemplate={() => {
-                trackHomeChatComposerClick(analytics.track, {
-                  page_name: 'home',
-                  area: 'chat_composer',
-                  element: 'task_chip_clear',
-                  chip_id: activeChipId ?? undefined,
-                });
-                onClearActiveChip?.();
-              }}
               labelFor={(id) => homeHeroChipLabel(id, t)}
             />
             {libraryPickerOpen ? (
