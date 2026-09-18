@@ -125,6 +125,30 @@ describe('renderSlimCoreCharter — frozen protocol markers', () => {
     expect(charter).not.toContain('visual-style catalog');
   });
 
+  /**
+   * OPEND-2707(2026-09-08 裁决:「改彻底,提示词也改」)。
+   *
+   * 澄清卡的每题副标题(`help`)已经从渲染层撤掉 —— `QuestionForm.tsx` 不再画它,
+   * `composio.css` 的 `.qf-help` 规则一并删了。但表单契约这一句还在**指路**:
+   * 「put necessary context in the title or the individual question labels/help
+   * instead」。留着它,模型就会继续往 `help` 里写上下文,而那段文字写完直接丢掉 ——
+   * 比不写更糟,因为模型以为自己已经交代过了。
+   *
+   * 上下文的去处现在只有两个:表单标题,或那道题自己的 label。
+   *
+   * 这里断言的是**组装后的 charter**,不是源码字节:`renderSlimCoreCharter`
+   * 已经把模板字符串求过值,所以 /`help`/ 这种带反引号的判据在这里是可靠的
+   * (源码上直接搜会因为 \\` 转义恒绿 —— 见
+   * `e2e/tests/question-form-visual-style-retired.test.ts` 抬头那段事故记录)。
+   */
+  it('不再把每题副标题列成上下文的去处', () => {
+    expect(charter).toContain(
+      'put necessary context in the title or the individual question labels instead',
+    );
+    expect(charter).not.toContain('labels/help');
+    expect(charter).not.toContain('`help`');
+  });
+
   it('requires recommended defaults', () => {
     expect(charter).toContain('provide a sensible default for each non-visual question');
     expect(charter).toContain('Use `defaultValue` to preselect an answer');
@@ -486,7 +510,7 @@ describe('composeSystemPrompt — slim payload gates (metadata facts / memory / 
     expect(slim).toContain('- **aspectRatio**: 1:1');
   });
 
-  it('compresses the memory scaffolding under slim while keeping headings and card shapes', () => {
+  it('compresses the memory scaffolding under slim while keeping supported card shapes', () => {
     const memoryInput = {
       ...base,
       memoryBody: '### Profile\n\nDense layouts.\n\n### Verified rules\n\n- No pure black.',
@@ -495,13 +519,9 @@ describe('composeSystemPrompt — slim payload gates (metadata facts / memory / 
     const classic = composeSystemPrompt({ ...memoryInput, promptCoreVariant: undefined });
     for (const marker of [
       '## Personal memory (auto-extracted from past chats)',
-      '## Intent gateway — turn short asks into a brief',
       '## Self-verify against your verified rules',
-      '## Propose new verified rules from corrections',
-      '<od-card type="task-brief">',
       '<od-card type="memory-applied">',
       '<od-card type="verify-scorecard">',
-      '<od-card type="rule-proposal">',
       '"status": "pass|partial|fail"',
     ]) {
       expect(slim, `slim memory must keep ${marker}`).toContain(marker);

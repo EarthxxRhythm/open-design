@@ -1,16 +1,11 @@
 // @vitest-environment jsdom
 //
-// 红测(E2 / E6):报错卡上不许出现上游原始错误串,第 4 档的〔联系支持〕要提为主。
-//
-// 权威:`specs/current/run-error-catalog.md` §6.Z;
-//       `docs/design/run-errors/error-ux-design.md` 原则五「文案说人话」。
-//
-// 在改之前:
-//   - `ChatPane.tsx` 的 `displayError = runFailureUi?.messageKey ? t(...) : rawError`
-//     会把一段英文 stderr 直接摊在卡面上 → 第一个用例红;
-//   - 〔联系支持〕永远是 `variant="secondary"`,没有「提为主」这条路 → 第二个用例红。
+// 报错卡不泄漏原始错误；专属文案和真实重连行的交接保持不变。
+// OPEND-2807 / G16 覆盖旧恢复阶梯：联系我们、导出日志常驻次级，
+// Cloud 的主动作固定重试，CLI/BYOK 的主动作固定切换到 OpenDesign Cloud。
 import { cleanup, render, screen } from '@testing-library/react';
 import { forwardRef } from 'react';
+import type { ComponentProps } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ChatPane } from '../../src/components/ChatPane';
@@ -87,7 +82,10 @@ function failedMessage(
   } as ChatMessage;
 }
 
-function renderChat(message: ChatMessage) {
+function renderChat(
+  message: ChatMessage,
+  extraProps: Partial<ComponentProps<typeof ChatPane>> = {},
+) {
   return render(
     <ChatPane
       messages={[message]}
@@ -99,8 +97,7 @@ function renderChat(message: ChatMessage) {
       onSend={vi.fn()}
       onStop={vi.fn()}
       onRetry={vi.fn()}
-      // Cloud CTA 只在宿主真的接得住时才画(ChatPane 的
-      // `cloudSwitchHandoffAvailable`);ProjectView 是接得住的那一种。
+      // 对应已接真实 Cloud 恢复回调的宿主；侧聊全链由独立宿主测试覆盖。
       onSwitchToAmrAndRetry={vi.fn()}
       conversations={[
         { projectId: 'project-1', id: 'conv-1', title: 'Current', createdAt: 1, updatedAt: 1 },
@@ -109,6 +106,7 @@ function renderChat(message: ChatMessage) {
       onSelectConversation={vi.fn()}
       onDeleteConversation={vi.fn()}
       config={{ agentId: 'claude', agentCliEnv: {} } as unknown as AppConfig}
+      {...extraProps}
     />,
   );
 }
@@ -146,29 +144,17 @@ describe('报错卡兜底文案(E2)', () => {
   });
 });
 
-describe('第 4 档「联系支持提为主」已随 OPEND-2807 退场(E6)', () => {
-  /*
-   * 第 4 档的意思一直是「**这张卡不能是死路**」——上面三档都没答案时,把常驻次级的
-   * 〔联系我们〕提上来当主按钮。
-   *
-   * OPEND-2807 之后每一张报错卡都必有第三颗 CTA(Cloud 上是〔重试〕,BYOK 上是
-   * 〔切换到 OpenDesign Cloud〕),死路在结构上已经不可能出现,这一档也就没有
-   * 触发条件了。若仍保留,S18 账号被封这类失败会在 Cloud 上同时给出两颗 primary。
-   *
-   * 所以这一节从「提为主」翻成两侧都钉:**〔联系我们〕恒为次级,而主按钮永远
-   * 是第三颗** —— 这才是「卡不能是死路」今天的实现方式。
-   */
-  it('BYOK 封号:主位归 Cloud CTA,〔联系我们〕是次级', () => {
+describe('G16:主动作按失败运行来源固定，联系支持保持次级', () => {
+  it('BYOK 封号:主位归 Cloud CTA,〔联系支持〕退回常驻次级', () => {
     renderChat(failedMessage({}, { failureDetail: 'account_suspended' }));
     const support = screen.getByTestId('chat-error-contact-support');
     expect(support.dataset.primary).toBeUndefined();
-    expect(support.dataset.runErrorAction).toBe('secondary');
     expect(
       screen.getByTestId('chat-error-switch-to-cloud').dataset.runErrorAction,
     ).toBe('primary');
   });
 
-  it('已经在 Cloud 上的封号:主位归〔重试〕,〔联系我们〕同样是次级', () => {
+  it('已经在 Cloud 上的封号:主动作重试，联系支持保持次级', () => {
     renderChat(
       failedMessage({ agentId: 'amr' }, { failureDetail: 'account_suspended' }),
     );
@@ -179,7 +165,7 @@ describe('第 4 档「联系支持提为主」已随 OPEND-2807 退场(E6)', () 
     expect(screen.getByTestId('chat-error-retry').dataset.runErrorAction).toBe('primary');
   });
 
-  it('普通可重试的卡上,〔联系我们〕仍是常驻次级', () => {
+  it('普通可重试的卡上,〔联系支持〕仍是常驻次级', () => {
     renderChat(failedMessage({}, { failureDetail: 'process_crashed' }));
     const support = screen.getByTestId('chat-error-contact-support');
     expect(support.dataset.primary).toBeUndefined();
@@ -204,21 +190,76 @@ describe('R9 断线:报错卡让位给流水最后一行的重连行', () => {
     manualRetry: false,
   };
 
-  it('持久化的断线行不出报错卡', () => {
+  /*
+   * ⚠️ 这两条原来是**不带 `reconnect`** 渲染的,断言仍然是「不出卡」——
+   * 那钉住的是 bug,不是不变量:接手方不在场时让位,等于两边都不说话。
+   * 现在两条都把接手方摆在场,钉的才是它们本来要钉的那件事:**认出**这条失败的
+   * 两条线索(结构化 code / 老行只有 detail)各自都能触发交接。
+   * 「接手方不在场」那一侧由下面两条负责。
+   */
+  it('持久化的断线行,重连行在场时不出报错卡', () => {
     const { container } = renderChat(
       failedMessage({}, {
         code: GENERIC_DAEMON_DISCONNECT_CODE,
         detail: GENERIC_DAEMON_DISCONNECT_MESSAGE,
       }),
+      { reconnect: reconnectExhausted, onManualReconnect: vi.fn() },
     );
+    expect(screen.getByTestId('chat-reconnect')).toBeTruthy();
     expect(container.querySelector('[data-user-action-card="run-recovery"]')).toBeNull();
   });
 
-  it('这条码引入之前落库的行(只有 detail、没有 code)同样不出卡', () => {
+  it('这条码引入之前落库的行(只有 detail、没有 code)同样交给在场的重连行', () => {
     const { container } = renderChat(
       failedMessage({}, { code: undefined, detail: GENERIC_DAEMON_DISCONNECT_MESSAGE }),
+      { reconnect: reconnectExhausted, onManualReconnect: vi.fn() },
     );
+    expect(screen.getByTestId('chat-reconnect')).toBeTruthy();
     expect(container.querySelector('[data-user-action-card="run-recovery"]')).toBeNull();
+  });
+
+  /*
+   * 交接只在接手方真的在场时成立 —— 这是余额那一档
+   * (`balanceCardCannotTakeTheHandoff`)早就写死的同一条不变量,断线这一档漏了半边。
+   *
+   * 现场:一轮因断流失败,用户退出项目再进来。`ProjectView` 有一条专门的卸载
+   * effect 把 `reconnectView` 清空(「换项目 / 离开这一屏,本地就不再跟着那条流了」),
+   * 于是重连行不在场;而报错卡这边仍然无条件让位。两边都不说话,那一轮在屏幕上
+   * 一个字都没有 —— 既没有失败的说明,也没有任何恢复入口。
+   */
+  it('重连行不在场时(退出项目再进来),断线那一轮必须由报错卡接住', () => {
+    const { container } = renderChat(
+      failedMessage({}, {
+        code: GENERIC_DAEMON_DISCONNECT_CODE,
+        detail: GENERIC_DAEMON_DISCONNECT_MESSAGE,
+      }),
+      { reconnect: null },
+    );
+    // 接手方不在场。
+    expect(screen.queryByTestId('chat-reconnect')).toBeNull();
+    // 所以这张卡不能再让位。
+    const card = container.querySelector('[data-user-action-card="run-recovery"]');
+    expect(card).toBeTruthy();
+    // 说的是断线这件事本身,不是兜底那句。
+    const description = card!.querySelector(
+      '[data-testid="chat-run-error-description"]',
+    )!.textContent;
+    expect(description).toContain('chat.connectionDropped');
+    expect(description).not.toContain('chat.runError.fallbackMessage');
+    // 而且带得出恢复动作 —— 屏幕上什么都不剩才是这条 bug 的形状。
+    expect(screen.getByTestId('chat-error-switch-to-cloud').dataset.runErrorAction).toBe('primary');
+    expect(screen.queryByTestId('chat-error-retry')).toBeNull();
+  });
+
+  it('重连行不在场时,老行(只有 detail、没有 code)同样由报错卡接住', () => {
+    const { container } = renderChat(
+      failedMessage({}, { code: undefined, detail: GENERIC_DAEMON_DISCONNECT_MESSAGE }),
+      { reconnect: null },
+    );
+    expect(screen.queryByTestId('chat-reconnect')).toBeNull();
+    expect(container.querySelector('[data-user-action-card="run-recovery"]')).toBeTruthy();
+    expect(screen.getByTestId('chat-error-switch-to-cloud').dataset.runErrorAction).toBe('primary');
+    expect(screen.queryByTestId('chat-error-retry')).toBeNull();
   });
 
   it('重连行在场时,屏幕上只有它一块 UI', () => {

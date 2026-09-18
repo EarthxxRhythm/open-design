@@ -366,7 +366,7 @@ test('[P0] @critical AMR model catalog invalid-key failures return to sign-in wi
   expect(loginRequested).toBe(false);
 });
 
-test('[P0] @critical non-AMR model failures stay recoverable while Cloud is signed out', async ({ page }) => {
+test('[P0] @critical signed-out Cloud switching keeps the existing sign-in gate without auto-retry', async ({ page }) => {
   await stubCatalogsEmpty(page);
   await stubRuntimeAgents(page);
   let loggedIn = false;
@@ -453,13 +453,15 @@ test('[P0] @critical non-AMR model failures stay recoverable while Cloud is sign
 
   await gotoProject(page, projectId);
 
-  const switchAndRetry = page.getByRole('button', { name: /Switch to OpenDesign Cloud/i }).first();
-  await expect(switchAndRetry).toBeVisible({ timeout: T.long });
-  await switchAndRetry.click();
+  const card = runErrorCard(page);
+  await expect(card.getByRole('button')).toHaveText([
+    'Contact us', 'Export logs', 'Switch to OpenDesign Cloud',
+  ]);
+  await card.getByRole('button', { name: 'Switch to OpenDesign Cloud', exact: true }).click();
 
-  await expect
-    .poll(() => new URL(page.url()).pathname, { timeout: T.medium })
-    .toBe('/onboarding');
+  // OPEND-3205 removes the Settings detour, not the existing authentication
+  // gate. Keep the signed-out fixture and require explicit sign-in, with no run.
+  await expect(page).toHaveURL(/\/onboarding$/, { timeout: T.medium });
   await expect(page.getByRole('heading', { name: /Sign in to OpenDesign|登录 OpenDesign/i })).toBeVisible();
   await expect
     .poll(async () => {
@@ -468,7 +470,8 @@ test('[P0] @critical non-AMR model failures stay recoverable while Cloud is sign
     })
     .toBe('amr');
   expect(loginRequested).toBe(false);
-  expect(runRequests.bodies.filter((body) => body.agentId === 'amr')).toHaveLength(0);
+  await runRequests.expectNone();
+  await expect(page).toHaveURL(/\/onboarding$/);
   runRequests.dispose?.();
 });
 
@@ -761,17 +764,8 @@ test('[P0] after an AMR failure the user can switch to Codex and complete a fres
   ).toBeVisible();
 });
 
-/*
- * 上游过载(S10)这一档:这一轮跑的是本地 claude,所以主位必然是那颗
- * 〔切换到 OpenDesign Cloud〕。
- *
- * ⚠️ **判据翻过两次。** OPEND-2772 / 规格 T68(产品 2026-09-07)先把 CTA 铺到
- * 所有 BYOK / 本地 CLI 的失败,〔重试〕退到次级仍留在卡上;用户 2026-09-08 再
- * 改成「**有切换至 cloud 一律只显示切换至 cloud,没有的情况下再显示那个重试**」,
- * 于是阶梯那一颗(含〔重试〕)在这张卡上整块不画。
- * 反向那一侧照旧由 amr 的用例守着。
- */
-test('[P0] upstream outages offer the Cloud switch as the card\'s only action', async ({ page }) => {
+// G16: CLI failures offer only the Cloud switch; classification and raw diagnostics remain.
+test('[P0] CLI upstream outages preserve guidance with only the Cloud switch', async ({ page }) => {
   await stubCatalogsEmpty(page);
   await stubRuntimeAgents(page);
   const root = join(tmpdir(), `open-design-upstream-ui-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
@@ -844,18 +838,20 @@ test('[P0] upstream outages offer the Cloud switch as the card\'s only action', 
 
   await gotoProject(page, projectId);
 
-  await expect(
-    page.getByRole('button', { name: /^Switch to OpenDesign Cloud$/i }),
-  ).toHaveCount(1, { timeout: T.long });
-  await expect(runErrorCard(page)).toContainText(
-    /Model service unavailable|current model is temporarily unavailable/i,
+  const card = runErrorCard(page);
+  await expect(card).toContainText('Model service unavailable', { timeout: T.long });
+  await expect(card.getByTestId('chat-run-error-description')).toHaveText(
+    'The current model is temporarily unavailable. Try again later, or switch models.',
   );
-  // 用户 2026-09-08:有 Cloud CTA 就不再同时给〔重试〕。
-  await expect(page.getByRole('button', { name: /^Retry$|^重试$|^重試$/i })).toHaveCount(0);
+  await expect(card.getByRole('button')).toHaveText([
+    'Contact us', 'Export logs', 'Switch to OpenDesign Cloud',
+  ]);
+  await expect(card.getByRole('button', { name: /^Retry$/i })).toHaveCount(0);
+  await expect(card).not.toContainText('The model provider is temporarily unavailable.');
   await expect(page.getByText(/Model call failed/i)).toHaveCount(0);
 });
 
-test('[P1] zh-CN run failure guidance shows actionable copy and expandable raw source', async ({ page }) => {
+test('[P1] zh-CN context-limit guidance offers only Cloud switching and keeps raw source off the card', async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.setItem('open-design:locale', 'zh-CN');
     window.localStorage.setItem('open-design:locale-source', 'manual');
@@ -932,13 +928,14 @@ test('[P1] zh-CN run failure guidance shows actionable copy and expandable raw s
 
   const card = runErrorCard(page);
   await expect(card).toContainText('对话内容过长', { timeout: T.long });
-  await expect(card).toContainText('当前对话和附件超过了 AI 可处理的长度');
-  // T68:codex 是本地 agent,主位归 Cloud CTA。**按钮名要用 zh-CN 那一份** ——
-  // 这一格从前写的是英文名 + `toHaveCount(0)`,而这条用例整页跑在 zh-CN 下,
-  // 英文名本来就永远匹配不到:判据翻面之前它就已经是一条恒真断言了。
-  await expect(page.getByRole('button', { name: '切换到 OpenDesign Cloud' })).toHaveCount(1);
-  // 用户 2026-09-08:有 Cloud CTA 就不再同时给〔重试〕。
-  await expect(page.getByRole('button', { name: /^重试$/ })).toHaveCount(0);
+  // L7 revision 96 approved context-limit wording; preserve the original code/detail fixture.
+  await expect(card.getByTestId('chat-run-error-description')).toHaveText(
+    '当前上下文已超出模型可处理的长度，请新建对话后再试。',
+  );
+  await expect(card.getByRole('button')).toHaveText([
+    '联系我们', '导出日志', '切换到 OpenDesign Cloud',
+  ]);
+  await expect(card.getByRole('button', { name: '重试', exact: true })).toHaveCount(0);
 
   // 卡上不再有「错误详情」折叠(用户 2026-08-27):既没有那颗〔查看详情〕,
   // 上游原文也不出现在卡上的任何地方。
@@ -946,21 +943,18 @@ test('[P1] zh-CN run failure guidance shows actionable copy and expandable raw s
   await expect(card).not.toContainText(rawDetail);
 });
 
-/*
- * Antigravity 的限流。它**是**一个本地 agent,所以主位归〔切换到 OpenDesign Cloud
- * 并重试〕(`runsOnALocalAgent` 是出口不变式两侧共用的那一个判据)。
- *
- * ⚠️ **这条用例被用户 2026-09-08 的裁决削掉了一半。** T68 时它钉的是「终端换模型
- * 那颗仍然在,只是退到次级」;新规则「有切换至 cloud 一律只显示切换至 cloud」之后,
- * 阶梯那一颗(这里是〔Switch model in terminal〕)整块不画,于是
- * `POST /api/agents/antigravity/oauth-launch` **从报错卡上再也点不到**。
- * 这是候选 B 的固有代价,不是实现漏了 —— 已记进
- * `specs/current/chat-panel-decisions-sheet.md`,等产品看要不要给它留条路。
- * 用例保留成「这张卡现在给什么」的凭据,并守住那颗按钮确实没了。
- */
-test('[P0] antigravity rate limits leave the Cloud switch as the card\'s only action', async ({ page }) => {
+// G16 replaces terminal/retry actions on this CLI error card with the single Cloud action.
+test('[P0] antigravity rate limits keep classification and use only the Cloud switch', async ({ page }) => {
   await stubCatalogsEmpty(page);
   await stubRuntimeAgents(page);
+  // This case owns the signed-in in-project switch. The signed-out gate is
+  // covered separately above, without relying on another worker test's login.
+  await page.route('**/api/integrations/vela/status*', async (route) => {
+    await route.fulfill({ json: {
+      loggedIn: true, profile: 'local',
+      user: { id: 'antigravity-switch-user', email: 'antigravity-switch@example.com', plan: 'free' },
+    } });
+  });
   let oauthLaunchCalls = 0;
   await page.route('**/api/agents/antigravity/oauth-launch', async (route) => {
     oauthLaunchCalls += 1;
@@ -1036,13 +1030,21 @@ test('[P0] antigravity rate limits leave the Cloud switch as the card\'s only ac
 
   await gotoProject(page, projectId);
 
-  await expect(runErrorCard(page)).toBeVisible({ timeout: T.long });
-  await expect(page.getByRole('button', { name: /^Switch to OpenDesign Cloud$/i })).toHaveCount(1);
-  // 阶梯那一档整块让位:终端换模型和从头重试都不在这张卡上了。
-  await expect(page.getByRole('button', { name: /Switch model in terminal/i })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: /^Retry$|^重试$|^重試$/i })).toHaveCount(0);
-  // 按钮没了,那条 oauth 路由自然也不该被谁悄悄打一次。
+  const originalUrl = page.url();
+  const runRequests = trackRunRequests(page);
+  const card = runErrorCard(page);
+  await expect(card).toContainText('Model service is busy', { timeout: T.long });
+  await expect(card).not.toContainText('Switch to another Antigravity model before retrying this run.');
+  await expect(card.getByRole('button')).toHaveText([
+    'Contact us', 'Export logs', 'Switch to OpenDesign Cloud',
+  ]);
+  await expect(card.getByRole('button', { name: /Switch model in terminal|^Retry$/i })).toHaveCount(0);
+  await card.getByRole('button', { name: 'Switch to OpenDesign Cloud', exact: true }).click();
+  await expect(page.getByText('Switched to OpenDesign Cloud. Please resend your task.', { exact: true })).toBeVisible();
+  await expect(page).toHaveURL(originalUrl);
+  await runRequests.expectNone();
   expect(oauthLaunchCalls).toBe(0);
+  runRequests.dispose?.();
 });
 
 async function setupAmrWorkspace(

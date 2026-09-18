@@ -489,81 +489,46 @@ T4 / T6 是小的默认值问题,现状能跑,不急。
 
 **未决 / 未做**
 
-- **其余 17 个 locale 仍是旧句子的各自译文**,没有跟着改 —— 翻译属于产品文案,不自拟。要补的话需要产品逐条给。
-- `.fork-sep span` 带着 `overflow: hidden; text-overflow: ellipsis`,但标签本身是 flex 容器,`text-overflow` 永远不生效;长译文会被切掉而不是省略号。自 #2714 落地起如此,修法要给标签加一层纯文本内层。
 - `docs/design/chat-mirror/mirror-exec.html` 是**生成产物**,仍停在两块式旧形态且写着旧文案。重建会产生约 776KB 的巨型 diff,单独一件事。
 - daemon 在源会话没有标题时整个压掉 `forkedInto` 戳(`routes/project/conversations.ts`「拿不到源标题就不盖」)。标题现在已经不渲染了,无标题的源会话理应仍然值得那条分界线。
 
+**已收尾**
+
+- ~~**其余 17 个 locale 仍是旧句子的各自译文**,没有跟着改。~~ **已补齐(2026-09-08 用户拍板「都改」)**:除已定稿的 `en` / `zh-CN` / `zh-TW` 外的 **16 支**语言包(目录下共 19 支)全部改成对齐新英文 `Continued from chat` 的说法 —— 说的是「来处」(这段是从上一个会话接着来的),不再是旧句的「上下文已带过来 + 接着说」。用词跟各 locale 自己的 `assistant.forkConversation` 走(`es-ES` 例外:`conversación` 那条会到 1.63×,改用 `chat`)。长度全部控制在英文 19 字符的 1.5× 以内,最长 `de` 28 字符。
+- ~~`.fork-sep span` 带着 `overflow: hidden; text-overflow: ellipsis`,但标签本身是 flex 容器,`text-overflow` 永远不生效;长译文会被切掉而不是省略号。~~ **已修**(#7868 评审线程 → 修复 PR):文案搬进内层 `.fork-note-label`,截断四条(`min-width: 0` / `overflow: hidden` / `text-overflow: ellipsis` / `white-space: nowrap`)落在那一层;`.fork-sep span` 同时换成子组合符 `.fork-sep > span`,否则内层会被一起按成 `flex: none`,不可收缩的 flex item 宽度恒等于内容宽度,省略号照样轮不到。守卫 `e2e/ui/fork-note-ellipsis.test.ts`:真浏览器里用**最长的那支译文**(德语)在受限宽度下渲染,先证明它真的溢出了(`scrollWidth > clientWidth`),再拿同一个元素强制 `text-overflow: clip` 的渲染做对照 —— 两张画得一样就说明还是硬切。判据只读几何和像素,不碰类名和声明:`apps/web/src/components/chat/AGENTS.md` §5 禁止断言 CSS 类名/声明,而且缺陷现场那句 `text-overflow: ellipsis` **本来就写着**,断言声明必然假绿。结构那一条(文案由自己的元素承载)在 `AssistantMessage.fork-continued-line.test.tsx` 里,走 `data-testid`。
+
 ---
-## 报错卡只有三颗按钮,只分两种情况(OPEND-2807,2026-09-08 产品拍板)
 
-**工单(权威)**:「[ChatPanel] 错误卡片未还原设计样式,**应该只有三个按钮**」
+## 2026-09-08 用户当面裁决三条
 
-| 运行环境 | 三颗 |
-|---|---|
-| AMR / OpenDesign Cloud | 联系我们 · 导出日志 · **重试** |
-| CLI / BYOK | 联系我们 · 导出日志 · **切换到 OpenDesign Cloud** |
+### 1. 队列行第三颗按钮:并成一颗「引导对话」
 
-**用户当面补充(逐字)**:「**别分那么多情况了**」「**amr 只有这个 cta**」。
+原话:「**引导对话就是原本的立即发送啊,只不过我们换了个名字跟 codex 客户端对齐了下**」。
 
-**这推翻了 §6.ZB 末尾的 A / B / C 三候选框架。** 那三条都还在讨论「阶梯算出来的
-那颗动作留不留、留成什么分量」;工单的答案是**它压根不上卡**,也就没有分档可言。
-`run-error-catalog.md` §6.ZB 的候选表**原文不动**(它记录的是当时摆给产品的选项),
-本条是它的终局答案。当天更早两版口径(「整组不出」「只让重试/续跑与 Cloud CTA
-互斥」)同样作废,以本条为准。
+依据核实:`onSendQueuedNow` 和 `onSteerQueuedSend` 两个 prop 的实参**是同一个函数** `sendQueuedChatSendNow`,差别只有标签文字、`canSteerCurrentTurn` 这道门、以及埋点的 `element` 值。交付稿(`729fa43ce7` 组件 17「Queue」)三行样例的第三颗**一律**是 `aria-label="引导对话" data-tip="引导对话"`,**没有**只有图标的「立即发送」那一面。
 
-**落地**
+落地:并成一颗,门去掉,tooltip 收敛回稿子的四个字。**顺序仍按 OPEND-2715 的 引导会话 → 编辑 → 删除**(工单晚于稿子;稿子自己的 `qops` 源码顺序是 编辑 → 移除 → 引导对话,这条分歧**故意保留**,下一个拿稿子做 diff 的人会遇到)。
 
-1. `ChatPane` 的 `RunErrorCardActionGroup` 整块撤掉。随之不再上卡的对症动作:
-   〔授权并重试〕(内联 AmrLoginPill)〔去设置〕〔去充值〕〔升级套餐〕〔更换模型〕
-   〔在终端登录〕〔在终端换模型〕〔继续运行〕。
-2. 第三颗由一个具名判据 `showRetryCta = !showCloudSwitchCta` 二选一;两颗天然互斥
-   且必有其一(`amr-guidance.ts` 出口不变式两侧同源),所以卡上永远正好三颗。
-3. 〔联系我们〕〔导出日志〕恒在、**恒为次级**。阶梯第 4 档「〔联系支持〕升格成
-   主按钮」一并删除 —— 每张卡都必有第三颗 CTA,死路在结构上不可能出现;若保留,
-   S18 账号被封会在 Cloud 上同时给出两颗 primary。
-4. **接手方不在场就不让位**(评审 PerishCode · `PRRT_kwDOSOgY8s6gG7NN`):
-   `showCloudSwitchCta` 额外要求宿主真的接了 `onSwitchToAmrAndRetry` 或
-   `onOpenAmrSettings`。`workspace/SideChatTab.tsx` 只传 `onRetry`,在那里画出
-   CTA 又压掉重试会得到一颗点了没反应的按钮 + 一张没有出路的卡。三颗按钮、两种
-   情况一个没变,变的只是「哪一种情况」的判据。
+埋点:`element: 'send_now'` **从此不再产生**,只剩 `'steer'`。类型联合里保留 `send_now`(PostHog 历史事件还在,看板要能编译),注释已改成「已退役,不是改名」。**队列漏斗看板的所有者需要知道这件事。**
 
-**文案(19 语齐,`types.ts` 两个键都已存在,只改值)**
+### 2. 问卷澄清卡副标题:改彻底,提示词一起收
 
-| key | 旧 | 新 | 理由 |
-|---|---|---|---|
-| `chat.runError.contactSupportCta` | 联系支持 | **联系我们** | 工单逐字 |
-| `chat.amrCard.switchCta` | 切换到 OpenDesign Cloud 并重试 | **切换到 OpenDesign Cloud** | 工单逐字 |
+原话:「**改彻底是的, 提示词也改**」。
 
-`chat.runError.exportLogsCta`(导出日志)与 `promptTemplates.retry`(重试)现值已与
-工单一致,未动。⚠️ 稿子 `body-scene.html:302` 的 `data-tip` 写的是「联系支持」,
-与工单不一致 —— **工单较新,以工单为准**,稿子那处作为历史保留。
+9-07 分诊给的两条路里选②(渲染 + 提示词链路)。模型面 3 处(`core-slim.ts` 的 `labels/help`、`system.ts` 本地化清单里的 `helper text`、以及 `packages/contracts` 那份 API/BYOK 镜像)全部去掉;宿主自己那条 ElevenLabs 音色说明按「不丢信息」原则**并进 `label`**。`FormQuestion.help` 字段**保留**并标休眠(参照六个 `qf.visual*` 键的先例)。
 
-**代价(执行时才看得全,请产品过目)**
+### 3. Cloud 切换按钮:只对齐按钮,报错文案不对齐
 
-1. **S04 Cloud 未登录的卡上没有登录入口了。** 内联 `AmrLoginPill` 随对症动作一起
-   撤下,卡上只剩一颗必然再失败一次的〔重试〕。
-2. **antigravity 的〔在终端换模型〕没了,`POST /api/agents/antigravity/oauth-launch`
-   从此在 web UI 里没有入口** —— 它此前只有报错卡这一个调用点,而 antigravity
-   永远是本地 agent,没有「另一侧」可以活。
-3. **可续跑的失败拿不到〔继续运行〕**,也就失去「保住已经跑出来的半截活」那条路。
-4. **S30 环境类(证书 / 代理)没有〔去设置〕**,S13 模型下线没有〔更换模型〕,
-   余额不足在白卡兜底那一档没有〔充值〕—— 这几档现在给的是一颗结果必然相同的
-   〔重试〕(Cloud)或换运行时的〔切换到 Cloud〕(BYOK),**与设计原则四
-   「重试只在有用时出现」直接冲突**。工单是较新的权威,冲突留在这里等产品定夺。
+原话:「切换到 cloud 就行了,你怎么写那么长的文案『切换到 Cloud 并重试』」、「**具体的报错文案不一定跟设计稿对齐, 按钮文案对齐先**」。
 
-**埋点取值面收窄(未删类型,只是不再产生)**
+`chat.amrCard.switchCta` 19 个 locale 全部缩短(zh-CN 为「切换到 Cloud」,en 为 `Switch to Cloud`),对齐交付稿第 5772 行。
 
-`run_recovery_action_surface_view` / `run_recovery_action_click` 从报错卡出来的
-`recovery_action_type` 只剩 `manual_retry`(Cloud)与 `switch_runtime_retry`(BYOK),
-两者互斥。**不再由报错卡产生**:`authorize_and_retry`、`switch_model_retry`、
-`resume_run`。入口来源 `chat_error_recharge` / `chat_error_upgrade` 同样不再产生
-(升级卡的 `chat_upgrade_card` 照旧)。
+⚠️ **标题与正文按裁决明确不对齐**:稿子那一格写的是「本地环境跑不动这一步」+「当前运行在 CLI / BYOK 环境…」,而产品是**每类失败各说各的**(例:Claude 登录过期 → 「Claude 尚未登录」)。这不是遗漏,是产品选择。`chat-panel-edge-audit.md:329`、`run-error-catalog.md:405-406` 等处 2026-09-07 的记载写着「改文案不在授权范围内」—— 那些是**当时的**存档,不改;本条是新的裁决。
 
-**红测**:`apps/web/tests/components/chat/opend-2807-error-card-three-actions.test.tsx`
-(两种环境各钉「恰好三颗、且是这三颗」,一张 13 行失败矩阵扫「一颗都不多」,
-外加接手方缺席与 `withoutCloudSelfPromotion` 两组反向锚点)。
+⚠️ 按钮**数量**也和稿子不一致(稿子 2 颗,产品 4 颗),`run-error-catalog.md:421-430` 里 A/B 两案仍挂着等产品挑,本次未动。
 
-**留给另一单**:卡片标题 / 正文按飞书产品文档「润色标题 + 润色正文」逐格核对,
-不在本单范围。本单执行中发现的一处文案错配已记下但**未动手**:S13 正文仍写着
-「更换模型后重试」,而卡上已无换模型入口。
+### 本轮顺带确认、**未做**的
+
+- `docs/design/chat-mirror/mirror-exec.html:8948` 的说明在文案改后变成了反话(它和 `mirror-gallery.test.tsx:1687` 逐字配对)。生成产物,与 fork 那条同属「重建是 776KB 巨型 diff」的待办。
+- `chat.amrCard.switchTitle` / `switchBody` / 三枚 chip 共 **5 个死键**(OPEND-2772 删掉 AmrGuidance 卡之后没有消费者),19 locale × 5 + `types.ts`。纯机械清理,单独一个 PR 更干净。
+- hu 的 `Cloud-re`、tr 的 `Cloud'ye` 是前元音后缀,而 "Cloud" 读作 /klaud/ 属后元音,按元音和谐应为 `-ra` / `'a`。**旧串里就带着的**,本次只做了「删掉多余部分」的最小变换,没顺手改翻译质量。

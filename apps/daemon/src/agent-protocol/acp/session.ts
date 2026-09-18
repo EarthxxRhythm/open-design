@@ -7,7 +7,15 @@
  * connectionTest.ts and server.ts (via the acp/ barrel).
  */
 import path from 'node:path';
-import type { ExecutionProfile } from '@open-design/contracts';
+import {
+  AMR_CONTINUATION_ERROR_CODE,
+  isAmrContinuationIncomplete,
+  parseAmrContinuationRecovery,
+  supportsAmrNativeContinuation,
+  type AmrContinuationCursor,
+  type AmrContinuationRecovery,
+  type ExecutionProfile,
+} from '@open-design/contracts';
 import {
   createDsmlArtifactTextSuppressor,
   createToolCallTextSuppressor,
@@ -29,6 +37,7 @@ import {
 import { errorMessage, asObject, extractAcpUpdateText, extractAcpStatusDetail } from './json.js';
 import {
   sendRpc,
+  sendRpcNotification,
   sendRpcResult,
   isJsonRpcId,
   rpcErrorMessage,
@@ -41,7 +50,7 @@ import {
 } from './rpc.js';
 import {
   acpRawEventShape,
-  isAcpTerminalFailureStatus,
+  isAcpToolUpdateError,
   acpToolCallId,
   isAcpArtifactWriteLabel,
   isAcpArtifactWriteUpdate,
@@ -139,6 +148,7 @@ export interface AttachAcpSessionOptions {
   // `session/new`. The agent verifies the session and, if it is gone, returns a
   // structured `resume_failed` error the caller maps to its reseed path.
   resumeSessionId?: string | null;
+  nativeContinuation?: AmrContinuationCursor | null;
   /** Safe model/session metadata attached to the exact prompt-frame diagnostic. */
   promptBudgetContext?: AcpPromptBudgetContext;
   // Subsegment timing markers for spawn->first-token attribution (#3408 §4).
@@ -201,6 +211,7 @@ export function attachAcpSession({
   modelUnavailableErrorCode,
   completePromptOnTurnEnd = false,
   resumeSessionId,
+  nativeContinuation,
   promptBudgetContext,
   onCliReady,
   onSessionInit,
@@ -249,6 +260,8 @@ export function attachAcpSession({
   // conversation to resume next turn. Distinct from `sessionId`, which is the
   // ACP wrapper id ("vela-opencode-1").
   let durableSessionId: string | null = null;
+  let nativeContinuationSupported = false;
+  let continuationRecovery: AmrContinuationRecovery | null = null;
   let activeModel: string | null = null;
   let modelConfigId: string | null = null;
   let emittedThinkingStart = false;
@@ -316,6 +329,8 @@ export function attachAcpSession({
     path: string | null;
     pathRank: number;
     resultContent: string;
+    /** Explicit failure evidence survives partial and status-only updates. */
+    failed: boolean;
     /** Sticky: once true, never cleared by later status-only frames. */
     thinkOnly: boolean;
     firstSeenAt: number;
@@ -401,7 +416,7 @@ export function attachAcpSession({
   const emitTerminalToolPair = (
     toolCallId: string,
     st: AcpToolRunState,
-    isError: boolean,
+    isError = false,
     origin: AcpTerminalToolOrigin = 'agent_frame',
   ) => {
     if (st.emitted) return;
@@ -441,14 +456,14 @@ export function attachAcpSession({
       // Bash/execute stdout can dump private files (cat .env). Langfuse only
       // lexically masks Bash, so redact before the canonical transcript ships.
       content: acpSafeToolResultContent(st.name, st.resultContent),
-      isError,
+      isError: isError || st.failed,
     }, meta), meta);
     // Concrete only on terminal tool_result for a real (non-think) tool.
     emittedConcreteToolEvent = true;
   };
 
   // Flush tools that never received a terminal `tool_call_update`. Clean
-  // completion uses isError=false (best-effort close); fail paths use
+  // completion preserves accumulated tool failures; fail paths use
   // isError=true so Langfuse/PostHog and the persisted transcript keep the
   // open tool as an errored result instead of dropping it entirely.
   //
@@ -474,7 +489,39 @@ export function attachAcpSession({
     // session immediately.
     if (stageWatchdogDisabled) return;
     stageTimer = setTimeout(() => {
-      fail(`ACP ${label} timed out after ${stageTimeoutMs}ms`);
+      // This is the DAEMON's own verdict, not the agent's: nobody reported a
+      // failure, we decided the stage was over and killed the child. Say so in
+      // structured form.
+      //
+      // Emitted bare (`{ message }`), the only thing that could still recover
+      // "this run timed out" was a regex over the English sentence below
+      // (`isTimeoutText` in run-failure-classification.ts). Every path that
+      // rewrites, wraps, localizes or drops an ACP error message therefore
+      // silently downgraded the run to `process_exit / exit_code` — which is
+      // `retryable: false` / `user_action: 'none'`, i.e. the generic failure
+      // card with no Retry, for a failure whose whole remedy IS a retry.
+      //
+      // `details.kind` is the same discriminator the other named ACP failures
+      // already carry (`acp_child_exit`, `acp_no_visible_output`, `amr_model`),
+      // so the classifier can read the verdict instead of re-deriving it.
+      //
+      // The value is namespaced to this watchdog on purpose. `details` is NOT a
+      // daemon-private slot: the JSON-RPC error branch below copies an agent's
+      // `error.data` into it verbatim (`fail(rpcErr, { details })`), so a
+      // generic `kind: 'timeout'` — a value any vendor SDK might plausibly emit
+      // for its own timeout — would arrive at `hasDaemonTimeoutVerdict`
+      // indistinguishable from this one and claim a watchdog kill that never
+      // happened. `acp_stage_timeout` names the specific daemon mechanism, so
+      // no upstream payload collides with it by accident.
+      fail(`ACP ${label} timed out after ${stageTimeoutMs}ms`, {
+        retryable: true,
+        details: {
+          kind: 'acp_stage_timeout',
+          action: 'retry',
+          phase: label,
+          timeout_ms: stageTimeoutMs,
+        },
+      });
     }, stageTimeoutMs);
   };
 
@@ -523,6 +570,24 @@ export function attachAcpSession({
     if (!terminalOwnedByCaller && !child.killed) child.kill('SIGTERM');
   };
 
+  /**
+   * Terminate the turn with a message, and optionally a structured payload.
+   *
+   * `options.details` is emitted as `error.details`, and that slot is SHARED:
+   * daemon-authored verdicts (`acp_stage_timeout`, `acp_child_exit`,
+   * `acp_no_visible_output`, `amr_model`) and agent-supplied JSON-RPC
+   * `error.data` — copied in verbatim by the two `fail(rpcErr, { details })`
+   * call sites in the message handler — land in the same place and are
+   * indistinguishable once emitted. Anything downstream that reads a
+   * daemon verdict out of `details` is therefore trusting a name, not an
+   * origin: keep those names namespaced to the mechanism that writes them
+   * (`acp_stage_timeout`, not `timeout`) so no upstream payload collides by
+   * accident.
+   *
+   * To make a daemon verdict genuinely unforgeable it needs its own option and
+   * its own emitted field, one no agent payload is ever copied into. That is a
+   * frame-shape change and is deliberately not done here.
+   */
   const fail = (
     message: string,
     options: { forceModelUnavailable?: boolean; details?: unknown; retryable?: boolean } = {},
@@ -838,12 +903,11 @@ export function attachAcpSession({
     expectedId = promptRequestId;
     writeRpc(
       promptRequestId,
-      'session/prompt',
-      {
-        sessionId,
-        prompt: buildPromptBlocks(prompt, [...resourcePaths, ...imagePaths]),
-      },
-      'session/prompt',
+      nativeContinuation ? '_session/continue' : 'session/prompt',
+      nativeContinuation
+        ? { sessionId, continuation: nativeContinuation }
+        : { sessionId, prompt: buildPromptBlocks(prompt, [...resourcePaths, ...imagePaths]) },
+      nativeContinuation ? '_session/continue' : 'session/prompt',
     );
     send('agent', {
       type: 'status',
@@ -866,6 +930,17 @@ export function attachAcpSession({
     });
   };
 
+  let completionText: string | null = null;
+  const prepareCompletionText = (checkVisibleOutput = false): string => {
+    if (completionText === null) {
+      const flushedToolText = checkVisibleOutput
+        ? toolCallTextSuppressor.flushForVisibleOutputCheck()
+        : toolCallTextSuppressor.flush();
+      completionText = flushedToolText ? (dsmlArtifactSuppressor?.strip(flushedToolText) ?? flushedToolText) : '';
+    }
+    return completionText;
+  };
+
   const finishCleanPrompt = (usageSource?: unknown) => {
     if (finished) return;
     // Mark the prompt finished before notifying observers so duplicate results
@@ -875,9 +950,8 @@ export function attachAcpSession({
     // Flush any tools still open when the prompt completes so traces stay
     // complete (one tool_use + tool_result per id).
     flushOpenAcpTools();
-    const flushedToolText = toolCallTextSuppressor.flush();
+    const flushedText = prepareCompletionText();
     noteToolCallTextSuppression('tool_call_xml_flush');
-    const flushedText = flushedToolText ? (dsmlArtifactSuppressor?.strip(flushedToolText) ?? flushedToolText) : '';
     if (flushedText) {
       emitVisibleTextDelta(flushedText);
     }
@@ -977,6 +1051,19 @@ export function attachAcpSession({
         return;
       }
       const details = rpcErrorData(obj);
+      if (modelUnavailableErrorCode && obj.id === promptRequestId && isAmrContinuationIncomplete(rpcErr, details)) {
+        const recovery = parseAmrContinuationRecovery(details);
+        // Check before fail() flushes incomplete tools into synthetic errors.
+        const toolsCommitted = acpToolRunEventState.size > 0 &&
+          [...acpToolRunEventState.values()].every((tool) => tool.emitted);
+        if (nativeContinuationSupported && toolsCommitted && recovery?.sessionId === durableSessionId) {
+          continuationRecovery = recovery;
+        }
+        fail(rpcErr, { retryable: false, details: {
+          ...asObject(details), kind: 'opencode_continuation_incomplete', code: AMR_CONTINUATION_ERROR_CODE,
+        } });
+        return;
+      }
       const promotedPayload = promotedOpenCodeSessionErrorPayload(details, rpcErr);
       if (promotedPayload) {
         failWithPayload(promotedPayload);
@@ -1172,6 +1259,7 @@ export function attachAcpSession({
               path: nextPath?.path ?? null,
               pathRank: nextPath?.rank ?? 0,
               resultContent: nextResult,
+              failed: isAcpToolUpdateError(update),
               thinkOnly: nextThinkOnly,
               firstSeenAt: Date.now(),
               emitted: false,
@@ -1199,14 +1287,14 @@ export function attachAcpSession({
             }
             // Keep last non-empty result payload (terminal may be status-only).
             if (nextResult) st.resultContent = nextResult;
+            st.failed ||= isAcpToolUpdateError(update);
             // Sticky think-only: once classified, never clear on later frames
             // (terminal status-only frames have no title and would otherwise
             // flip thinkOnly false and emit a fake concrete tool).
             if (nextThinkOnly) st.thinkOnly = true;
           }
           if (isAcpTerminalToolStatus(update)) {
-            const failed = isAcpTerminalFailureStatus(update);
-            emitTerminalToolPair(toolCallId, st, failed);
+            emitTerminalToolPair(toolCallId, st);
             // Keep the entry (emitted=true) so a repeated terminal cannot re-emit.
           } else {
             // Not terminal: the call is running, so say so now rather than after
@@ -1222,7 +1310,7 @@ export function attachAcpSession({
           dsmlArtifactSuppressorArmedAfterText = emittedTextBuffer.length > 0;
           dsmlArtifactSuppressorSawIncrementalProse = false;
           if (toolCallId) acpArtifactWriteToolCallIds.delete(toolCallId);
-        } else if (toolCallId && isAcpTerminalFailureStatus(update)) {
+        } else if (toolCallId && isAcpToolUpdateError(update)) {
           const ownsPendingWriteSuppression = toolCallId === dsmlArtifactSuppressorToolCallId;
           const ownsPendingWriteCall = acpArtifactWriteToolCallIds.has(toolCallId);
           acpArtifactWriteToolCallIds.delete(toolCallId);
@@ -1241,6 +1329,13 @@ export function attachAcpSession({
       return;
     }
     if (expectedId === 1) {
+      nativeContinuationSupported = !!modelUnavailableErrorCode && supportsAmrNativeContinuation(result);
+      if (nativeContinuation && (!resumeSessionId || !nativeContinuationSupported)) {
+        fail('The agent does not support safe native continuation.', { retryable: false,
+          details: { kind: 'native_continuation_rejected', reason: 'capability_unavailable' } });
+        return;
+      }
+
       const negotiation = velaChildEvidenceConsumer?.negotiate(result);
       if (negotiation?.advertised) {
         send('agent', {
@@ -1301,6 +1396,11 @@ export function attachAcpSession({
       // The durable handle for resuming this session on the next turn.
       durableSessionId =
         typeof result.openCodeSessionId === 'string' ? result.openCodeSessionId : null;
+      if (nativeContinuation && durableSessionId !== resumeSessionId) {
+        fail('The agent loaded a different native session.', { retryable: false,
+          details: { kind: 'native_continuation_rejected', reason: 'session_mismatch' } });
+        return;
+      }
       // session/new acknowledged with a session id = handshake done (#3408 §4).
       if (sessionId) onSessionInit?.();
       const modelConfig = findModelConfigOption(result.configOptions);
@@ -1340,7 +1440,10 @@ export function attachAcpSession({
       // them as isError via fail()). Think-only open tools do not flip the flag.
       flushOpenAcpTools();
       const usage = formatUsage(result.usage);
-      if (!emittedVisibleTextChunk && !emittedConcreteToolEvent && modelUnavailableErrorCode) {
+      // Prepare buffered text without notifying observers. Publish it only
+      // inside finishCleanPrompt's existing finished/re-entry protection.
+      if (!emittedVisibleTextChunk && !emittedConcreteToolEvent && modelUnavailableErrorCode &&
+          !prepareCompletionText(true)) {
         const outputTokens = usage?.output_tokens;
         const hadCompletionTokens = typeof outputTokens === 'number' && outputTokens > 0;
         // Emit usage before fail so analytics still sees provider tokens.
@@ -1451,7 +1554,10 @@ export function attachAcpSession({
     // The durable upstream session handle to persist for resume, or null when
     // none was reported (older agents, or a handshake that never established a
     // session). Mirrors pi-rpc's getLastSessionPath().
-    /** Returns the durable upstream session id (e.g. vela's `openCodeSessionId`) to persist for next-turn resume, or `null` when the agent did not report one. */
+    /** Evidence captured before synthetic tool closure; never permits prompt replay. */
+    getContinuationRecovery() {
+      return continuationRecovery;
+    },
     getDurableSessionId() {
       return durableSessionId;
     },
@@ -1485,8 +1591,7 @@ export function attachAcpSession({
       // is no sessionId to cancel, but we must still close stdin below.
       if (sessionId) {
         try {
-          sendRpc(child.stdin, nextId, 'session/cancel', { sessionId });
-          nextId += 1;
+          sendRpcNotification(child.stdin, 'session/cancel', { sessionId });
         } catch {
           // The caller owns process-signal fallback if the ACP transport is gone.
         }

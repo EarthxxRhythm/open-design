@@ -1129,6 +1129,7 @@ export interface Dict {
   'entry.discordOnlineLabel': string;
   'entry.xAria': string;
   'entry.mailAria': string;
+  /** Label beside the mail glyph in the rail's account dock social row. */
   'entry.accountSettings': string;
   'chat.collapsePane': string;
   'collabPresence.ariaOne': string;
@@ -1165,6 +1166,8 @@ export interface Dict {
   'entry.billingTierTeam': string;
   'entry.billingTierFree': string;
   'entry.billingTierPro': string;
+  'entry.billingTierPlus': string;
+  'entry.billingTierMax': string;
   'entry.billingFamilyCreator': string;
   'entry.creditsAria': string;
   'entry.creditsAriaWithBalance': string;
@@ -1182,6 +1185,8 @@ export interface Dict {
   'entry.accountLanguageMeta': string;
   'entry.accountGithubHelp': string;
   'entry.accountFeatureRequest': string;
+  /** Account menu row that opens the workspace's billing console. */
+  'entry.accountBilling': string;
   'entry.accountAddAccount': string;
   'entry.accountSignOut': string;
   // Sign-out confirmation dialog (recvqgMWpJZqhL) — shared by every logout
@@ -1225,8 +1230,13 @@ export interface Dict {
   'entry.authExpiredBody': string;
   'home.createFailed': string;
   'home.daemonRecovering': string;
+  /** Toast after POST /api/projects answered PROJECT_CREATE_PREPARATION_TIMEOUT. */
+  'home.createTimedOut': string;
+  'home.amrGateUnavailable': string;
   'home.bundledScenarioMissing': string;
   'entry.cloudCalloutBody': string;
+  /** Name of the identity row on the local (signed-out) account dock. */
+  'entry.localAccountName': string;
   'entry.cloudCalloutDismissAria': string;
   'entry.workspaceLockedNote': string;
   'entry.workspaceLockedRecover': string;
@@ -1242,6 +1252,10 @@ export interface Dict {
   'messageCenter.emptyAllTitle': string;
   'messageCenter.emptyUnreadTitle': string;
   'messageCenter.emptyReadTitle': string;
+  'messageCenter.archive': string;
+  'messageCenter.unarchive': string;
+  'messageCenter.archivedTitle': string;
+  'messageCenter.emptyArchivedTitle': string;
   'messageCenter.emptyBody': string;
   'messageCenter.close': string;
   'messageCenter.desktopSettings': string;
@@ -1265,6 +1279,8 @@ export interface Dict {
 
   // Entry home
   'homeHero.title': string;
+  'homeHero.titleWords': string;
+  'homeHero.subtitle': string;
   'homeHero.startWithTemplate': string;
   'homeHero.startBlankProject': string;
   'homeHero.templatePicker.label': string;
@@ -1305,6 +1321,8 @@ export interface Dict {
   'homeHero.clearActivePlugin': string;
   'homeHero.clearActiveSkill': string;
   'homeHero.contextItemsResolved': string;
+  'homeHero.attachmentsScrollPrev': string;
+  'homeHero.attachmentsScrollNext': string;
   'homeHero.removeFile': string;
   'homeHero.contextSearchResults': string;
   'homeHero.contextSurfaces': string;
@@ -1389,7 +1407,6 @@ export interface Dict {
   'homeWorkingDir.pick': string;
   'homeWorkingDir.replace': string;
   'homeWorkingDir.recent': string;
-  'homeWorkingDir.recentEmpty': string;
   'homeWorkingDir.clear': string;
   'homeWorkingDir.hint': string;
   'homeWorkingDir.missing': string;
@@ -1475,6 +1492,8 @@ export interface Dict {
   'recentProjects.kindAll': string;
   'recentProjects.kindPrototype': string;
   'recentProjects.kindSlides': string;
+  'recentProjects.kindDocument': string;
+  'recentProjects.kindImage': string;
   'recentProjects.kindMedia': string;
   'recentProjects.kindOther': string;
   'recentProjects.inviteTeammates': string;
@@ -1483,6 +1502,10 @@ export interface Dict {
   'recentProjects.sortNewest': string;
   'recentProjects.sortOldest': string;
   'recentProjects.sortName': string;
+  /** Heading of the rail's recent-projects disclosure (最近浏览过). */
+  'recentProjects.collectionRecent': string;
+  'recentProjects.collectionPersonalProjects': string;
+  'recentProjects.collectionTeamProjects': string;
   'recentProjects.viewList': string;
   'recentProjects.sharedBadge': string;
   'recentProjects.sharedProjectFallbackName': string;
@@ -1491,6 +1514,7 @@ export interface Dict {
   'recentProjects.teamMemberCreator': string;
   'recentProjects.ownOnlyMutation': string;
   'recentProjects.shareInProgress': string;
+  'recentProjects.duplicateInProgress': string;
   'recentProjects.sharedInTeam': string;
   'recentProjects.moveToTeam': string;
   'recentProjects.moveToTeamDescPre': string;
@@ -1724,7 +1748,6 @@ export interface Dict {
   'pluginCard.publish': string;
   'pluginCard.contribute': string;
   'pluginCard.starting': string;
-  'pluginCard.creating': string;
   'pluginCard.detailsAria': string;
   'pluginCard.chooseUseAria': string;
   'pluginCard.useOptionsAria': string;
@@ -1736,9 +1759,6 @@ export interface Dict {
   'pluginCard.publishTitle': string;
   'pluginCard.contributeAria': string;
   'pluginCard.contributeTitle': string;
-  'skillPluginCandidate.createForMe': string;
-  'skillPluginCandidate.contributeToMain': string;
-  'skillPluginCandidate.repoDescription': string;
   'integrations.kicker': string;
   'integrations.lede': string;
   'integrations.agentReady': string;
@@ -2787,6 +2807,8 @@ export interface Dict {
   'project.brandReadyEditManually': string;
   'project.brandReadyPreviewOpened': string;
   'project.previewCommentSaveFailed': string;
+  'project.previewCommentSaveFailedTitle': string;
+  'project.previewCommentSaveFailedDescription': string;
   'project.previewCommentReorderFailed': string;
   'project.metaFreeform': string;
   'project.typePrototype': string;
@@ -2807,6 +2829,7 @@ export interface Dict {
   'chat.amrCard.chipNoKey': string;
   'chat.amrCard.chipAutoRetry': string;
   'chat.amrCard.switchCta': string;
+  'chat.amrCard.switchedResend': string;
   'chat.amrError.authMessage': string;
   'chat.amrError.balanceMessage': string;
   'chat.amrError.authorizeCta': string;
@@ -2857,10 +2880,27 @@ export interface Dict {
   'chat.runError.title.cliMissing': string;
   'chat.runError.title.promptTooLarge': string;
   'chat.runError.title.modelUnavailable': string;
+  /**
+   * S13 ·「模型能力不支持」。和 `title.modelUnavailable`(S07「当前模型不可用」)
+   * 是产品文档里的两行,不是一句话的两种说法 —— 一个说「用不了」,一个说「做不了」。
+   */
+  'chat.runError.title.modelCapabilityUnsupported': string;
   'chat.runError.title.upstreamUnavailable': string;
   'chat.runError.title.toolLoop': string;
   'chat.runError.title.outputInvalid': string;
   'chat.runError.title.runtimeConfig': string;
+  /**
+   * S05 · 自带 API key 没配好(daemon `failure_detail: invalid_api_key`)。
+   *
+   * 主语固定,没有插值槽 —— 说的是「你填的那把 key」,不是「哪一个 agent」,
+   * 所以它和 S02 的 `title.signInRequired.other` 不是同一句话:那边要点名是哪个
+   * 本地 agent 还没登录,这边说的是 key 本身填错了。
+   *
+   * 只给 BYOK / API 提供商那一档用(判据 `byokApiKeyIsEditableInSettings`,
+   * `utils/byokProvider.ts`)。本机 CLI 报同一条 detail 时留在 S02 —— 它们的登录
+   * 在用户自己的终端里,详见 `runtime/amr-guidance.ts` 的 `apiKeyInvalidCardFor`。
+   */
+  'chat.runError.title.apiKeyInvalid': string;
   'chat.runError.title.quotaExhausted': string;
   'chat.runError.title.timedOut': string;
   'chat.runError.title.emptyOutput': string;
@@ -2870,10 +2910,25 @@ export interface Dict {
   'chat.runError.title.cliSessionRefused': string;
   'chat.runError.title.strategyTaskHalted': string;
   'chat.runError.title.agentReplyIncomplete': string;
+  'chat.runError.title.noDeliverable': string;
   'chat.runError.agentReplyIncompleteMessage': string;
+  'chat.runError.noDeliverableMessage': string;
   'chat.runError.title.clarificationRepeated': string;
   'chat.runError.clarificationRepeatedMessage': string;
+  'chat.runError.title.regionNotSupported': string;
   'chat.runError.title.clientEnvironment': string;
+  'chat.runError.title.certificateFailure': string;
+  'chat.runError.certificateFailureMessage': string;
+  'chat.runError.title.proxyConfiguration': string;
+  'chat.runError.proxyConfigurationMessage': string;
+  'chat.runError.title.networkConfiguration': string;
+  'chat.runError.networkConfigurationMessage': string;
+  'chat.runError.title.hostPolicyBlock': string;
+  'chat.runError.hostPolicyBlockMessage': string;
+  'chat.runError.title.localStorageFailure': string;
+  'chat.runError.localStorageFailureMessage': string;
+  'chat.runError.title.tierUpgradeRequired': string;
+  'chat.runError.tierUpgradeRequiredMessage': string;
   'chat.runError.title.generic': string;
   'chat.runError.title.artifactMissing': string;
   'chat.runError.signInMessage.amr': string;
@@ -2881,6 +2936,9 @@ export interface Dict {
   'chat.runError.cliMissingMessage': string;
   'chat.runError.promptTooLargeMessage': string;
   'chat.runError.modelUnavailableMessage': string;
+  'chat.runError.modelCapabilityUnsupportedMessage': string;
+  /** S23 · 以前这一格没有正文,报错卡因此落到兜底句上。 */
+  'chat.runError.artifactMissingMessage': string;
   'chat.runError.rateLimitedMessage': string;
   'chat.runError.modelWindowLimitMessage': string;
   'chat.runError.modelWindowLimitMessageNoTime': string;
@@ -2890,6 +2948,8 @@ export interface Dict {
   'chat.runError.toolLoopMessage': string;
   'chat.runError.outputInvalidMessage': string;
   'chat.runError.runtimeConfigMessage': string;
+  /** S05 的正文。同样没有插值槽。 */
+  'chat.runError.apiKeyInvalidMessage': string;
   'chat.runError.quotaExhaustedMessage': string;
   'chat.runError.workspaceCreditsMessage': string;
   'chat.runError.timedOutMessage': string;
@@ -2905,6 +2965,7 @@ export interface Dict {
   'chat.runError.fallbackMessage': string;
   'chat.runError.cliSessionRefusedMessage': string;
   'chat.runError.strategyTaskStateMismatchMessage': string;
+  'chat.runError.regionNotSupportedMessage': string;
   'chat.runError.clientEnvironmentMessage': string;
   'chat.runError.clientEnvironmentCause.certificate': string;
   'chat.runError.clientEnvironmentCause.proxy': string;
@@ -3517,6 +3578,7 @@ export interface Dict {
   'chat.queuedCancel': string;
   'chat.queuedReorder': string;
   'chat.queuedEdit': string;
+  'chat.queuedHeader': string;
   /** B11: visible label on the queue row's third button. */
   'chat.queuedSteer': string;
   /**
@@ -3688,6 +3750,7 @@ export interface Dict {
   'designFiles.newDocument': string;
   'designFiles.newDocumentTitle': string;
   'designFiles.empty': string;
+  'designFiles.buildingPreview': string;
   'designFiles.syncing': string;
   'designFiles.refresh': string;
   'designFiles.delete': string;
@@ -4348,6 +4411,8 @@ export interface Dict {
   'assistant.role': string;
   'assistant.workingLabel': string;
   'assistant.doneLabel': string;
+  /** Run title while the last turn's question form is still unanswered (OPEND-2744). */
+  'assistant.awaitingReplyLabel': string;
   'assistant.canceledLabel': string;
   'assistant.copyMarkdown': string;
   /**
@@ -4397,6 +4462,14 @@ export interface Dict {
   'chat.runError.exportLogsCta': string;
   'chat.runError.switchModelCta': string;
   'chat.runError.openSettingsCta': string;
+  /* 恢复动作被挡住时,卡面上那一句「为什么现在动不了」(OPEND-2821)。
+     四句对应 `runtime/chat/recovery-gating.ts` 的四档,不是四个新的门。 */
+  'chat.runError.title.readOnlyAccess': string;
+  'chat.runError.title.messagesUnavailable': string;
+  'chat.runError.actionBlocked.readOnly': string;
+  'chat.runError.actionBlocked.messagesUnavailable': string;
+  'chat.runError.actionBlocked.billing': string;
+  'chat.runError.actionBlocked.busy': string;
   'chat.support.channel.feishu': string;
   'chat.support.channel.discord': string;
   'chat.amrBalanceOwner.title': string;
@@ -4409,6 +4482,9 @@ export interface Dict {
   'assistant.producedFiles': string;
   'assistant.openFile': string;
   'assistant.downloadFile': string;
+  'nextStep.imageContinue': string;
+  'nextStep.imageVariants': string;
+  'nextStep.imageStyle': string;
   'nextStep.title': string;
   // Accessible name for the three agent-written follow-up rows under a
   // delivered turn. The suggestions themselves are model-written in the
@@ -4455,8 +4531,6 @@ export interface Dict {
   'assistant.thinking': string;
   'assistant.thought': string;
   'assistant.thoughtFor': string;
-  'assistant.systemReminder': string;
-  'assistant.possiblePromptInjection': string;
   'assistant.designSystemDirectionLocked': string;
   'assistant.waitingFirstOutput': string;
   'assistant.statusBootingAgent': string;
@@ -4478,6 +4552,8 @@ export interface Dict {
 
   // Question form labels
   'qf.answered': string;
+  'qf.unanswered': string;
+  'qf.unansweredContinued': string;
   /** 「已回答」陈述块的标题(交付稿 `.answered .k`) */
   'qf.answeredConfirmed': string;
   /**
@@ -4501,7 +4577,9 @@ export interface Dict {
   'chat.edge.reconnectCta': string;
   'chat.edge.reconnectDetail': string;
   'chat.edge.reconnectFailed': string;
+  'chat.edge.reconnectFailedDescription': string;
   'chat.edge.reconnecting': string;
+  'chat.edge.reconnectingDescription': string;
   'chat.edge.retrying': string;
   'qf.visualNext': string;
   'qf.visualPrev': string;
@@ -4542,30 +4620,6 @@ export interface Dict {
   'questions.submitting': string;
 
   // Inline <od-card> memory cards (display-only siblings of question-form)
-  'artifact.odCardTaskBriefChip': string;
-  'artifact.odCardScorecardTitle': string;
-  'artifact.odCardScorecardStatusPass': string;
-  'artifact.odCardScorecardStatusPartial': string;
-  'artifact.odCardScorecardStatusFail': string;
-  'artifact.odCardRuleKicker': string;
-  'artifact.odCardRuleNameLabel': string;
-  'artifact.odCardRuleDescriptionLabel': string;
-  'artifact.odCardRuleAssertionLabel': string;
-  'artifact.odCardRuleCheckLabel': string;
-  'artifact.odCardRuleRationaleLabel': string;
-  'artifact.odCardRuleKeep': string;
-  'artifact.odCardRuleEdit': string;
-  'artifact.odCardRuleDone': string;
-  'artifact.odCardRuleDiscard': string;
-  'artifact.odCardRuleSaving': string;
-  'artifact.odCardRuleSaved': string;
-  'artifact.odCardRuleError': string;
-  'artifact.odCardBrandAssistDone': string;
-  'artifact.odCardBrandAssistKicker': string;
-  'artifact.odCardBrandAssistBody': string;
-  'artifact.odCardBrandAssistError': string;
-  'artifact.odCardBrandAssistWorking': string;
-  'artifact.odCardBrandAssistConfirm': string;
 
   // Pet (Codex-style floating companion)
   'pet.title': string;
@@ -4996,11 +5050,16 @@ export interface Dict {
   'community.typePrototype': string;
   'community.typeLiveArtifact': string;
   'community.typeSlides': string;
+  'community.typeDocument': string;
   'community.typeImage': string;
   'community.typeVideo': string;
   'community.typeHyperFrames': string;
   'community.typeAudio': string;
+  'community.typeWebGL': string;
   'community.usePrompt': string;
+  /** Empty gallery tab; `{type}` is the tab's own label. */
+  'community.emptyTitle': string;
+  'community.emptyBody': string;
   'marketplace.title': string;
   'marketplace.filterTrusted': string;
   'marketplace.filterRestricted': string;
@@ -5613,7 +5672,6 @@ export interface Dict {
   'labs.harnessTooltip': string;
   'labs.harnessScope': string;
   'labs.envOverrideNotice': string;
-  'labs.latchedNotice': string;
   'labs.loadFailedNotice': string;
   'labs.optOutPrompt': string;
   'labs.optOutWorseOutput': string;
@@ -5623,13 +5681,4 @@ export interface Dict {
   'labs.optOutSkip': string;
   'labs.optOutOtherPlaceholder': string;
   'labs.optOutSubmit': string;
-  'chat.pluginAction.failed': string;
-  'chat.pluginAction.saved': string;
-  'chat.pluginAction.validationIssues': string;
-  'chat.pluginAction.contributionStarted': string;
-  'chat.pluginAction.aria': string;
-  'chat.pluginAction.title': string;
-  'chat.pluginAction.subtitle': string;
-  'chat.pluginAction.filesReady': string;
-  'chat.pluginAction.install': string;
 }

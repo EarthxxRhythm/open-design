@@ -140,6 +140,12 @@ export interface HomeChatComposerClickProps {
     // "Recent folders" submenu.
     | 'working_dir_recent'
     | 'task_chip'
+    // The × the composer's type pill reveals on hover: clears the picked task
+    // type back to none (the pill then disappears; the entry point in the
+    // accessory row stays). Fires only once no sub-category is left to clear —
+    // that step sends `subcategory_chip` with `subcategory: 'all'` instead.
+    // `chip_id` is the type being cleared.
+    | 'task_chip_clear'
     // Sub-category filter pill under the task rail (全部 / Landing / Brand /
     // Dashboards / …). `subcategory` carries the picked slug; '全部' sends
     // `subcategory: 'all'`. `chip_id` is the parent task type.
@@ -935,7 +941,7 @@ export interface QuestionsFormClickProps {
 }
 
 // Hosted-AMR nudge shown under a non-AMR agent's model/auth/quota failure.
-// `go_amr` is the link that opens https://open-design.ai/amr.
+// `go_amr` is the link that opens https://open-design.ai/cloud/dashboard.
 export interface RunFailedToastClickProps {
   page_name: 'chat_panel';
   area: 'chat_panel';
@@ -1042,14 +1048,19 @@ export interface ChatPanelResourcesPopoverClickProps {
     | 'customize_in_settings';
 }
 
-// Actions on the queued-send strip ("N queued · to send") that sits above
-// the chat composer while a run is in flight: re-open a queued prompt in the
-// composer (`edit`), promote it to send immediately (`send_now`), drop it
-// from the queue (`delete`), or push it into the turn that is STILL RUNNING
-// without stopping it (`steer`, B11 「引导对话」). `send_now` and `steer` are
-// deliberately separate elements: the first stops the running turn and
-// resends, the second keeps that turn's work and writes the message onto the
-// agent's still-open stdin — collapsing them would make the funnel unreadable.
+// Actions on the queued-send strip that sits above the chat composer while a
+// run is in flight: re-open a queued prompt in the composer (`edit`), send it
+// now (`steer`, B11 「引导对话」 — stops the turn in flight first when there is
+// one), or drop it from the queue (`delete`).
+//
+// `send_now` is RETIRED, not renamed. The strip's leading button used to have
+// two faces — `steer` while a turn was interruptible, `send_now` otherwise —
+// wired to the same handler under two names. Product collapsed them into the
+// single 「引导对话」 button on 2026-09-08, and the survivor reports `steer`.
+// So from that release on this surface emits no `send_now` at all; the member
+// stays in the union because PostHog still holds the historical events and
+// dashboards that read them must keep type-checking.
+//
 // `queue_length` is the queue size at click time, before the action applies.
 export interface ChatPanelMessageQueueClickProps {
   page_name: 'chat_panel';

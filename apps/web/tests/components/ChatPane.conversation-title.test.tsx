@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { forwardRef } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -220,26 +220,12 @@ describe('ChatPane session switcher', () => {
     expect(trackRunFailedToastSurfaceView).not.toHaveBeenCalled();
   });
 
-  /*
-   * ⚠️ 这里原来有两条:报错卡上的〔充值〕和〔升级套餐〕各自开出带归因的
-   * profile-scoped console URL。**OPEND-2807 把这两颗按钮从报错卡上撤掉了**
-   * (「错误卡片…应该只有三个按钮」+ 用户「别分那么多情况了」),
-   * 于是 `chat_error_recharge` / `chat_error_upgrade` 两个入口来源不再产生。
-   *
-   * **深链本身仍然是产品行为,没有失去守卫** —— 它由单元层直接钉:
-   *   · `tests/runtime/amr-guidance.test.ts`(`amrRechargeUrlForProfile`)
-   *   · `tests/runtime/amr-plans-console-deeplink.test.ts`(`amrPlansUrlForProfile`)
-   * 两处都断言 `/cloud/dashboard` 这个新落点(#7753 那一批的迁移),
-   * 所以撤掉这两条卡片级用例不会把那次迁移的覆盖一起带走。
-   * ⚠️ 合并前这里写的是「由工作区额度用尽那一条来守」—— 那一条正是下面这条,
-   * 按钮已经不在,指针作废,换成上面两个真实落点。
-   *
-   * 归因链路(`attributedAmrUrl` + profile 解析)还活在升级卡那条路
-   * (`chat_upgrade_card`),由升级卡自己的用例守。
-   * 这里留一条钉「按钮确实不上卡了」,免得它悄悄回来变成第四颗。
-   */
-  it('OPEND-2807:余额 / 套餐类失败也只给三颗按钮,充值与升级不再上卡', () => {
-    const { container } = render(
+  // G16 removes the recharge action from error cards. Preserve the Cloud
+  // failure and verify that its only recovery action retries that same turn.
+  it('keeps fixed Cloud actions when workspace credits are exhausted', () => {
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+    const onRetry = vi.fn();
+    render(
       <ChatPane
         messages={[
           failedAssistantMessage({
@@ -256,6 +242,38 @@ describe('ChatPane session switcher', () => {
         onEnsureProject={async () => 'project-1'}
         onSend={vi.fn()}
         onStop={vi.fn()}
+        onRetry={onRetry}
+        conversations={[conversation({ id: 'conv-1', title: 'Current' })]}
+        activeConversationId="conv-1"
+        onSelectConversation={vi.fn()}
+        onDeleteConversation={vi.fn()}
+        config={{ agentCliEnv: { amr: { OPEN_DESIGN_AMR_PROFILE: 'test' } } } as unknown as AppConfig}
+      />,
+    );
+
+    const card = screen.getByTestId('chat-run-error-card');
+    expect(within(card).getAllByRole('button').map((button) => button.textContent?.trim())).toEqual([
+      'chat.runError.contactSupportCta', 'chat.runError.exportLogsCta', 'promptTemplates.retry',
+    ]);
+    fireEvent.click(within(card).getByRole('button', { name: 'promptTemplates.retry' }));
+    expect(onRetry).toHaveBeenCalledWith(expect.objectContaining({ id: 'msg-amr-credits' }), 'manual_retry');
+    expect(openSpy).not.toHaveBeenCalled();
+    openSpy.mockRestore();
+  });
+
+  it('keeps the profile-scoped plan URL on the separate zero-balance UpgradeCard', () => {
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+    render(
+      <ChatPane
+        messages={[]}
+        amrBalanceCardUsd={0}
+        streaming={false}
+        error={null}
+        projectId="project-1"
+        projectFiles={[]}
+        onEnsureProject={async () => 'project-1'}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
         onRetry={vi.fn()}
         conversations={[conversation({ id: 'conv-1', title: 'Current' })]}
         activeConversationId="conv-1"
@@ -265,17 +283,22 @@ describe('ChatPane session switcher', () => {
       />,
     );
 
-    expect(screen.queryByText('chat.amrError.rechargeCta')).toBeNull();
-    expect(screen.queryByText('chat.amrBalanceGate.plansCta')).toBeNull();
-    const footer = container.querySelector('[data-user-action-footer="true"]');
-    expect(footer).toBeTruthy();
-    expect(
-      Array.from(footer!.querySelectorAll('button')).map((b) => b.getAttribute('data-testid')),
-    ).toEqual([
-      'chat-error-contact-support',
-      'chat-error-export-logs',
-      'chat-error-retry',
-    ]);
+    expect(screen.queryByTestId('chat-run-error-card')).toBeNull();
+    fireEvent.click(within(screen.getByTestId('chat-upgrade-card')).getByRole('button', { name: 'settings.amrUpgrade' }));
+
+    const [plansUrl, target, features] = openSpy.mock.calls[0] ?? [];
+    expect(target).toBe('_blank');
+    expect(features).toBe('noopener,noreferrer');
+    // The rendered profile is `test`, and T54 (2026-09-06) made the plans link
+    // honor it: this used to assert the PRODUCTION Pricing URL, which is how a
+    // non-prod build sent people to production checkout.
+    const parsedPlansUrl = new URL(String(plansUrl));
+    expect(`${parsedPlansUrl.origin}${parsedPlansUrl.pathname}`).toBe(
+      'https://open-design.powerformer.net/cloud/dashboard',
+    );
+    expect(parsedPlansUrl.searchParams.get('billing')).toBe('plan');
+    expect(parsedPlansUrl.searchParams.get('od_entry_source')).toBe('chat_upgrade_card');
+    openSpy.mockRestore();
   });
 });
 

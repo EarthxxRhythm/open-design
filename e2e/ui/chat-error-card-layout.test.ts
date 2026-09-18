@@ -21,11 +21,12 @@ const AMR_AGENT = {
   models: [{ id: 'default', label: 'Default' }],
 };
 
-async function seedBalanceFailure(page: Page, locale: 'en' | 'zh-CN') {
+async function seedCloudRunFailure(page: Page, locale: 'en' | 'zh-CN') {
+  // Use an ordinary run error: insufficient balance belongs to the separate
+  // quota-card workflow covered by amr-run-failure-recovery.test.ts.
   await page.addInitScript((nextLocale) => {
     window.localStorage.setItem('open-design:locale', nextLocale);
     window.localStorage.setItem('open-design:locale-source', 'manual');
-    window.localStorage.setItem('open-design.project.chatPanelWidth', '320');
   }, locale);
   await routeAgents(page, [AMR_AGENT]);
   await page.route('**/api/skills', (route) => route.fulfill({ json: { skills: [] } }));
@@ -100,8 +101,8 @@ async function seedBalanceFailure(page: Page, locale: 'en' | 'zh-CN') {
           {
             kind: 'status',
             label: 'error',
-            detail: 'AMR Cloud reported insufficient balance.',
-            code: 'AMR_INSUFFICIENT_BALANCE',
+            detail: 'The model provider is temporarily unavailable.',
+            code: 'UPSTREAM_UNAVAILABLE',
           },
         ],
       },
@@ -115,21 +116,33 @@ async function seedBalanceFailure(page: Page, locale: 'en' | 'zh-CN') {
   await gotoProject(page, projectId);
   const split = page.locator('.split');
   await expect(split).toBeVisible({ timeout: T.long });
-  await split.evaluate((element) => {
-    (element as HTMLElement).style.setProperty('--project-chat-panel-width', '320px');
+  const resizeHandle = page.getByRole('separator', {
+    name: locale === 'zh-CN' ? '调整聊天面板大小' : 'Resize chat panel',
+    exact: true,
   });
+  await expect(resizeHandle).toBeVisible();
+  await resizeHandle.press('Home');
+  await expect(resizeHandle).toHaveAttribute('aria-valuemin', /^\d+$/);
+  const minimumWidth = (await resizeHandle.getAttribute('aria-valuemin'))!;
+  expect(Number(minimumWidth)).toBeGreaterThan(0);
+  await expect(resizeHandle).toHaveAttribute('aria-valuenow', minimumWidth);
+  await expect.poll(async () => {
+    const bounds = await split.locator('.split-chat-slot').boundingBox();
+    return Math.round(bounds?.width ?? 0);
+  }).toBe(Number(minimumWidth));
 }
 
 async function expectActionsContained(
   card: Locator,
-  primaryAction: Locator,
-  secondaryAction: Locator,
-  options: { sameRow?: boolean } = {},
+  actionLabels: string[],
 ) {
-  await expect(primaryAction).toBeVisible();
-  await expect(secondaryAction).toBeVisible();
-  await primaryAction.click({ trial: true });
-  await secondaryAction.click({ trial: true });
+  const footer = card.locator('[data-user-action-footer="true"]');
+  await expect(footer.getByRole('button')).toHaveText(actionLabels);
+  for (const name of actionLabels) {
+    const action = footer.getByRole('button', { name, exact: true });
+    await expect(action).toBeVisible();
+    await action.click({ trial: true });
+  }
 
   const layout = await card.evaluate((element) => {
     // `RunErrorCard` 把动作直接排在 `[data-user-action-footer]` 这一层。
@@ -142,6 +155,7 @@ async function expectActionsContained(
       ? Array.from(actions.querySelectorAll<HTMLElement>('button'))
       : [];
     const cardRect = element.getBoundingClientRect();
+    const slotRect = element.closest('.split-chat-slot')?.getBoundingClientRect();
     const actionRect = actions?.getBoundingClientRect() ?? null;
     return {
       cardClientWidth: element.clientWidth,
@@ -152,12 +166,16 @@ async function expectActionsContained(
       actionRight: actionRect?.right ?? -1,
       cardLeft: cardRect.left,
       cardRight: cardRect.right,
+      slotLeft: slotRect?.left ?? -1,
+      slotRight: slotRect?.right ?? -1,
+      slotWidth: slotRect?.width ?? -1,
       buttons: buttons.map((button) => {
         const rect = button.getBoundingClientRect();
         return {
           left: rect.left,
           right: rect.right,
           top: rect.top,
+          bottom: rect.bottom,
           width: rect.width,
           height: rect.height,
         };
@@ -165,18 +183,18 @@ async function expectActionsContained(
     };
   });
 
-  // The 320px split leaves 274px of content width inside the real error card.
-  // Pin that geometry so a wider test viewport cannot hide this regression.
-  expect(layout.cardClientWidth).toBe(274);
+  // Home reached the product's advertised minimum, confirmed by the actual
+  // slot above. Measure containment without forcing an unreachable CSS width.
+  expect(layout.cardClientWidth).toBeGreaterThan(0);
+  expect(layout.cardClientWidth).toBeLessThanOrEqual(layout.slotWidth);
+  expect(layout.cardLeft).toBeGreaterThanOrEqual(layout.slotLeft);
+  expect(layout.cardRight).toBeLessThanOrEqual(layout.slotRight);
   expect(layout.cardScrollWidth).toBe(layout.cardClientWidth);
   expect(layout.actionScrollWidth).toBeLessThanOrEqual(layout.actionClientWidth);
   expect(layout.actionLeft).toBeGreaterThanOrEqual(layout.cardLeft);
   expect(layout.actionRight).toBeLessThanOrEqual(layout.cardRight);
-  /*
-   * ⚠️ OPEND-2807:报错卡只有**三颗** —— 〔联系我们〕〔导出日志〕+ 第三颗 CTA。
-   * 这一族原来是四颗(多一颗按失败类型分档的〔充值〕),那一档已随工单撤掉。
-   * 窄面板守卫本身没变:三颗仍然要装得下、不许把卡撑出横向滚动。
-   */
+  // OPEND-2807/G16: Contact + Export + Retry for a failed Cloud run.
+  // Balance-specific actions and Switch to Cloud do not belong on this card.
   expect(layout.buttons).toHaveLength(3);
   for (const button of layout.buttons) {
     expect(button.width).toBeGreaterThan(0);
@@ -184,45 +202,29 @@ async function expectActionsContained(
     expect(button.left).toBeGreaterThanOrEqual(layout.cardLeft);
     expect(button.right).toBeLessThanOrEqual(layout.cardRight);
   }
-  if (options.sameRow) {
-    // 按**这两颗具体的按钮**比,不按下标 —— 动作行会换行,下标不再等于「那一对」。
-    const [primaryBox, secondaryBox] = await Promise.all([
-      primaryAction.boundingBox(),
-      secondaryAction.boundingBox(),
-    ]);
-    expect(primaryBox?.y).toBe(secondaryBox?.y);
+  // The actual narrow-card layout stacks the three actions without overlap.
+  for (let index = 1; index < layout.buttons.length; index += 1) {
+    const previous = layout.buttons[index - 1];
+    const current = layout.buttons[index];
+    if (!previous || !current) {
+      throw new Error(`Missing error-card action geometry at index ${index}`);
+    }
+    expect(current.top).toBeGreaterThanOrEqual(previous.bottom);
+    expect(current.left).toBe(previous.left);
+    expect(current.right).toBe(previous.right);
   }
 }
 
-/*
- * ⚠️ OPEND-2807 之后这一族的按钮组成变了:〔充值〕不再上卡,第三颗是〔重试〕
- * (这一轮跑在 Cloud 上)。这条用例守的从来是**窄面板下的排布**,不是「哪几颗」,
- * 所以量的对象换成实际在卡上的那两颗:主动作〔重试〕+ 常驻的〔导出日志〕。
- */
-test('[P1] zh-CN balance recovery actions stay inside a narrow ChatPane', async ({ page }) => {
-  await seedBalanceFailure(page, 'zh-CN');
+test('[P1] zh-CN Cloud run recovery actions stay inside a narrow ChatPane', async ({ page }) => {
+  await seedCloudRunFailure(page, 'zh-CN');
 
   const card = runErrorCard(page);
-  await expect(card.getByRole('button', { name: '充值' })).toHaveCount(0);
-  const retry = card.getByTestId('chat-error-retry');
-  const exportLogs = card.getByTestId('chat-error-export-logs');
-  await expectActionsContained(card, retry, exportLogs, { sameRow: true });
+  await expectActionsContained(card, ['联系我们', '导出日志', '重试']);
 });
 
-/*
- * 长文案档:德/法/俄以及被展开的英文标签会把动作行撑宽。这里仍然人工把第三颗
- * 的文字撑长,只是撑的对象从〔Top up〕换成了现在真的在卡上的〔Retry〕。
- */
-test('[P1] expanded English balance actions stay inside a narrow ChatPane', async ({ page }) => {
-  await seedBalanceFailure(page, 'en');
+test('[P1] English Cloud run recovery actions stay inside a narrow ChatPane', async ({ page }) => {
+  await seedCloudRunFailure(page, 'en');
 
   const card = runErrorCard(page);
-  await expect(card.getByRole('button', { name: 'Top up' })).toHaveCount(0);
-  const retry = card.getByTestId('chat-error-retry');
-  await expect(retry).toBeVisible({ timeout: T.long });
-  await retry.evaluate((button) => {
-    button.textContent = 'Retry this run on OpenDesign Cloud';
-  });
-  const exportLogs = card.getByTestId('chat-error-export-logs');
-  await expectActionsContained(card, retry, exportLogs);
+  await expectActionsContained(card, ['Contact us', 'Export logs', 'Retry']);
 });

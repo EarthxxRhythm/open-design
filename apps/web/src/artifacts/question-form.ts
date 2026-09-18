@@ -28,6 +28,8 @@
  * forms — so AssistantMessage can render the form inline.
  */
 import { parsePartialJson } from '../runtime/partial-json';
+import { chatProtocolSkipRanges } from './chat-protocol-context';
+import { rangeContains, type Range } from './markdown-context';
 
 export type QuestionType =
   | 'radio'
@@ -130,6 +132,32 @@ export interface FormQuestion {
   options?: FormOption[];
   placeholder?: string;
   required?: boolean;
+  /**
+   * **休眠件** —— 解析进来,但**没有任何人再读它**。
+   *
+   * 每题副标题。曾经渲染在题目和控件之间。
+   *
+   * 什么时候、因为什么停用:
+   *  · 2026-09-07(OPEND-2707 ①,已合并):`QuestionForm.tsx` 停止渲染它,
+   *    `styles/viewer/composio.css` 的 `.qf-help` 规则一并删除。一道题就是
+   *    「题目 + 必填标识 + 控件」,副标题夹在中间读起来像卡片自己的旁白,
+   *    还占着一整行的行盒。
+   *  · 2026-09-08(OPEND-2707 ②,用户拍板「改彻底,提示词也改」):
+   *    提示词不再要求模型写这个字段,宿主自己写的唯一一条(ElevenLabs 选音色题)
+   *    并进了那道题的 `label`。全仓自此**没有生产者**。
+   *
+   * 为什么字段还留着:删掉它会让 `tests/components/QuestionForm.no-question-subtitle.test.tsx`
+   * 和 `tests/components/QuestionForm.test.tsx` 编译不过 —— 前者正是「副标题不再
+   * 渲染」这条不变量的唯一正面证据。同时,缓存的旧提示词 / 旧客户端 / 模型记住的
+   * 旧格式仍可能发来带这个键的表单,解析器继续容忍它,这类输入的解析形状才不会变。
+   * 参照 `specs/current/chat-panel-decisions-sheet.md`「六个 qf.visual* 键一个不删」。
+   *
+   * 怎么找回:渲染那一半的原文在 `4c5873c7cc`(#7863)的 parent 里 ——
+   * `git show 4c5873c7cc^:apps/web/src/components/QuestionForm.tsx` 拿渲染分支,
+   * `git show 4c5873c7cc^:apps/web/src/styles/viewer/composio.css` 拿 `.qf-help` 规则。
+   * 提示词那一半要同时撤掉 `e2e/tests/question-form-help-retired.test.ts` 的守卫,
+   * 那需要一次新的产品裁决。
+   */
   help?: string;
   defaultValue?: string | string[];
   /** Only applies when `type === 'checkbox'`. Caps the number of selected options. */
@@ -182,24 +210,43 @@ const INVALID_QUESTION_FORM_FALLBACK =
 // time so `<Question-Form>` and `<ASK-QUESTION>` still parse.
 const OPEN_RE = /<(question-form|ask-question)\b([^>]*)>/i;
 
+/** Recognize only an existing complete form; never recurse into the scanner. */
+export function readQuestionFormPayloadAt(input: string, openStart: number): Range | null {
+  const match = OPEN_RE.exec(input.slice(openStart));
+  if (!match || match.index !== 0) return null;
+  const openEnd = openStart + match[0].length;
+  const closeTag = `</${(match[1] ?? 'question-form').toLowerCase()}>`;
+  const closeStart = findCloseTag(input, openEnd, closeTag);
+  if (closeStart < 0) return null;
+  const body = input.slice(openEnd, closeStart);
+  if (!parseForm(body, parseAttrs(match[2] ?? '')).form) return null;
+  return [openEnd, closeStart + closeTag.length];
+}
+
 export function splitOnQuestionForms(input: string): FormSegment[] {
   const out: FormSegment[] = [];
+  const protectedRanges = chatProtocolSkipRanges(input, readQuestionFormPayloadAt);
   let cursor = 0;
+  let searchFrom = 0;
   // Scan repeatedly for question-form / ask-question opens; for each,
   // locate the matching close tag and try to parse the JSON body. Complete
   // protocol blocks that fail parsing render a safe fallback instead of
   // leaking their raw JSON into prose.
   while (cursor < input.length) {
     const slice = input.slice(cursor);
-    const m = OPEN_RE.exec(slice);
+    const m = OPEN_RE.exec(input.slice(searchFrom));
     if (!m) {
       out.push({ kind: 'text', text: slice });
       break;
     }
     const tagName = (m[1] ?? 'question-form').toLowerCase();
     const closeTag = `</${tagName}>`;
-    const openStart = cursor + m.index;
+    const openStart = searchFrom + m.index;
     const openEnd = openStart + m[0].length;
+    if (rangeContains(protectedRanges, openStart)) {
+      searchFrom = openEnd;
+      continue;
+    }
     const closeIdx = findCloseTag(input, openEnd, closeTag);
     if (closeIdx === -1) {
       // No matching close tag found for this open tag name. The body may
@@ -215,6 +262,7 @@ export function splitOnQuestionForms(input: string): FormSegment[] {
         }
         out.push({ kind: 'text', text: input.slice(openStart, resumeAt) });
         cursor = resumeAt;
+        searchFrom = cursor;
         continue;
       }
       // Genuinely unterminated — leave the rest as prose.
@@ -231,6 +279,7 @@ export function splitOnQuestionForms(input: string): FormSegment[] {
     if (parseResult.form) {
       out.push({ kind: 'form', form: parseResult.form, raw: input.slice(openStart, blockEnd) });
       cursor = blockEnd;
+      searchFrom = cursor;
     } else {
       // The body between this open tag and the matched close tag isn't valid
       // JSON. If the body itself contains another question-form / ask-question
@@ -245,10 +294,12 @@ export function splitOnQuestionForms(input: string): FormSegment[] {
         // nested open are emitted — no duplication.
         out.push({ kind: 'text', text: input.slice(openStart, resumeAt) });
         cursor = resumeAt;
+        searchFrom = cursor;
       } else {
         recordQuestionFormParseFailure(parseResult.reason, tagName, body);
         out.push({ kind: 'text', text: INVALID_QUESTION_FORM_FALLBACK });
         cursor = blockEnd;
+        searchFrom = cursor;
       }
     }
   }
@@ -273,6 +324,7 @@ export function findFirstQuestionForm(
 export function stripTrailingOpenQuestionForm(
   input: string,
 ): { text: string; hadOpenForm: boolean } {
+  const protectedRanges = chatProtocolSkipRanges(input, readQuestionFormPayloadAt);
   let cursor = 0;
   while (cursor < input.length) {
     const slice = input.slice(cursor);
@@ -282,6 +334,10 @@ export function stripTrailingOpenQuestionForm(
     const closeTag = `</${tagName}>`;
     const openStart = cursor + m.index;
     const openEnd = openStart + m[0].length;
+    if (rangeContains(protectedRanges, openStart)) {
+      cursor = openEnd;
+      continue;
+    }
     const closeIdx = findCloseTag(input, openEnd, closeTag);
     if (closeIdx === -1) {
       if (!couldCompleteAsQuestionFormBody(input.slice(openEnd))) {
@@ -1110,6 +1166,43 @@ export function formatFormAnswers(
     lines.push(`- ${q.label}: ${display}`);
   }
   return lines.join('\n');
+}
+
+/**
+ * `[form answers — <id>]` —— {@link formatFormAnswers} 顶上那一行**机器载荷**。
+ *
+ * 它是写给 agent 的路由头,不是写给人的。id 后面允许任意文字是因为
+ * `QuestionForm.parseSubmittedAnswers` 也只认「以 `[form answers` 开头」,
+ * agent 复述时可以改写这一行。
+ */
+const FORM_ANSWERS_HEADER_LINE = /^\[form answers\b[^\n]*\n?/i;
+
+/**
+ * 这条用户消息是不是一份表单答案。
+ *
+ * 判据和 `QuestionForm.parseSubmittedAnswers` 同源:只认 `[form answers` 开头,
+ * 用户随口说的话不会被误判。
+ */
+export function isFormAnswersMessage(content: string): boolean {
+  return /^\[form answers\b/i.test(content.trim());
+}
+
+/**
+ * 一份表单答案里**给人看的**那一半。
+ *
+ * 交付成功的答案根本不画用户气泡(#5496:摘要已经长在上一条助手消息上)。
+ * 但发送失败的那一条必须留在流水里 —— 它是「这一轮为什么没了」的唯一凭据,
+ * 也挂着唯一的复原入口(那颗「重试」)。放它出来的同时不能把
+ * `[form answers — <id>]` 这行机器载荷摆到用户脸上,所以这里只去掉头一行,
+ * 底下那几条 `- 问题: 回答` 本来就是人话。
+ *
+ * 去掉之后什么都不剩(agent 只复述了个头)时原样返回,宁可露出机器载荷也
+ * 不给一个空气泡 —— 空气泡等于这一轮又消失了一次。
+ */
+export function formAnswersDisplayBody(content: string): string {
+  if (!isFormAnswersMessage(content)) return content;
+  const body = content.trim().replace(FORM_ANSWERS_HEADER_LINE, '').trim();
+  return body.length > 0 ? body : content;
 }
 
 function formOptionDisplayForValue(

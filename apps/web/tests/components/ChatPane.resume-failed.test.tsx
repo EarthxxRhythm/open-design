@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { forwardRef } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -11,19 +11,8 @@ import {
 } from '../../src/analytics/events';
 import type { AppConfig, ChatMessage } from '../../src/types';
 
-// ⚠️ **OPEND-2807 把〔继续运行〕从报错卡上撤掉了。**
-//
-// 这份文件原本是 resume-on-failure 的红测:一条 `resumable` 的失败(上游瞬断 /
-// 空闲超时,daemon 能靠续跑同一个 CLI 会话捞回来)要给一颗〔继续运行〕,
-// 走 `onResumeRun`,和从头再跑的〔重试〕区分开。
-//
-// 工单「[ChatPanel] 错误卡片未还原设计样式,应该只有三个按钮」+ 用户「别分那么
-// 多情况了」之后,报错卡只剩 联系我们 / 导出日志 / 第三颗 CTA,〔继续运行〕
-// 不在其中。**代价**:BYOK 与 Cloud 两侧都拿不到「保住已经跑出来的半截活」
-// 那条路,`onResumeRun` 也随之没有调用点(prop 还在,ProjectView 仍然传)。
-// 已写进 PR 描述与决策表交产品定夺。
-//
-// 留下来的是「它确实不上卡了」这条守卫 —— 三颗按钮之外一颗都不许多。
+// G16 removes Continue from error cards, even when the stored CLI session is
+// resumable. Keep source identity, history, and recovery analytics assertions.
 
 const translate = (key: string, vars?: Record<string, string | number>) => {
   if (vars && Object.keys(vars).length > 0) {
@@ -63,7 +52,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-function resumableFailedMessage(agentId = 'amr'): ChatMessage {
+function resumableFailedMessage(agentId = 'claude'): ChatMessage {
   return {
     id: 'msg-upstream',
     role: 'assistant',
@@ -90,10 +79,11 @@ function renderChat(opts: {
   onSend?: (...args: unknown[]) => void;
   activeAgentId?: string;
   failedAgentId?: string;
+  onSwitchToAmrAndRetry?: (m: ChatMessage) => void;
 }) {
   return render(
     <ChatPane
-      messages={[resumableFailedMessage(opts.failedAgentId ?? 'amr')]}
+      messages={[resumableFailedMessage(opts.failedAgentId)]}
       streaming={false}
       error={null}
       projectId="project-1"
@@ -103,75 +93,80 @@ function renderChat(opts: {
       onStop={vi.fn()}
       onRetry={opts.onRetry}
       onResumeRun={opts.onResumeRun}
-      // Cloud CTA 只在宿主真的接得住时才画(ChatPane 的
-      // `cloudSwitchHandoffAvailable`);ProjectView 是接得住的那一种。
-      onSwitchToAmrAndRetry={vi.fn()}
+      onSwitchToAmrAndRetry={opts.onSwitchToAmrAndRetry}
       conversations={[
         { projectId: 'project-1', id: 'conv-1', title: 'Current', createdAt: 1, updatedAt: 1 },
       ]}
       activeConversationId="conv-1"
       onSelectConversation={vi.fn()}
       onDeleteConversation={vi.fn()}
-      config={{ agentId: opts.activeAgentId ?? 'amr', agentCliEnv: {} } as unknown as AppConfig}
+      config={{ agentId: opts.activeAgentId ?? 'claude', agentCliEnv: {} } as unknown as AppConfig}
     />,
   );
 }
 
-describe('ChatPane resume-on-failure', () => {
-  it('OPEND-2807:Cloud 上可续跑的失败也只给三颗按钮,〔继续运行〕不上卡', () => {
+describe('ChatPane fixed actions for resumable failures', () => {
+  it('uses Cloud handoff and its telemetry instead of Continue for a resumable CLI run', () => {
     const onResumeRun = vi.fn();
     const onRetry = vi.fn();
-    const { container } = renderChat({ onResumeRun, onRetry, activeAgentId: 'amr' });
-
-    expect(container.querySelector('[data-user-action-card="run-recovery"]')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'chat.resumeRunCta' })).toBeNull();
-
-    const footer = container.querySelector('[data-user-action-footer="true"]');
-    expect(footer).toBeTruthy();
-    expect(
-      Array.from(footer!.querySelectorAll('button')).map((b) => b.getAttribute('data-testid')),
-    ).toEqual([
-      'chat-error-contact-support',
-      'chat-error-export-logs',
-      'chat-error-retry',
+    const onSwitchToAmrAndRetry = vi.fn();
+    const { container } = renderChat({ onResumeRun, onRetry, onSwitchToAmrAndRetry, activeAgentId: 'claude' });
+    const card = screen.getByTestId('chat-run-error-card');
+    expect(within(card).getAllByRole('button').map((button) => button.textContent?.trim())).toEqual([
+      'chat.runError.contactSupportCta', 'chat.runError.exportLogsCta', 'chat.amrCard.switchCta',
     ]);
-
-    // 第三颗是从头再跑那一颗,不是续跑 —— 走 onRetry,不碰 onResumeRun。
-    fireEvent.click(screen.getByTestId('chat-error-retry'));
-    expect(onRetry).toHaveBeenCalledTimes(1);
-    expect(onResumeRun).not.toHaveBeenCalled();
-  });
-
-  it('OPEND-2807:BYOK 上可续跑的失败给的是〔切换到 Cloud〕,同样没有〔继续运行〕', () => {
-    const onResumeRun = vi.fn();
-    const { container } = renderChat({
-      onResumeRun,
-      onRetry: vi.fn(),
-      activeAgentId: 'claude',
-      failedAgentId: 'claude',
-    });
-
+    const cloud = within(card).getByRole('button', { name: 'chat.amrCard.switchCta' });
     expect(screen.queryByRole('button', { name: 'chat.resumeRunCta' })).toBeNull();
-    const footer = container.querySelector('[data-user-action-footer="true"]');
-    expect(
-      Array.from(footer!.querySelectorAll('button')).map((b) => b.getAttribute('data-testid')),
-    ).toEqual([
-      'chat-error-contact-support',
-      'chat-error-export-logs',
-      'chat-error-switch-to-cloud',
-    ]);
-    expect(onResumeRun).not.toHaveBeenCalled();
-  });
-
-  it('曝光埋点只报卡上真有的那一颗', () => {
-    renderChat({ onResumeRun: vi.fn(), onRetry: vi.fn(), activeAgentId: 'amr' });
-
+    expect(screen.queryByRole('button', { name: 'promptTemplates.retry' })).toBeNull();
+    expect(container.querySelector('[data-user-action-footer="true"]')?.contains(cloud)).toBe(true);
     expect(trackRunRecoveryActionSurfaceView).toHaveBeenCalledTimes(1);
     expect(vi.mocked(trackRunRecoveryActionSurfaceView).mock.calls[0]![1]).toMatchObject({
-      element: 'run_recovery_action',
-      task_execution_id: 'msg-upstream',
-      recovery_action_type: 'manual_retry',
-      source_run_id: 'run-upstream',
+      element: 'run_recovery_action', task_execution_id: 'msg-upstream',
+      recovery_action_instance_id: 'recovery:msg-upstream:switch_runtime_retry',
+      recovery_action_type: 'switch_runtime_retry', source_run_id: 'run-upstream',
+      source_agent_provider_id: 'claude_code',
     });
+    fireEvent.click(cloud);
+    expect(trackRunRecoveryActionClick).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(trackRunRecoveryActionClick).mock.calls[0]![1]).toMatchObject({
+      task_execution_id: 'msg-upstream',
+      recovery_action_instance_id: 'recovery:msg-upstream:switch_runtime_retry',
+      recovery_action_type: 'switch_runtime_retry',
+    });
+    expect(onSwitchToAmrAndRetry).toHaveBeenCalledWith(expect.objectContaining({ id: 'msg-upstream', resumable: true }));
+    expect(onResumeRun).not.toHaveBeenCalled();
+    expect(onRetry).not.toHaveBeenCalled();
+  });
+
+  it('does not silently send a Continue prompt when the host lacks a resume handler', () => {
+    const onRetry = vi.fn();
+    const onSend = vi.fn();
+    const onSwitchToAmrAndRetry = vi.fn();
+    renderChat({ onRetry, onSend, onSwitchToAmrAndRetry, activeAgentId: 'claude' });
+    fireEvent.click(screen.getByRole('button', { name: 'chat.amrCard.switchCta' }));
+    expect(onSwitchToAmrAndRetry).toHaveBeenCalledWith(expect.objectContaining({ id: 'msg-upstream' }));
+    expect(screen.queryByRole('button', { name: 'chat.resumeRunCta' })).toBeNull();
+    expect(onSend).not.toHaveBeenCalled();
+    expect(onRetry).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['claude', 'opencode', 'chat.amrCard.switchCta'],
+    ['amr', 'claude', 'promptTemplates.retry'],
+  ])('retains the failed %s identity after the current agent changes to %s', (failedAgentId, activeAgentId, label) => {
+    const onResumeRun = vi.fn();
+    const onRetry = vi.fn();
+    const onSwitchToAmrAndRetry = vi.fn();
+    renderChat({ onResumeRun, onRetry, onSwitchToAmrAndRetry, activeAgentId, failedAgentId });
+    expect(screen.queryByRole('button', { name: 'chat.resumeRunCta' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: label }));
+    if (failedAgentId === 'amr') {
+      expect(onRetry).toHaveBeenCalledWith(expect.objectContaining({ id: 'msg-upstream', agentId: failedAgentId }), 'manual_retry');
+      expect(onSwitchToAmrAndRetry).not.toHaveBeenCalled();
+    } else {
+      expect(onSwitchToAmrAndRetry).toHaveBeenCalledWith(expect.objectContaining({ id: 'msg-upstream', agentId: failedAgentId }));
+      expect(onRetry).not.toHaveBeenCalled();
+    }
+    expect(onResumeRun).not.toHaveBeenCalled();
   });
 });

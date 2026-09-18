@@ -1,3 +1,5 @@
+import { conversationMetaLabel } from '../runtime/chat/conversation-time';
+export { conversationMetaLabel } from '../runtime/chat/conversation-time';
 import { QuoteBar } from './chat/QuoteBar';
 import { chatLogSelfResizeObserveDisabled } from '../runtime/chat-scroll-experiments';
 import { shouldShowJumpToLatest } from '../runtime/chat/jump-to-latest';
@@ -8,6 +10,7 @@ import {
   upwardGestureCanEscapeBottom,
   type FollowIntent,
   type ScrollSample,
+  type WheelWitness,
 } from '../runtime/chat/stick-to-bottom';
 import {
   ANCHOR_TOP_PADDING,
@@ -48,6 +51,7 @@ import {
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
+import historyStyles from './chat/ConversationHistoryDock.module.css';
 import { hasOdCard, OD_NEXT_STRATEGY_ID, type ProjectMediaTask } from '@open-design/contracts';
 import { useAnalytics } from '../analytics/provider';
 import { getResolvedDeviceId } from '../analytics/client';
@@ -64,6 +68,12 @@ import {
   runAgentProviderId,
 } from '../analytics/run-task';
 import { amrHandoffDeviceId, attributedAmrUrl, recordAmrEntry } from '../analytics/amr-attribution';
+import { setChatCorrelation } from '../observability/chat-context';
+import {
+  chatSurfaceSample,
+  openChatSurface,
+  type ChatSurfaceHandle,
+} from '../observability/chat-health';
 import { useI18n, useT } from '../i18n';
 import { startersForProduct, type ProductType } from '../onboarding/recommendation';
 import { starterCopyFor } from '../onboarding/starter-copy';
@@ -87,7 +97,11 @@ import { fetchProjectMediaTasks, projectRawUrl } from '../providers/registry';
 import { appendResourceQuery } from '../collab/workspace-identity';
 import { useProjectCollabContext } from '../collab/collab-context';
 import { takeComposerSeedFor } from '../state/libraryHandoff';
-import { splitOnQuestionForms } from '../artifacts/question-form';
+import {
+  formAnswersDisplayBody,
+  isFormAnswersMessage,
+  splitOnQuestionForms,
+} from '../artifacts/question-form';
 import { stripArtifact } from '../artifacts/strip';
 import type { TodoItem } from '../runtime/todos';
 import type {
@@ -112,6 +126,8 @@ import { commentTargetDisplayName, commentsToAttachments, simplePositionLabel } 
 import { AssistantMessage, type QuestionFormSubmitHandler } from './AssistantMessage';
 import { chatSeam } from './chat/ChatRoot';
 import { PlanPill } from './chat/PlanPill';
+import { QueuedSendStack } from './chat/QueuedSendStack';
+import { ChatScrollEdge } from './chat/ChatScrollEdge';
 import { planPillState } from '../runtime/chat/plan-pill';
 import {
   assistantMessageNeverHadARun,
@@ -137,7 +153,6 @@ import {
   daemonFailureVerdictFrom,
   failureCardHandedToAmrBalanceCard,
   formatModelWindowRetryAt,
-  hasSelfContainedRecovery,
   isReconnectOwnedFailure,
   resolveRunErrorCardDescription,
   resolveRunFailureUi,
@@ -164,7 +179,6 @@ import { listDesignArtifactCandidates } from './design-files/designArtifacts';
 import type { PluginFolderAgentAction } from './design-files/pluginFolderActions';
 import { Icon, type IconName } from './Icon';
 import { ChatFileIcon, QueueTrashIcon } from './chat/primitives/icons';
-import { UserActionCard, type UserActionCardTone } from './UserActionCard';
 import {
   RunErrorCard,
   RunErrorCardAction,
@@ -174,6 +188,7 @@ import { SupportDialog } from './chat/SupportDialog';
 import { Toast } from './Toast';
 import { supportChannels } from './chat/support-channels';
 import { ExportLogsAction } from './chat/ExportLogsAction';
+import type { RecoveryActionBlockReason } from '../runtime/chat/recovery-gating';
 import { repoConnectCopy } from './design-system-github-evidence';
 import { isRenderableSketchJson, SketchPreview } from './SketchPreview';
 import type { SettingsSection } from './SettingsDialog';
@@ -237,7 +252,7 @@ const DEFAULT_STARTER_KEYS: Array<{
 
 const IMPORTED_ARTIFACTS_INITIAL_VISIBLE_COUNT = 5;
 const IMPORTED_ARTIFACTS_REVEAL_COUNT = 5;
-const CHAT_RAIL_MIN_USER_MESSAGES = 2;
+const CHAT_RAIL_MIN_USER_MESSAGES = 1;
 // Above this the rail becomes a compact rolling wheel with faded extremes;
 // at or below it the full column shows with no mask occlusion.
 const CHAT_RAIL_WHEEL_MIN_USER_MESSAGES = 40;
@@ -257,7 +272,7 @@ const CHAT_RAIL_WHEEL_LISTENER_OPTIONS = { passive: false } as const;
 // Dock-style proximity effect: every dash rests at the same base length;
 // the hovered dash grows to the full module width and only its 4 neighbors
 // on each side are pulled along, easing off with distance.
-const CHAT_RAIL_DASH_BASE_PX = 8;
+const CHAT_RAIL_DASH_BASE_PX = 6;
 const CHAT_RAIL_DASH_HOVER_PX = 16;
 const CHAT_RAIL_DASH_NEIGHBOR_SPAN = 4;
 
@@ -620,17 +635,16 @@ interface Props {
   onRemoveQueuedSend?: (id: string) => void;
   onUpdateQueuedSend?: (id: string, update: QueuedSendUpdate) => void;
   onReorderQueuedSends?: (orderedIds: string[]) => void;
-  onSendQueuedNow?: (id: string) => void;
   /**
-   * B11 「引导对话」: interrupt the turn that is still running and send this
-   * queued item straight away (OPEND-2602). Supplied whenever the host has a
-   * live run on this conversation — interrupting works on every agent, so this
-   * is NOT gated on the agent's `promptInputFormat`. Absent means there is
-   * nothing to interrupt, and the queue row falls back to `onSendQueuedNow`
-   * under its own name.
+   * B11 「引导对话」: send this queued item now. When a turn is still running
+   * the host stops it first and sends this item as the next turn (OPEND-2602);
+   * when nothing is running it just sends. That branch is the host's, and it is
+   * the same one call either way — which is exactly why the queue row shows one
+   * button under one name (product ruling 2026-09-08).
    */
-  onSteerQueuedSend?: (id: string) => void;
-  /** Why steering is unavailable right now, shown on the fallback button. */
+  onSendQueuedNow?: (id: string) => void;
+  /** Why steering is unavailable right now. Threaded but not rendered — see
+   *  `QueuedSendStrip`'s docblock for why it is kept. */
   steerBlockedReason?: string | null;
   // Names that exist in the project folder. Tool cards and chips use this
   // set to decide whether a path can be opened as a tab.
@@ -654,11 +668,30 @@ interface Props {
     assistantMessage: ChatMessage,
     recoveryActionType?: TrackingRunRecoveryActionType,
   ) => void;
+  /**
+   * 宿主这一刻**为什么**接不住报错卡上的恢复动作(OPEND-2821)。
+   *
+   * `null` = 接得住。非 null 的时候这一排按钮长成禁用态,卡面上多一句说明 ——
+   * 在此之前宿主的 `handleRetry` 在同样的六个条件下静默 `return`,而按钮
+   * 一直画成可点的样子。判据出自 `runtime/chat/recovery-gating.ts`,
+   * 宿主和按钮读的是同一个值。
+   */
+  recoveryActionsBlockedReason?: RecoveryActionBlockReason | null;
+  /** Confirmed access/read failure; a pending writer authority is not read-only. */
+  accessError?: 'read-only' | 'messages-unavailable' | null;
+  /** Which failed attempt is awaiting retry acknowledgement; no old card is pinned. */
+  retryPendingAssistantId?: string | null;
+  /** Display and physical-run IDs of the failure consumed by an accepted retry. */
+  supersededErrorAssistantIds?: readonly string[];
   /** Retry a user message whose daemon run was never created. */
   onResendUserMessage?: (message: ChatMessage) => void;
   amrAuthRetryContinuation?: AmrAuthRetryContinuation | null;
   amrAuthRetryMountId?: string;
   amrAuthRetryWorkspaceIdentityKey?: string;
+  /** A same-principal directory projection awaits the authoritative scope. */
+  amrAuthRetryAuthorityPending?: boolean;
+  /** The host can accept a retry against the current authoritative transcript. */
+  amrAuthRetryReady?: boolean;
   amrAuthRetryPersonalAdoptionWitness?: AmrAuthRetryPersonalAdoptionWitness | null;
   onArmAmrAuthRetryContinuation?: (
     continuation: Omit<AmrAuthRetryContinuation, 'accountIdAtArm' | 'createdAtMs'>,
@@ -726,12 +759,7 @@ interface Props {
   conversations: Conversation[];
   activeConversationId: string | null;
   // The conversation whose history the live `messages` array currently
-  // reflects. Null while a switch is mid-flight (or after a load failure),
-  // which is exactly when `messages.length` must NOT be trusted as the active
-  // conversation's count — see `conversationMessageCount`. Callers that do not
-  // track this (mounts whose loader resets/retags `messages` asynchronously)
-  // leave it undefined and fall back to the persisted `conversation.messageCount`
-  // for a stable list count.
+  // reflects. Null while a switch is mid-flight (or after a load failure).
   messagesConversationId?: string | null;
   onSelectConversation: (id: string) => void;
   onDeleteConversation: (id: string) => void;
@@ -937,7 +965,19 @@ interface Props {
    *  the tabs dock row) — suppresses the header's collapse/back slot. */
   collapseControlLifted?: boolean;
   backLabel?: string;
-  projectHeader?: ReactNode;
+  // Host element for the conversation history control. When set (the project
+  // route's toolbar dock) the trigger + dropdown portal there and the card
+  // renders NO header row of its own — the project name lives once, in the
+  // switcher above the card (OPEND-3128 / OPEND-3258). Otherwise the control
+  // renders in a title-less row at the top of the card.
+  historyPortalTarget?: HTMLElement | null;
+  /**
+   * The pane is laid out but parked out of sight under the creation hand-off
+   * card (ProjectView `creationHandoff`, OPEND-2170). The composer normally
+   * portals into a body-level fixed layer that `visibility: hidden` on the
+   * pane cannot reach, so the layer hides itself on this flag.
+   */
+  composerLayerHidden?: boolean;
   designSystemPicker?: ReactNode;
   config?: AppConfig;
 }
@@ -1002,6 +1042,14 @@ interface QueuedSendUpdate {
  * folded. Every continuation's content, events and produced files are appended
  * to the turn's first message in Run order, so nothing is dropped and nothing
  * is duplicated.
+ *
+ * ⚠️ The turn keeps ONE message row, so it can carry only one `createdAt` and
+ * one `endedAt` — the head's start and the tail's end. Every Run boundary in
+ * between used to die here, and the renderer's clocks died with it
+ * (OPEND-2823 / OPEND-2824; the full causal chain is on
+ * `PersistedAgentEvent`'s `done_key.runStartedAt`). So each Run's own span is
+ * stamped onto the `done_key` it already emits — the very event the renderer
+ * uses to find the boundary — before its events are appended.
  */
 export function foldStrategyTaskTurns(messages: ChatMessage[]): ChatMessage[] {
   if (!messages.some((message) => (message.strategyTaskRunIndex ?? 0) > 0)) {
@@ -1018,7 +1066,7 @@ export function foldStrategyTaskTurns(messages: ChatMessage[]): ChatMessage[] {
     }
     if (runIndex === 0 || !turnHeadIndexByTask.has(taskId)) {
       turnHeadIndexByTask.set(taskId, folded.length);
-      folded.push(message);
+      folded.push({ ...message, events: stampRunSpan(message) });
       continue;
     }
     const headIndex = turnHeadIndexByTask.get(taskId)!;
@@ -1030,7 +1078,7 @@ export function foldStrategyTaskTurns(messages: ChatMessage[]): ChatMessage[] {
       content: tailContent
         ? `${headContent}${headContent && !headContent.endsWith('\n') ? '\n\n' : ''}${tailContent}`
         : headContent,
-      events: [...(head.events ?? []), ...(message.events ?? [])],
+      events: [...(head.events ?? []), ...stampRunSpan(message)],
       producedFiles: [...(head.producedFiles ?? []), ...(message.producedFiles ?? [])],
       // The turn's status is the latest Run's: the earlier Runs finishing is an
       // internal step, not the turn ending.
@@ -1048,6 +1096,33 @@ export function foldStrategyTaskTurns(messages: ChatMessage[]): ChatMessage[] {
     };
   }
   return folded;
+}
+
+/**
+ * Write this Run's own wall-clock span onto the `done_key` it already carries.
+ *
+ * The message row is about to be merged away, and with it the only record of
+ * when THIS Run started and ended. `done_key` is emitted once per Run and is
+ * where the renderer already splits Runs apart, so the span rides along with
+ * the boundary it belongs to instead of needing a channel of its own.
+ *
+ * A Run still in flight has no `endedAt`; a Run recorded before `done_key`
+ * existed has no marker to stamp. Both simply keep today's behaviour — the
+ * renderer treats an absent span as "unknown" and falls back to the turn's.
+ */
+function stampRunSpan(message: ChatMessage): NonNullable<ChatMessage['events']> {
+  const events = message.events ?? [];
+  const startedAt = message.startedAt ?? message.createdAt;
+  if (startedAt == null && message.endedAt == null) return events;
+  return events.map((event) => (
+    event.kind === 'done_key'
+      ? {
+        ...event,
+        ...(startedAt != null ? { runStartedAt: startedAt } : {}),
+        ...(message.endedAt != null ? { runEndedAt: message.endedAt } : {}),
+      }
+      : event
+  ));
 }
 
 function shouldHideEmptyBrandAssistantMessage(message: ChatMessage, metadata?: ProjectMetadata): boolean {
@@ -1101,6 +1176,7 @@ function hasVisibleBrandAssistantEvent(event: NonNullable<ChatMessage['events']>
     case 'status':
       return !HIDDEN_BRAND_ASSISTANT_STATUS_LABELS.has(event.label);
     case 'usage':
+    case 'request_usage':
     case 'diagnostic':
     case 'conversation_title':
     // Protocol metadata for this turn's done marker — never user-visible.
@@ -1190,26 +1266,7 @@ function byMediaTaskCreationOrder(a: ProjectMediaTask, b: ProjectMediaTask): num
   return 0;
 }
 
-/**
- * 面板头那两枚字形。**路径逐字节取自稿子** `729fa43ce7` 的
- * `docs/design/chat-panel/src/body-scene.html:7-8`,不手抄、不换库。
- *
- * ## 为什么不走共享的 `<Icon name=…>`
- *
- * 稿子这两枚都是**描边**(`fill="none" stroke="currentColor"`,吃
- * `src/components.css:159` 的全局 `stroke-width: 1.75px` + round/round)。
- * 而 `components/Icon.tsx` 里凡是命中 `REMIX_ICON` 映射表的名字一律走**实心**
- * remix 路径 —— `history` / `plus` 两个名字都在表里,拿不到描边形。
- * 把名字从那张表里摘掉是**全站**行为(`arrow-up` 一个名字就有 6 处调用,
- * 其中两处在聊天面板之外),属于要单独拍板的改动;这里只把影响锁在面板头内,
- * 按仓库既有的做法(`ChatPane` 里的 `.msg-att-eye`、`RunErrorCard` 的
- * `AlertIcon`)直接内联稿子的路径。
- *
- * 1.75 是**用户单位**,跟着 viewBox 缩放 —— 与 `chat/primitives/icons.tsx` 的
- * `STROKE_ICON` 同一条约定,那里有完整推导。尺寸维持面板头现有的 16(稿子
- * `src/scene-shell.css:32` 是 15,但盒子也是 26 而不是产品的 28;
- * 那一组尺寸差不在本轮范围内)。
- */
+/** The new-session glyph keeps the design draft's stroke form at 16px. */
 const HEAD_GLYPH = {
   width: 16,
   height: 16,
@@ -1222,13 +1279,11 @@ const HEAD_GLYPH = {
   'aria-hidden': true,
 } as const;
 
-/** 描边时钟 + 回退箭头(`src/body-scene.html:7`)—— 不是实心对话气泡 */
+/** Filled discuss-line glyph (Demo #8113), sized like the other head icons. */
 function ChatHistoryGlyph(): ReactElement {
   return (
-    <svg {...HEAD_GLYPH}>
-      <path d="M3 12a9 9 0 109-9 9 9 0 00-6.4 2.6L3 8" />
-      <path d="M3 4v4h4" />
-      <path d="M12 7v5l3 2" />
+    <svg width={16} height={16} viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true">
+      <path d="M14 22.5L11.2 19H6C5.44772 19 5 18.5523 5 18V7.10256C5 6.55028 5.44772 6.10256 6 6.10256H22C22.5523 6.10256 23 6.55028 23 7.10256V18C23 18.5523 22.5523 19 22 19H16.8L14 22.5ZM15.8387 17H21V8.10256H7V17H11.2H12.1613L14 19.2984L15.8387 17ZM2 2H19V4H3V15H1V3C1 2.44772 1.44772 2 2 2Z" />
     </svg>
   );
 }
@@ -1269,21 +1324,24 @@ export function ChatPane({
   onDeleteComment,
   onSend,
   onRetry,
+  recoveryActionsBlockedReason = null,
+  accessError = null,
+  retryPendingAssistantId = null,
+  supersededErrorAssistantIds = [],
   onResendUserMessage,
   amrAuthRetryContinuation = null,
   amrAuthRetryMountId,
   amrAuthRetryWorkspaceIdentityKey,
+  amrAuthRetryAuthorityPending = false,
+  amrAuthRetryReady = true,
   amrAuthRetryPersonalAdoptionWitness = null,
-  onArmAmrAuthRetryContinuation,
   onConsumeAmrAuthRetryContinuation,
   onDiscardAmrAuthRetryContinuation,
-  onResumeRun,
   onStop,
   onRemoveQueuedSend,
   onUpdateQueuedSend,
   onReorderQueuedSends,
   onSendQueuedNow,
-  onSteerQueuedSend,
   steerBlockedReason,
   onRequestOpenFile,
   onRequestPluginDetails,
@@ -1314,16 +1372,12 @@ export function ChatPane({
   onSelectConversation,
   onDeleteConversation,
   onOpenSettings,
-  onSwitchModel,
   amrBalanceCardUsd = null,
   amrBalanceCardAnchorMessageId = null,
   amrBalanceCardUnavailable = false,
   onAmrBalanceUpgrade,
-  showByokRecoveryAction = false,
-  onSwitchToLocalCli,
   onOpenAmrSettings,
   onSwitchToAmrAndRetry,
-  onLaunchAntigravityOauth,
   onOpenMcpSettings,
   onBrowsePlugins,
   onOpenConnectors,
@@ -1380,7 +1434,8 @@ export function ChatPane({
   onCollapse,
   collapseControlLifted,
   backLabel,
-  projectHeader,
+  historyPortalTarget,
+  composerLayerHidden = false,
   designSystemPicker,
   config,
 }: Props) {
@@ -1400,6 +1455,20 @@ export function ChatPane({
    * 只是此刻长得一样。见 `buildChatRenderItems` 的注释。
    */
   const chatRenderItems = useMemo(() => buildChatRenderItems(displayMessages), [displayMessages]);
+  /** Live handle on the chat-health surface, for the effects that feed it. */
+  const chatSurfaceRef = useRef<ChatSurfaceHandle | null>(null);
+  const chatVirtualized = isChatVirtualized(chatRenderItems);
+  /**
+   * 这场对话背后**agent 事件的总条数**。
+   *
+   * 首屏耗时单独一个数字是没法归因的:3 秒到底是「消息多」还是「每条消息底下
+   * 挂了几百条工具事件」,只有这个数能分开。所以它和 `markFirstPaint` 必须同批
+   * 落地 —— 只有耗时没有它,那个耗时就只是个不能下钻的读数。
+   */
+  const chatStreamEventCount = useMemo(
+    () => displayMessages.reduce((total, message) => total + (message.events?.length ?? 0), 0),
+    [displayMessages],
+  );
   /**
    * 每一轮各自那张升级卡:key = 那一轮助手消息的 id,value = **结束那一刻**的余额。
    *
@@ -1534,6 +1603,8 @@ export function ChatPane({
   const composerSlotRef = useRef<HTMLDivElement | null>(null);
   const composerLayerRef = useRef<HTMLDivElement | null>(null);
   const queuedSendStripRef = useRef<HTMLDivElement | null>(null);
+  /** The queued-send stack is spread open over the transcript (see `QueuedSendStack.onExpandedChange`). */
+  const [queuedSendExpanded, setQueuedSendExpanded] = useState(false);
   const didInitialScrollRef = useRef(false);
   const runFailedToastSurfaceKeysRef = useRef<Set<string>>(new Set());
   const runRecoverySurfaceKeysRef = useRef<Set<string>>(new Set());
@@ -1556,6 +1627,29 @@ export function ChatPane({
     scrollHeight: 0,
     clientHeight: 0,
   });
+  /**
+   * 「就在这个位置上,用户的滚轮在朝下要」——一张**只解释一次位移**的证词。
+   *
+   * 唯一的用途是给 `nextFollowIntent` 一个否决权:朝下的滚轮配上朝上的位移不是
+   * 用户上滑(见 `stick-to-bottom.ts` 的 `isCompositorSnapBack`)。
+   *
+   * ## ⚠️ 生命周期是这张条子的安全性所在
+   *
+   * 一张能解释任意后续位移的条子会把跟随焊死 —— 那比它要修的 bug 更糟。三条边界
+   * 各自堵一个别的堵不住的洞,缺一不可:
+   *
+   *  1. **用掉就清**(`onScroll`)—— 一次位移一张条子,不许连用。
+   *  2. **上下文换了就清**(切会话、日志节点换掉、面板卸载,以及滚轮之外的输入)
+   *     —— 结构性的那一半;`atScrollTop` 在判据里再兜一层。
+   *  3. **过一帧就过期**(`armWheelWitnessExpiry`)—— 唯一能堵住「一格朝下的滚轮
+   *     落在已经到底的日志上,位置不动、连 scroll 事件都不发」的洞:那张条子
+   *     没人来用掉,得自己死。
+   *
+   * `null` = 没有见证 = 判据退回「方向 + 几何」,也就是这套东西出现之前的行为。
+   */
+  const wheelWitnessRef = useRef<WheelWitness | null>(null);
+  /** (3) 的那一帧。挂着的时候说明有一张条子在等着过期。 */
+  const wheelWitnessFrameRef = useRef<number | null>(null);
   const scrolledToFormRef = useRef<Set<string>>(new Set());
   const refreshInlineAmrLoginStatus = useCallback(async (options: { refresh?: boolean } = {}) => {
     const next = await fetchVelaLoginStatus(options).catch(() => null);
@@ -1957,15 +2051,40 @@ export function ChatPane({
    * 按位置分工才对:人在上面时他要的是回到最新 —— 那一刻「跑到第几步了」既不紧急、
    * 也不是他伸手要够的东西;人贴着底时他已经在最新上,回底按钮无事可做,
    * 位置该让给进度。两者因此天然不同时出现,不需要谁给谁让一档。
+   *
+   * 队列展开时是第三个例外(K1,参照 #8165):展开的队列叠在 transcript 底部
+   * 同一角上,「回到最新」这时候让位,队列收起后回来。
    */
-  const showJumpToLatest = scrolledFromBottom;
+  const showJumpToLatest = scrolledFromBottom && !queuedSendExpanded;
   const planPillVisible = planPillEligible && !scrolledFromBottom;
-  const retryAssistant = retryableAssistantMessage(
-    displayMessages,
-    lastAssistantId,
-    streaming,
-    lastTurnAssistantId,
+  // Historical messages remain intact. Only their current recovery surface is
+  // replaced, by identity rather than diagnostic text (the next run may fail alike).
+  const retryCandidate = retryableAssistantMessage(
+    displayMessages, lastAssistantId, streaming, lastTurnAssistantId,
   );
+  const retryAssistant = retryCandidate
+    && !supersededErrorAssistantIds.includes(retryCandidate.id)
+    && retryCandidate.id !== retryPendingAssistantId
+    ? retryCandidate
+    : null;
+  const retryInFlight = retryPendingAssistantId !== null;
+  /**
+   * 报错卡上那一排恢复动作**这一刻能不能按**。
+   *
+   * 两个来源:宿主说它接不住(2821 的六个门控),或者这一轮的重试已经在飞
+   * (2758 的防重复提交)。两者都只影响**可用态**,不影响这一排出不出现 ——
+   * 用户仍要能读到失败原因和有哪些出路。
+   */
+  const recoveryActionsDisabled = recoveryActionsBlockedReason !== null || retryInFlight;
+  /**
+   * 〔重试〕这一颗在飞的时候改说「正在重试」。
+   *
+   * 复用 `chat.edge.retrying` —— 流水最后一行那枚重连行说的就是同一件事
+   * (`chat/Reconnect.tsx` 的 `agent-retry`),不另造一份措辞。
+   */
+  const retryLabelKey: keyof Dict = retryInFlight
+    ? 'chat.edge.retrying'
+    : 'promptTemplates.retry';
   // The failed run's error event lives on the (persisted) assistant message, so
   // the error card + AMR card survive a reload — unlike the ephemeral global
   // `error` state. Drive both off this event.
@@ -2025,6 +2144,7 @@ export function ChatPane({
         && amrAuthRetryContinuation.workspaceIdentityKey
           !== amrAuthRetryWorkspaceIdentityKey
         && !personalAdoptionAuthorityTransition
+        && !amrAuthRetryAuthorityPending
       );
     if (mismatched) {
       onDiscardAmrAuthRetryContinuation(amrAuthRetryContinuation);
@@ -2032,6 +2152,7 @@ export function ChatPane({
   }, [
     activeConversationId,
     amrAuthRetryContinuation,
+    amrAuthRetryAuthorityPending,
     amrAuthRetryMountId,
     amrAuthRetryPersonalAdoptionWitness,
     amrAuthRetryWorkspaceIdentityKey,
@@ -2056,6 +2177,9 @@ export function ChatPane({
     if (
       !isAmrSessionAuthenticated(status)
       || !amrAuthRetryContinuation
+      || !amrAuthRetryReady
+      || loading
+      || recoveryActionsDisabled
       || !amrAuthRetryMountId
       || !amrAuthRetryWorkspaceIdentityKey
       || !projectId
@@ -2097,6 +2221,7 @@ export function ChatPane({
   }, [
     activeConversationId,
     amrAuthRetryContinuation,
+    amrAuthRetryReady,
     amrAuthRetryMountId,
     amrAuthRetryPersonalAdoptionWitness,
     amrAuthRetryWorkspaceIdentityKey,
@@ -2104,6 +2229,8 @@ export function ChatPane({
     onRetry,
     projectId,
     retryAssistant,
+    loading,
+    recoveryActionsDisabled,
   ]);
   useEffect(() => {
     if (!amrAuthRetryContinuation || !isAmrSessionAuthenticated(inlineAmrLoginStatus)) return;
@@ -2149,21 +2276,6 @@ export function ChatPane({
     refreshInlineAmrLoginStatus,
     retryAssistant,
   ]);
-  // Offer Continue (resume) when the failed run is resumable AND the active
-  // agent still matches the agent that produced it. The daemon stores a
-  // resumable session per (conversation, agent); after an agent switch the new
-  // agent has no id for that session, so a resume would silently start fresh —
-  // fall back to the from-scratch Retry instead. We do NOT require `onResumeRun`
-  // here: because the daemon persists the resumable session, the plain Retry
-  // path (which re-sends the original prompt) would itself silently resume that
-  // session and double the work. So every ChatPane surface must offer Continue
-  // for a resumable failure — `onResumeRun` when wired (primary chat, carries
-  // the resume_continue analytics), otherwise a plain `onSend` of the canonical
-  // continue prompt (resumes the session without re-sending the original turn).
-  const canResumeFailedRun =
-    !!retryAssistant?.resumable &&
-    !!retryAssistant?.agentId &&
-    retryAssistant.agentId === config?.agentId;
   // `error` is a shared escape hatch for both run failures and unrelated pane
   // errors. A run error also lives durably on its assistant message. Suppress
   // it only when its exact source assistant owns the persisted diagnostic and
@@ -2179,7 +2291,10 @@ export function ChatPane({
       ),
     [displayMessages, error, errorSourceAssistantId, retryAssistant],
   );
-  const currentGlobalError = historicalRunError ? null : error;
+  const consumedGlobalRunError = errorSourceAssistantId != null
+    && (supersededErrorAssistantIds.includes(errorSourceAssistantId)
+      || errorSourceAssistantId === retryPendingAssistantId);
+  const currentGlobalError = historicalRunError || consumedGlobalRunError ? null : error;
   // Prefer a case-specific message (AMR auth / balance) over the raw upstream
   // string; otherwise keep a current pane-level error ahead of the persisted
   // failed-run detail. Historical run errors were already removed above.
@@ -2246,44 +2361,90 @@ export function ChatPane({
   // 面板级的那条错误(还没落到消息上)也要过这一道,否则重连行在场时它照样冒出来。
   //
   // `suppressCard` 是**交接**,不是删除:它说的是「别人已经在说这件事了」。
-  // 断线那一档的接手方(重连行)一定在场;余额那一档的接手方是升级卡,而升级卡
-  // 只有在钱包补查读出确定数字时才画得出来 —— 接不住的时候没有任何人在说话,
-  // 这时还按下白卡,用户在一轮「钱不够」的失败之后屏幕上什么都不剩,没有充值
-  // 入口也没有重试。所以交接只在接手方真的在场时成立。
+  // 余额那一档的接手方是升级卡,而升级卡只有在钱包补查读出确定数字时才画得出来;
+  // 断线那一档的接手方是流水末尾那一行重连行,而它的数据(`ProjectView` 的
+  // `reconnectView`)在换项目 / 离开这一屏时被专门清空 —— 退出项目再进来,那一行
+  // 就不在了。两处都一样:接不住的时候没有任何人在说话,这时还按下白卡,用户在一轮
+  // 失败之后屏幕上什么都不剩,既没有说明也没有恢复入口。
+  //
+  // **所以交接只在接手方真的在场时成立。**这是一条不变量,两档共用同一个形状:
+  // 先各自认出「这一档交给谁」,再统一问一句「那个人在不在」。
+  const reconnectRowOwnsFailure = isReconnectOwnedFailure(
+    failedRunErrorEvent?.code,
+    rawError,
+  );
   const balanceCardCannotTakeTheHandoff =
     failureCardHandedToAmrBalanceCard(runFailureUi) && amrBalanceCardUnavailable;
+  const reconnectRowCannotTakeTheHandoff = reconnectRowOwnsFailure && !reconnect;
+  const handoffTargetIsAbsent =
+    balanceCardCannotTakeTheHandoff || reconnectRowCannotTakeTheHandoff;
   const anotherSurfaceOwnsFailure =
-    (runFailureUi?.suppressCard === true && !balanceCardCannotTakeTheHandoff)
-    || isReconnectOwnedFailure(failedRunErrorEvent?.code, rawError);
+    (runFailureUi?.suppressCard === true || reconnectRowOwnsFailure)
+    && !handoffTargetIsAbsent;
   // 面板槽里那段字是不是某一轮跑出来的原文 —— 只看**有没有来源助手**,不看是不是
   // 「这一轮」的。别的助手留下的原文也一样是原文,不该因为「跟这一轮无关」就原样放行。
   const paneErrorCameFromARun = !!currentGlobalError && errorSourceAssistantId != null;
+  /**
+   * 空回复**不是**「说不出原因」,而是「原因已经有人在说」。
+   *
+   * API / BYOK 空回复把这一轮也写成 `runStatus:'failed'`
+   * (`ProjectView.tsx` 的 `emptyApiResponse` 分支同时补一条 `status(empty_response)`),
+   * 但它的状态词是「没有输出」、正文是 `assistant.emptyResponseMessage`,由
+   * `e2e/ui/api-empty-response.test.ts` 那条 P0 钉死。再压一张兜底白卡,就是
+   * 同一件事被两块 UI 各说一遍 —— 和交接判据要避免的是同一个问题。
+   *
+   * 判据和 `AssistantMessage.failedTurnIsAnnouncedByTheShell` 用的是同一条:
+   * 看这一轮身上有没有 `empty_response` 那一帧,不看文案长什么样。
+   */
+  const failedTurnIsAnEmptyResponse = (retryAssistant?.events ?? []).some(
+    (ev) => ev.kind === 'status' && ev.label === 'empty_response',
+  );
+  /**
+   * 这一轮**确实到了终态失败**。
+   *
+   * `retryAssistant` 本身就是这个判据:它走
+   * `isRetryableAssistantTerminalFailure`,既认进程级 `runStatus:'failed'`,
+   * 也认「进程成了、东西没交出来」的 `no_result` / `delivery_failed` ——
+   * 恢复入口这一族本来就共用它当锚点,兜底卡没有理由另立一套。
+   */
+  const turnEndedInTerminalFailure = !!retryAssistant && !failedTurnIsAnEmptyResponse;
   const cardDescription = resolveRunErrorCardDescription({
     handedToAnotherSurface: anotherSurfaceOwnsFailure,
     mappedMessageKey: runFailureUi?.messageKey ?? null,
     paneError: currentGlobalError,
     paneErrorCameFromARun,
     failedRunRawDetail: failedRunErrorEvent?.detail ?? null,
+    turnEndedInTerminalFailure,
   });
-  const displayError =
-    cardDescription.render === 'none'
-      ? null
-      : cardDescription.render === 'mapped'
-        ? t(cardDescription.messageKey, runFailureCopyVars)
-        : cardDescription.render === 'fallback'
-          ? t(RUN_FAILURE_FALLBACK_MESSAGE_KEY)
-          : cardDescription.text;
-  // Brand (accent) for AMR sign-in/top-up, warning for a self-healing
-  // connection drop, danger for everything else. The shared action card only
-  // tints its icon; the surface itself stays neutral.
-  const runErrorTone: UserActionCardTone =
-    runFailureUi?.primaryAction === 'authorize' ||
-    runFailureUi?.primaryAction === 'recharge' ||
-    runFailureUi?.primaryAction === 'upgrade'
-      ? 'brand'
-      : failedRunErrorEvent?.code === 'AGENT_CONNECTION_DROPPED'
-        ? 'warning'
-        : 'danger';
+  // A failed transcript read owns its pane error even before any history exists.
+  // Confirmed read-only access only replaces an already-present recovery card.
+  const accessErrorCopy = (() => {
+    if (accessError === 'messages-unavailable') {
+      return {
+        titleKey: 'chat.runError.title.messagesUnavailable',
+        messageKey: 'chat.runError.actionBlocked.messagesUnavailable',
+      } as const;
+    }
+    if (accessError === 'read-only' && cardDescription.render !== 'none') {
+      return {
+        titleKey: 'chat.runError.title.readOnlyAccess',
+        messageKey: 'chat.runError.actionBlocked.readOnly',
+      } as const;
+    }
+    return null;
+  })();
+  const displayError = (() => {
+    if (accessErrorCopy) return t(accessErrorCopy.messageKey);
+    switch (cardDescription.render) {
+      case 'none': return null;
+      case 'mapped': return t(cardDescription.messageKey, runFailureCopyVars);
+      case 'fallback': return t(RUN_FAILURE_FALLBACK_MESSAGE_KEY);
+      default: return cardDescription.text;
+    }
+  })();
+  const displayErrorTitle = accessErrorCopy
+    ? t(accessErrorCopy.titleKey)
+    : t(runFailureUi?.titleKey ?? 'chat.runError.title.generic', runFailureCopyVars);
   /*
    * 这张顶层报错卡代表**哪一轮**。
    *
@@ -2299,123 +2460,17 @@ export function ChatPane({
    * 任何「失败轮该怎么显示」的判据都不能挂在这里 —— 那种判据要按终态本身写。
    */
   const errorCardOwnerId =
-    retryAssistant && failedRunErrorEvent ? retryAssistant.id : null;
-  /**
-   * 主按钮位上那颗〔切换到 OpenDesign Cloud 并重试〕的埋点载荷(OPEND-2772)。
-   *
-   * 载荷原样保留 —— 它以前是喂给第二张卡 `AmrGuidance` 的 props,那张卡挂载时发
-   * `surface_view`、点击时发 `ui_click(go_amr)`。卡没了,**这两个事件没跟着没**:
-   * `surface_view` 交回给下面报错卡自己那个 effect(它本来就在发,只是当年为了
-   * 不和切换卡重复而在有切换卡时早退),`ui_click` 搬到这颗 CTA 的 onClick 上。
-   *
-   * 两处**放开**:
-   * ① 原来 `UPSTREAM_UNAVAILABLE` 在这里被单独否掉 —— 映射表里明写着它要出切换卡
-   *    (`amr-guidance.ts` 的 `UPSTREAM_UNAVAILABLE` 分支),这行否决没有任何注释
-   *    说明理由,查遍规格与决策表也找不到出处。产品 2026-09-07 要「铺到所有报错」,
-   *    这条无出处的例外一并撤掉。
-   * ② 原来还要求结构化 `code` 在场。落库早于结构化码的老行没有 code,它们同样是
-   *    BYOK 失败,同样该有出路;`error_code` 缺失时按埋点里既有的写法留空串。
-   */
-  const cloudSwitchTracking =
-    runFailureUi?.cloudSwitchCta && retryAssistant
-      ? {
-          errorCode: failedRunErrorEvent?.code ?? '',
-          projectId: projectId ?? '',
-          projectKind: projectKindForTracking,
-          conversationId: activeConversationId,
-          assistantMessageId: retryAssistant.id,
-          runId: retryAssistant.runId ?? null,
-        }
-      : null;
-  // 阶梯第 3 / 4 档的卡自己画不出「能把这次失败推进下去」的按钮:第 3 档的答案
-  // 是那颗 Cloud CTA(阶梯之外,所有非 Cloud 的卡都有),第 4 档给的是〔联系支持〕
-  // (开对话,不是恢复)。判据抽成 `hasSelfContainedRecovery`,免得这里跟着阶梯的
-  // 档位一档档手写。
-  const runFailureHasAction = Boolean(
-    retryAssistant &&
-      onRetry &&
-      runFailureUi &&
-      (hasSelfContainedRecovery(runFailureUi) || canResumeFailedRun),
+    !accessErrorCopy && retryAssistant && failedRunErrorEvent ? retryAssistant.id : null;
+  // OPEND-2807 / G16: the failed run selects one fixed recovery action.
+  // The classifier still owns approved copy and handoffs, never extra buttons.
+  const failedRunUsesCloud = retryAssistant?.agentId === 'amr';
+  const showCloudRetry = Boolean(retryAssistant && failedRunUsesCloud && onRetry);
+  const showCloudSwitchCta = Boolean(
+    retryAssistant && !failedRunUsesCloud
+    && (onSwitchToAmrAndRetry || onOpenAmrSettings),
   );
-  // The generic local-CLI escape hatch is only used when the failure card has
-  // no direct recovery action from the ladder. It survives OPEND-2772 as a
-  // secondary — the Cloud CTA points the other way, and taking away the only
-  // door back to a local runtime was never part of that decision.
-  const showByokRecoveryCta =
-    showByokRecoveryAction && Boolean(onSwitchToLocalCli) && !runFailureHasAction;
-  /**
-   * ⚠️ **接手方不在场就不能让位。**
-   *
-   * `cloudSwitchTracking` 只说「这一轮跑在非 Cloud 上,该给这颗 CTA」——
-   * 它证明不了**按下去有人接**。那颗 CTA 的动作是 `onSwitchToAmrAndRetry`,
-   * 宿主没接时回落 `onOpenAmrSettings`;**两个都没有**的宿主是真实存在的:
-   * `workspace/SideChatTab.tsx` 只传 `onRetry`(见评审
-   * PerishCode · `PRRT_kwDOSOgY8s6gG7NN`)。在那里画出 CTA 又压掉重试,
-   * 用户拿到的是一颗点了没反应的按钮 + 一张没有出路的卡。
-   *
-   * 这和 `balanceCardCannotTakeTheHandoff` / 重连行那两处是**同一个模式**:
-   * 交接只在接手方真的在场时成立。所以 CTA 的「在场」判据必须带上它自己的
-   * 处理函数,而不是只看分类器说该不该给。
-   *
-   * ⚠️ 这**不是**把 OPEND-2807 砍掉的分支加回来:三颗按钮、两种情况一个没变,
-   * 变的只是「哪一种情况」的判据 —— 接不上 Cloud 的宿主就是本地那一种。
-   */
-  const cloudSwitchHandoffAvailable = Boolean(onSwitchToAmrAndRetry || onOpenAmrSettings);
-  const showCloudSwitchCta = Boolean(cloudSwitchTracking) && cloudSwitchHandoffAvailable;
-  /**
-   * **报错卡永远只有三颗按钮,只分两种情况**(OPEND-2807)。
-   *
-   * 工单标题:「[ChatPanel] 错误卡片未还原设计样式,应该只有三个按钮」:
-   *   使用的 OpenDesign Cloud:  联系我们 / 导出日志 / **重试**
-   *   使用的 CLI/BYOK:          联系我们 / 导出日志 / **切换到 OpenDesign Cloud**
-   * 用户当面补充:「别分那么多情况了」「amr 只有这个 cta」。
-   *
-   * 所以第三颗是这两颗二选一,判据只有一条:**这一轮跑在不在 Cloud 上**。
-   * `showCloudSwitchCta` 由 `amr-guidance.ts` 的出口不变式给出
-   * (非 Cloud 一律 `withCloudSwitchCta`,Cloud 一律 `withoutCloudSelfPromotion`),
-   * 所以两颗天然互斥、且必有其一 —— 卡上永远正好三颗,不会多也不会少。
-   *
-   * ⚠️ 这推翻了 `run-error-catalog.md` §6.ZB 末尾那个「A / B / C 三候选」的框架:
-   * 那三条都还在讨论「阶梯算出来的那颗动作留不留、留成什么分量」,而工单的答案是
-   * **阶梯那一整套对症动作不再出现在报错卡上**,没有分档可言。
-   */
-  const showRetryCta = !showCloudSwitchCta;
-  /**
-   * 一张卡只有一颗主按钮(交付稿第 78 / 79 格都只画了一颗)。
-   *
-   * 三颗按钮里主位是第三颗(重试 / 切换到 Cloud),〔联系我们〕〔导出日志〕恒为次级。
-   *
-   * ⚠️ OPEND-2807 之后这个变量**只剩一个消费者**:通用的本地 CLI 逃生口
-   * 〔使用本地〕(`showByokRecoveryCta`,API 模式下 key/baseUrl/model 没配好时的
-   * 回到本地那条路)。它不在工单点名的那一组对症动作里,也不由失败类型决定,
-   * 所以这次没有一起撤 —— 见下面 `showByokRecoveryCta` 的说明。
-   */
-  const errorActionVariant: 'primary' | 'secondary' =
-    showCloudSwitchCta ? 'secondary' : 'primary';
-  /*
-   * ⚠️ 阶梯第 4 档「〔联系支持〕升格成主按钮」已随 OPEND-2807 去掉。
-   *
-   * 那一档存在的理由是「卡不能是死路」—— 上面三档都没答案时把常驻次级提上来。
-   * 工单之后**每一张卡都必有第三颗 CTA**(Cloud 上是〔重试〕,BYOK 上是
-   * 〔切换到 OpenDesign Cloud〕),死路在结构上已经不可能出现,这一档也就没有
-   * 触发条件了。若仍保留,S18 账号被封这类 `primary-action: contact-support`
-   * 的失败会在 Cloud 上同时给出两颗 primary(〔联系我们〕+〔重试〕),
-   * 违反「一张卡只有一颗主按钮」——〔联系我们〕〔导出日志〕从此恒为次级。
-   */
-  /**
-   * 报错卡上那两颗**常驻**次级(OPEND-2807 三颗里的前两颗)。
-   *
-   * 它们不看失败类型、也不看跑在哪个 agent 上 —— 产品原话「好多都应该得有导出
-   * 日志这个按钮」,那就不挑,全给。第三颗才是二选一(重试 / 切换到 Cloud)。
-   */
   const [supportDialogOpen, setSupportDialogOpen] = useState(false);
-  /**
-   * 升级卡与报错卡上的「升级套餐」共用一条出站链路:同一个 plans URL、同一份归因、
-   * 同样的 device id 传递规则(仅在同意指标上报时带)。入口来源分开记,
-   * 这样漏斗能读出「卡」和「弹窗」各自带来多少升级。
-   */
-  // ⚠️ 入口来源只剩 `chat_upgrade_card`:`chat_error_upgrade` 是报错卡上那颗
-  // 〔升级套餐〕的来源,OPEND-2807 之后卡上不再有这颗按钮。
+  // The separate balance card retains its existing plans entry.
   const openAmrPlans = useCallback((entrySource: 'chat_upgrade_card') => {
     const attribution = recordAmrEntry(analytics.track, entrySource, new Date(), {
       metricsConsent: config?.telemetry?.metrics === true,
@@ -2431,28 +2486,13 @@ export function ChatPane({
       'noopener,noreferrer',
     );
   }, [amrProfile, analytics.track, config?.installationId, config?.telemetry?.metrics]);
-  /**
-   * `run_recovery_action_surface_view` 的载荷:这张卡上**真的画出来**的那几颗。
-   *
-   * ⚠️ 名字里的 "visible" 是字面意思。OPEND-2807 把卡收成三颗之后,这里的取值面
-   * 跟着收窄成**两个**:`manual_retry`(跑在 Cloud 上)和 `switch_runtime_retry`
-   * (跑在 CLI / BYOK 上),而且互斥。`authorize_and_retry` / `switch_model_retry` /
-   * `resume_run` 三个值**从此不再由报错卡产生** —— 它们的按钮不在卡上了。
-   * 埋点类型本身没删(`TrackingRunRecoveryActionType` 未动),别的入口若要用还在。
-   */
   const visibleRecoveryActionTypes = useMemo(() => {
     const actions: TrackingRunRecoveryActionType[] = [];
-    if (!retryAssistant || !onRetry || !runFailureUi) return actions;
-    if (showRetryCta) actions.push('manual_retry');
-    else if (onSwitchToAmrAndRetry) actions.push('switch_runtime_retry');
+    if (!displayError) return actions;
+    if (showCloudRetry) actions.push('manual_retry');
+    if (showCloudSwitchCta && onSwitchToAmrAndRetry) actions.push('switch_runtime_retry');
     return actions;
-  }, [
-    onRetry,
-    onSwitchToAmrAndRetry,
-    retryAssistant,
-    runFailureUi,
-    showRetryCta,
-  ]);
+  }, [displayError, onSwitchToAmrAndRetry, showCloudRetry, showCloudSwitchCta]);
   const recoveryAnalyticsProps = useCallback((
     assistantMessage: ChatMessage,
     actionType: TrackingRunRecoveryActionType,
@@ -2531,6 +2571,21 @@ export function ChatPane({
       area: 'chat_panel',
       element: 'run_failed_toast',
       error_code: failedRunErrorEvent.code,
+      /*
+       * 卡上那句话**到底是哪一句**,以及它是不是兜底那句。
+       *
+       * `error_code` 回答的是「daemon 说这是什么错」,回答不了「用户读到了什么」——
+       * 这两件事之间隔着一张映射表,而映射表**总会少一行**
+       * (`resolveRunErrorCardDescription` 的注释把这件事写死了:表可以短一行,
+       * 判据不能)。少那一行的时候用户看到的是一句空洞的「任务失败了」,
+       * 这正是最该被量出来的一格。
+       *
+       * 判据现成:`runFailureUi.messageKey` 为 null 就是「表里没有这条文案」
+       * (`amr-guidance.ts` 的 `RunErrorCardDescription`)。
+       * 兜底那一格**必须有自己的值而不是缺字段** —— 缺了,兜底率的分母就没了。
+       */
+      message_key: runFailureUi?.messageKey ?? 'generic_fallback',
+      failure_category: failedRunErrorEvent.failureCategory ?? 'unknown',
       project_id: projectId ?? '',
       project_kind: projectKindForTracking,
       conversation_id: activeConversationId,
@@ -2542,9 +2597,11 @@ export function ChatPane({
     analytics.track,
     displayError,
     failedRunErrorEvent?.code,
+    failedRunErrorEvent?.failureCategory,
     projectId,
     projectKindForTracking,
     retryAssistant,
+    runFailureUi?.messageKey,
   ]);
   const importedFolderArtifacts = useMemo(
     () =>
@@ -2620,6 +2677,25 @@ export function ChatPane({
      */
     armFollow();
     lastScrollSampleRef.current = { scrollTop: 0, scrollHeight: 0, clientHeight: 0 };
+    /*
+     * 滚轮见证是**这条会话这个位置**上的证词,跟着基线和跟随意图一起归位。
+     *
+     * 漏掉它会漏出一条完整的路(nettee 在 #7898 上点名的):用户已经在底部,
+     * 再往下拨一格 —— 位置不动,不发 scroll 事件,条子没人用掉;从历史记录切换
+     * 会话的那次点击发生在**日志元素之外**,一个 pointerdown 都收不到;新会话
+     * 定位好之后一次页内查找跳到前面,就撞上那张旧条子,被判成夹取,跟随不释放。
+     *
+     * ⚠️ 【实测交待】这一行**单独撤掉,现有测试不会变红**,原因清楚:换会话必然
+     * 会排一帧(初次定位那条 effect 会 `armFollow()` 并贴底),那一帧一跑,过期
+     * 边界就已经把条子杀了;就算帧没跑,基线也就没被刷新,判据里的 `atScrollTop`
+     * 同样对不上。也就是说评审点的这个洞今天是被那两条堵住的。
+     *
+     * 留着它不是保险起见,是**作用域声明**:见证属于「这条会话的这个位置」,
+     * 上下文边界该由上下文自己划。那两条一条是时间的、一条是判据时刻的,谁先
+     * 松一点(比如哪天给 `atScrollTop` 加个亚像素容差 —— 这个仓库到处是 8px 容差)
+     * 这一行就是唯一还站着的。
+     */
+    resetWheelWitness();
   }, [activeConversationId]);
 
   // ChatComposer's internal `seededRef` latches after the first
@@ -2718,10 +2794,83 @@ export function ChatPane({
     });
   };
 
+  /*
+   * 这块面板此刻在显示**哪个项目的哪场对话**。
+   *
+   * 设在 ChatPane 自己身上,而不是某一个宿主里 —— 同一个组件挂在三处:
+   * `ProjectView`、`DesignSystemFlow`、`workspace/SideChatTab`。只在其中一处设,
+   * 另外两处发出去的每一条 `client_chat_*` 都是没有项目、没有会话的孤儿事件,
+   * 而三处用的是同一套观测模块、同一块看板。这两个 id 早就作为 props 递进来了,
+   * 组件边界才是它们共同的、唯一的落点。
+   *
+   * 必须排在下面那条 openChatSurface 的 effect **前面**:开面时那一发
+   * `conversation_open` 取样会展开这个块,晚一步它就是空的。
+   */
+  useEffect(() => {
+    setChatCorrelation({
+      conversation_id: activeConversationId ?? undefined,
+      project_id: projectId ?? undefined,
+    });
+  }, [activeConversationId, projectId]);
+
+  /*
+   * 把这块转录交给 chat-health 看着(`client_chat_first_paint` /
+   * `client_chat_dom_growth` / `client_chat_memory_pressure` /
+   * `client_chat_stream_health` 四条的宿主)。
+   *
+   * 依赖只有两项,各自防一个真实的死法:
+   *   - `tab`:不是聊天页时整块是条件渲染的,`logRef.current` 是 null。
+   *     漏了它,从别的页回到聊天页永远接不上观察者。
+   *   - `activeConversationId`:那个 div **不带 conversation key**,换会话
+   *     React 复用同一个 DOM 节点。所以「换会话要重开」这件事没有任何
+   *     节点层面的信号,只能靠这条依赖。
+   *
+   * `openChatSurface` 自己会先 detach 上一块再建新的,cleanup 再 detach 一次
+   * 是幂等的 —— 两套观察者并存这件事在模块那一侧就已经不可能。
+   */
+  useEffect(() => {
+    if (tab !== 'chat') return undefined;
+    const el = logRef.current;
+    if (!el) return undefined;
+    const handle = openChatSurface({
+      element: el,
+      messageCount: displayMessages.length,
+      virtualized: chatVirtualized,
+      streamEventCount: chatStreamEventCount,
+    });
+    chatSurfaceRef.current = handle;
+    // 开局先取一个基线。没有它,DOM/heap 曲线的第一个点要等 60 秒的定时器,
+    // 而「打开就已经很大」和「开着开着长大了」是两个不同的故事。
+    chatSurfaceSample('conversation_open');
+    return () => {
+      chatSurfaceRef.current = null;
+      handle.detach();
+    };
+    // 计数由下面那条 effect 持续推给 handle;这里只认「换会话 / 换标签页」
+    // 这两件真的需要换一块被观察对象的事。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeConversationId, tab]);
+
+  useEffect(() => {
+    const handle = chatSurfaceRef.current;
+    if (!handle) return;
+    handle.setMessageCount(displayMessages.length);
+    handle.setVirtualized(chatVirtualized);
+    handle.setStreamEventCount(chatStreamEventCount);
+  }, [chatStreamEventCount, chatVirtualized, displayMessages.length]);
+
   useEffect(() => {
     const el = logRef.current;
     if (!el || didInitialScrollRef.current || displayMessages.length === 0) return;
     didInitialScrollRef.current = true;
+    // 第一条消息在屏幕上了 —— 这才是「用户读得到」的那一刻,也是首屏耗时的
+    // 终点。模块自己保证幂等(只有第一次会上报),所以 StrictMode 的双跑
+    // 造不出一个假的、更快的样本。
+    // 行数按 chat-health 自己数 `dom_growth` 那一套算(日志容器的直接子元素),
+    // 两个事件用同一个定义,才比得起来。
+    chatSurfaceRef.current?.markFirstPaint({
+      renderedRowCount: el.querySelectorAll(':scope > *').length,
+    });
     requestAnimationFrame(() => {
       // If the last assistant message contains a question form, scroll to
       // the form instead of the bottom, so the user sees the form first.
@@ -2977,8 +3126,12 @@ export function ChatPane({
         followIntentRef.current,
         lastScrollSampleRef.current,
         sample,
+        wheelWitnessRef.current,
       );
       lastScrollSampleRef.current = sample;
+      // 见证是一次性的:它只为**这一段**位移作数。留到下一段就可能替一次真正的
+      // 用户上滑背书 —— 那是把跟随焊死,比它要修的 bug 更糟。
+      resetWheelWitness();
       snapshot(target);
       // `syncFollowState` 里的函数式更新在值没变时原地返回,所以流式期间那一串
       // scroll 事件不会每一跳都排一次重渲,也就不会撞上 React 的
@@ -3016,6 +3169,13 @@ export function ChatPane({
     function onWheel(event: WheelEvent) {
       const target = logRef.current;
       if (!target) return;
+      /*
+       * 先记方向,再走下面的早退 —— 朝下的滚轮在这一条里什么都不做,可它正是
+       * 合成器夹取的**触发者**:真机实测「`scrollTop = 800`,一格朝下的滚轮,
+       * 位置被甩到 91」(`observability/chat-scroll-freeze-detector.ts` 的抬头)。
+       * 记漏了,随之而来的那次「位置变小」就还是会被读成用户上滑。
+       */
+      recordWheelWitness(target, event.deltaY);
       if (event.deltaY >= 0) return;
       /*
        * 判据是**这一格有没有可能真的离开底部**,不是「有没有发生一次滚轮手势」。
@@ -3053,11 +3213,26 @@ export function ChatPane({
       }
     }
 
+    /*
+     * 滚轮之外的每条输入通道,一动就把滚轮见证作废。
+     *
+     * 见证平时由 scroll 事件用掉。但滚轮**打不动**这个框的时候(合成器卡住的
+     * 那一档,真机实测「12 格朝下的滚轮要 1440px,停在 91 一动不动」)一个
+     * scroll 事件都不会发,见证就留在那儿。这时用户改用滚动条或键盘往上走,
+     * 那次位移会撞上一个陈旧的「滚轮在朝下要」见证 —— 一次真正的用户上滑被吞掉。
+     * 这两条监听把那个窗口关掉。
+     */
+    function onOtherInput() {
+      resetWheelWitness();
+    }
+
     rememberScrollSample(el);
     el.addEventListener('scroll', onScroll);
     el.addEventListener('wheel', onWheel, { passive: true });
     el.addEventListener('touchstart', onTouchStart, { passive: true });
     el.addEventListener('touchmove', onTouchMove, { passive: true });
+    el.addEventListener('pointerdown', onOtherInput, { passive: true });
+    el.addEventListener('keydown', onOtherInput, { passive: true });
     return () => {
       // Capture final scroll state before unmount; the ref normally
       // tracks via onScroll, but programmatic scrolls or layout shifts
@@ -3067,6 +3242,19 @@ export function ChatPane({
       el.removeEventListener('wheel', onWheel);
       el.removeEventListener('touchstart', onTouchStart);
       el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('pointerdown', onOtherInput);
+      el.removeEventListener('keydown', onOtherInput);
+      /*
+       * 这个节点不再是我们监听的那个了(面板卸载、日志被换掉)。挂在它身上的
+       * 证词跟着走,连同那一帧过期。
+       *
+       * ⚠️ 【实测交待】这一行单独撤掉现有测试也不会红:`setTab` 今天没有任何调用点,
+       * 所以这条 effect 的清理只在卸载时跑,跑完 ref 也跟着组件一起没了。
+       * 它防的是重挂之后的一个真实死法 —— `armWheelWitnessExpiry` 见到
+       * `wheelWitnessFrameRef` 非空就不再排帧,于是一个既没跑也没被取消的旧帧号
+       * 会让过期这条边界**永久失效**。这一天在 `tab` 真的会变的时候就会到。
+       */
+      resetWheelWitness();
     };
   }, [tab]);
 
@@ -3327,6 +3515,81 @@ export function ChatPane({
    */
   function rememberScrollSample(el: HTMLDivElement) {
     lastScrollSampleRef.current = readViewportSample(el);
+  }
+
+  /**
+   * 把滚轮见证撕掉,连同它那一帧过期定时。
+   *
+   * 每一个调用点都是一条**边界**,不是保险起见:用掉了(`onScroll`)、滚轮之外的
+   * 输入来了(`onOtherInput`)、上下文换了(切会话、面板卸载)。
+   *
+   * 特意**不**挂在 `rememberScrollSample` 上:我们自己写 `scrollTop` 在流式期间
+   * 随时可能插进「用户滚轮」和「随之而来的 scroll 事件」中间,把见证擦掉,
+   * 那一格夹取就又变回一次「用户上滑」。基线挪走这件事由判据里的 `atScrollTop`
+   * 处理 —— 它作废的是「对不上号的条子」,不是「所有条子」。
+   */
+  function resetWheelWitness() {
+    wheelWitnessRef.current = null;
+    const frame = wheelWitnessFrameRef.current;
+    wheelWitnessFrameRef.current = null;
+    if (frame === null) return;
+    if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame);
+  }
+
+  /**
+   * 让这张条子最多活到下一帧。
+   *
+   * ## 为什么必须有这一条
+   *
+   * 用户已经在底部,再往下拨一格 —— 位置一个像素都不动,**连 scroll 事件都不发**。
+   * 那张条子于是没人来用掉。它要是能一直留着,后面任何一次**非滚轮**的位置变化
+   * (页内查找、焦点驱动的滚动)都会撞上它,被判成夹取 —— 跟随焊死。
+   *
+   * ## 为什么界限是「一帧」而不是一个毫秒数
+   *
+   * 夹取是**紧跟着**那一格滚轮的:合成器接管输入、把越界位置夹回、在同一次渲染
+   * 更新里把 scroll 事件发出来。按 HTML 规范的 update-the-rendering,scroll 事件
+   * 排在这一帧的 animation frame 回调**之前**,所以「这一格滚轮引起的 scroll」
+   * 一定在下一个 rAF 回调跑到之前就已经到了。一帧因此不是调出来的数,是那条因果
+   * 链本身的长度。
+   *
+   * ⚠️ 别把这个数和诊断包里的 3.8 秒搞混:那 3.8 秒是**点击写入**和夹取之间的
+   * 间隔(期间零条 JS 写入),不是滚轮和夹取之间的间隔。
+   *
+   * 后台标签页不发 rAF,所以这一条**不能**独自承担全部生命周期 —— 切会话那条
+   * 结构性的清理必须自己存在,不能指望这一帧替它兜底。
+   */
+  /**
+   * 把这一格滚轮记进见证。
+   *
+   * 条子是**按位置**攒的:位置一变就是新的一张。滚轮把日志真滚动了,那次位移
+   * 自己会带一个 scroll 事件来把旧条子用掉;而合成器卡住的那一档里位置纹丝不动,
+   * 同一张条子于是能把一次轻扫里的十几格(包括中途掉头的那几格)攒全。
+   *
+   * 没有 rAF 就**不记**:那样过期这条边界不存在,而一张不会过期的条子迟早会替
+   * 一次真正的用户上滑背书。没有见证只是回到这套东西出现之前的行为,是安全的那边。
+   */
+  function recordWheelWitness(el: HTMLDivElement, deltaY: number) {
+    if (deltaY === 0) return;
+    if (typeof requestAnimationFrame !== 'function') return;
+    const atScrollTop = el.scrollTop;
+    const current = wheelWitnessRef.current;
+    const witness =
+      current !== null && current.atScrollTop === atScrollTop
+        ? current
+        : { downwardEvents: 0, upwardEvents: 0, atScrollTop };
+    if (deltaY > 0) witness.downwardEvents += 1;
+    else witness.upwardEvents += 1;
+    wheelWitnessRef.current = witness;
+    armWheelWitnessExpiry();
+  }
+
+  function armWheelWitnessExpiry() {
+    if (wheelWitnessFrameRef.current !== null) return;
+    wheelWitnessFrameRef.current = requestAnimationFrame(() => {
+      wheelWitnessFrameRef.current = null;
+      wheelWitnessRef.current = null;
+    });
   }
 
   /** 唯一的 `scrollTop` 写入口:写完就记基线。 */
@@ -3859,6 +4122,127 @@ export function ChatPane({
     ? { minHeight: composerSlotHeight > 0 ? composerSlotHeight : undefined }
     : undefined;
 
+  const historyControl = (
+    <div
+      className={`chat-history-wrap chat-session-switcher${showConvList ? ' open' : ''}`}
+      ref={historyWrapRef}
+    >
+      {/*
+        * 面板头第一颗图标键。稿子 `729fa43ce7`:
+        * `docs/design/chat-panel/src/body-scene.html:7`
+        *   `<button class="mod-tip-b" aria-label="历史会话" data-tip="历史会话">`
+        *
+        * **不再用原生 `title`** —— 稿子 `src/components.css:2684-2686` 点名反对:
+        * 「原生 tip 要等半秒到两秒(各家浏览器不一,不可控),等到时手已经点下去了,
+        * 起不到『先告诉你再点』的作用;而且原生样式跟不上这套配色。」
+        * 换成产品统一的 `od-tooltip` + `data-tooltip`(`TooltipLayer`)。
+        *
+        * `mod-tip-b` = 气泡翻到按钮**下方**(`src/components.css:2720-2721`:
+        * 面板头贴着面板顶边,朝上的气泡会顶出去),对应 `data-tooltip-placement="bottom"`。
+        */}
+      <button
+        type="button"
+        className="chat-session-trigger icon-only od-tooltip"
+        data-testid="conversation-history-trigger"
+        data-tooltip={t('chat.conversationsTitle')}
+        data-tooltip-placement="bottom"
+        aria-label={t('chat.conversationsAria')}
+        aria-haspopup="menu"
+        aria-expanded={showConvList}
+        onClick={() => {
+          setShowConvList((v) => {
+            const next = !v;
+            if (next) {
+              trackChatPanelClick(analytics.track, {
+                page_name: 'chat_panel',
+                area: 'chat_panel',
+                element: 'history',
+              });
+            }
+            return next;
+          });
+        }}
+      >
+        <ChatHistoryGlyph />
+      </button>
+      {showConvList ? (
+        <div className="chat-history-menu" role="menu" data-testid="conversation-history-menu">
+          {/* Search and "new session" share one row (Demo #8113): the new
+              session entry moved out of the card header into the dropdown. */}
+          <div className={historyStyles.searchRow}>
+            <label className="chat-history-search">
+              <Icon name="search" size={14} />
+              <input
+                type="search"
+                value={conversationSearch}
+                onChange={(event) => setConversationSearch(event.currentTarget.value)}
+                placeholder={t('chat.conversationsSearchPlaceholder')}
+                data-testid="conversation-history-search"
+              />
+              {conversationSearch ? (
+                <button
+                  type="button"
+                  className="chat-history-search-clear"
+                  onClick={() => setConversationSearch('')}
+                  aria-label={t('chat.comments.clear')}
+                >
+                  <Icon name="close" size={10} />
+                </button>
+              ) : null}
+            </label>
+            {onNewConversation ? (
+              <button
+                type="button"
+                className="chat-session-trigger chat-new-conversation od-tooltip"
+                data-testid="chat-new-conversation"
+                data-tooltip={t('chat.newSession')}
+                data-tooltip-placement="bottom"
+                aria-label={t('chat.newSession')}
+                disabled={newConversationDisabled}
+                onClick={() => {
+                  if (newConversationDisabled) return;
+                  trackChatPanelClick(analytics.track, {
+                    page_name: 'chat_panel',
+                    area: 'chat_panel',
+                    element: 'new_chat',
+                  });
+                  onNewConversation();
+                  setShowConvList(false);
+                }}
+              >
+                <NewSessionGlyph />
+              </button>
+            ) : null}
+          </div>
+          <div className="chat-history-list" data-testid="conversation-list">
+            {conversations.length === 0 ? (
+              <div className="chat-history-empty">
+                {t('chat.emptyConversations')}
+              </div>
+            ) : filteredConversations.length === 0 ? (
+              <div className="chat-history-empty">
+                {t('chat.conversationsNoMatches')}
+              </div>
+            ) : (
+              filteredConversations.map((c) => (
+                <ConversationRow
+                  key={c.id}
+                  conversation={c}
+                  active={c.id === activeConversationId}
+                  onSelect={() => {
+                    onSelectConversation(c.id);
+                    setShowConvList(false);
+                  }}
+                  t={t}
+                />
+              ))
+            )}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+
   return (
     /* `chatSeam` 是 --chat-* 的唯一定义处。少了它,聊天树里所有 var(--chat-…) 静默落空 ——
        比如壳头「进行中」那句用 background-clip: text 上色,渐变一失效字就成透明的,
@@ -3866,197 +4250,46 @@ export function ChatPane({
        抹在 .pane 自己身上、**不另外包一层**:包一层会打断 `.split-chat-slot > .pane`
        这类子选择器(全仓 11 条),聊天卡的圆角 / 白底 / backdrop-filter 会集体失效。 */
     <div {...chatSeam('pane')}>
-        <div className="chat-project-header">
-          {collapseControlLifted ? null : onCollapse ? (
-            <button
-              type="button"
-              className="chat-project-back od-tooltip"
-              onClick={onCollapse}
-              title={t('chat.collapsePane')}
-              aria-label={t('chat.collapsePane')}
-              data-tooltip={t('chat.collapsePane')}
-              data-tooltip-placement="bottom"
-              data-testid="chat-collapse-toggle"
-            >
-              <Icon name="panel-left" size={16} />
-            </button>
-          ) : onBack ? (
-            <button
-              type="button"
-              className="chat-project-back"
-              onClick={onBack}
-              title={backLabel}
-              aria-label={backLabel}
-            >
-              <Icon name="arrow-left" size={16} />
-            </button>
-          ) : null}
-          {projectHeader ? (
-            <span className="chat-project-header-title">{projectHeader}</span>
-          ) : null}
-          <div
-            className={`chat-history-wrap chat-session-switcher${showConvList ? ' open' : ''}`}
-            ref={historyWrapRef}
-          >
-            {/*
-              * 面板头第一颗图标键。稿子 `729fa43ce7`:
-              * `docs/design/chat-panel/src/body-scene.html:7`
-              *   `<button class="mod-tip-b" aria-label="历史会话" data-tip="历史会话">`
-              *
-              * **不再用原生 `title`** —— 稿子 `src/components.css:2684-2686` 点名反对:
-              * 「原生 tip 要等半秒到两秒(各家浏览器不一,不可控),等到时手已经点下去了,
-              * 起不到『先告诉你再点』的作用;而且原生样式跟不上这套配色。」
-              * 换成产品统一的 `od-tooltip` + `data-tooltip`(`TooltipLayer`)。
-              *
-              * `mod-tip-b` = 气泡翻到按钮**下方**(`src/components.css:2720-2721`:
-              * 面板头贴着面板顶边,朝上的气泡会顶出去),对应 `data-tooltip-placement="bottom"`。
-              *
-              * ⚠️ 原来的 `title` 还把当前会话标题拼在后面(`… · {activeConversation.title}`)。
-              * 稿子的 tip 是**常量**,所以这里跟稿子走;那半句要不要找地方安置,待产品拍。
-              */}
-            <button
-              type="button"
-              className="chat-session-trigger icon-only od-tooltip"
-              data-testid="conversation-history-trigger"
-              data-tooltip={t('chat.conversationsTitle')}
-              data-tooltip-placement="bottom"
-              aria-label={t('chat.conversationsAria')}
-              aria-haspopup="menu"
-              aria-expanded={showConvList}
-              onClick={() => {
-                setShowConvList((v) => {
-                  const next = !v;
-                  if (next) {
-                    trackChatPanelClick(analytics.track, {
-                      page_name: 'chat_panel',
-                      area: 'chat_panel',
-                      element: 'history',
-                    });
-                  }
-                  return next;
-                });
-              }}
-            >
-              <ChatHistoryGlyph />
-            </button>
-            {showConvList ? (
-              <div className="chat-history-menu" role="menu" data-testid="conversation-history-menu">
-                <div className="chat-history-menu-head">
-                  <span className="chat-history-menu-title">
-                    {t('chat.conversationsHeading')}
-                    <span className="chat-history-menu-count">
-                      <span data-testid="conversation-history-count">
-                      {filteredConversations.length === conversations.length
-                        ? compactCount(conversations.length)
-                        : `${compactCount(filteredConversations.length)} / ${compactCount(conversations.length)}`}
-                      </span>
-                    </span>
-                  </span>
-                  {/*
-                    * 这里原来还有一颗「新建」。**产品裁决 2026-09-03:新建入口只留
-                    * 面板头那枚图标键**(`data-testid="chat-new-conversation"`,
-                    * 稿子 `729fa43ce7:docs/design/chat-panel/src/body-scene.html:8`)——
-                    * 同一个动作不该有两个口子。
-                    *
-                    * 删掉不影响可达性:两颗本来就同一个 `onNewConversation` 门槛
-                    * (`onNewConversation ? … : null`)、同一个 `newConversationDisabled`,
-                    * 面板头那枚在侧边聊天(`workspace/SideChatTab.tsx`)与只读项目下
-                    * 一样渲染。这一行只剩标题 + 计数,`.chat-history-menu-head` 本来就
-                    * 不画分隔线,不会留下空分区。 */}
-                </div>
-                <label className="chat-history-search">
-                  <Icon name="search" size={12} />
-                  <input
-                    type="search"
-                    value={conversationSearch}
-                    onChange={(event) => setConversationSearch(event.currentTarget.value)}
-                    placeholder={t('chat.conversationsSearchPlaceholder')}
-                    data-testid="conversation-history-search"
-                  />
-                  {conversationSearch ? (
-                    <button
-                      type="button"
-                      className="chat-history-search-clear"
-                      onClick={() => setConversationSearch('')}
-                      aria-label={t('chat.comments.clear')}
-                    >
-                      <Icon name="close" size={10} />
-                    </button>
-                  ) : null}
-                </label>
-                <div className="chat-history-list" data-testid="conversation-list">
-                  {conversations.length === 0 ? (
-                    <div className="chat-history-empty">
-                      {t('chat.emptyConversations')}
-                    </div>
-                  ) : filteredConversations.length === 0 ? (
-                    <div className="chat-history-empty">
-                      {t('chat.conversationsNoMatches')}
-                    </div>
-                  ) : (
-                    filteredConversations.map((c) => (
-                      <ConversationRow
-                        key={c.id}
-                        conversation={c}
-                        active={c.id === activeConversationId}
-                        messageCount={conversationMessageCount(c, activeConversationId, messagesConversationId, messages.length)}
-                        onSelect={() => {
-                          onSelectConversation(c.id);
-                          setShowConvList(false);
-                        }}
-                        onDelete={() => onDeleteConversation(c.id)}
-                        t={t}
-                      />
-                    ))
-                  )}
-                </div>
-              </div>
+        {historyPortalTarget ? (
+          /* The dock host lives outside the chat tree, so the portal
+             re-applies the --chat-* seam for the control's own styles. No
+             header row here: the project name is shown once, in the
+             switcher docked above the card (OPEND-3128 / OPEND-3258). */
+          createPortal(<div {...chatSeam()}>{historyControl}</div>, historyPortalTarget)
+        ) : (
+          <div className="chat-project-header">
+            {collapseControlLifted ? null : onCollapse ? (
+              <button
+                type="button"
+                className="chat-project-back od-tooltip"
+                onClick={onCollapse}
+                title={t('chat.collapsePane')}
+                aria-label={t('chat.collapsePane')}
+                data-tooltip={t('chat.collapsePane')}
+                data-tooltip-placement="bottom"
+                data-testid="chat-collapse-toggle"
+              >
+                <Icon name="panel-left" size={16} />
+              </button>
+            ) : onBack ? (
+              <button
+                type="button"
+                className="chat-project-back"
+                onClick={onBack}
+                title={backLabel}
+                aria-label={backLabel}
+              >
+                <Icon name="arrow-left" size={16} />
+              </button>
             ) : null}
+            {historyControl}
           </div>
-          {/*
-            * 面板头第二颗图标键「新会话」。稿子 `729fa43ce7`:
-            * `docs/design/chat-panel/src/body-scene.html:8`
-            *   `<button class="mod-tip-b" aria-label="新会话" data-tip="新会话">
-            *      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            *        <path d="M12 5v14M5 12h14"/></svg></button>`
-            * —— 紧挨着「历史会话」,同样 `mod-tip-b` ⇒ 气泡朝下。
-            *
-            * 行为**不新开一条**:走的就是既有的 `onNewConversation`,连
-            * `newConversationDisabled` 一起沿用。
-            *
-            * **产品裁决 2026-09-03:这是新建会话的唯一入口** —— 历史下拉里那颗
-            * 「新建」(`conversation-history-new`)已经删了,理由见上面那段注释。
-            * e2e 的定位器一并改到这颗:`e2e/ui/app.test.ts`、
-            * `e2e/ui/app-restoration.test.ts`、`e2e/ui/project-management-flows.test.ts`。
-            */}
-          {onNewConversation ? (
-            <button
-              type="button"
-              className="chat-session-trigger chat-new-conversation od-tooltip"
-              data-testid="chat-new-conversation"
-              data-tooltip={t('chat.newSession')}
-              data-tooltip-placement="bottom"
-              aria-label={t('chat.newSession')}
-              disabled={newConversationDisabled}
-              onClick={() => {
-                if (newConversationDisabled) return;
-                trackChatPanelClick(analytics.track, {
-                  page_name: 'chat_panel',
-                  area: 'chat_panel',
-                  element: 'new_chat',
-                });
-                onNewConversation();
-                setShowConvList(false);
-              }}
-            >
-              <NewSessionGlyph />
-            </button>
-          ) : null}
-        </div>
+        )}
         {tab === 'chat' ? (
           <>
             <div className={`chat-log-wrap${chatLogTray ? ' has-chat-log-tray' : ''}`}>
               <div className="chat-log-viewport">
+                <ChatScrollEdge scrollRef={logRef} />
                 <ChatMessageRail
                   items={chatRenderItems}
                   loading={loading}
@@ -4258,33 +4491,11 @@ export function ChatPane({
                    */
                   <RunErrorCard
                     dataKind="run-recovery"
-                    title={
-                      /* 标题走和正文同一份取值 —— 见 `runFailureCopyVars`。
-                         S01「未检测到 {agent}」/ S02「{agent} 尚未登录」把主语
-                         放进了标题,裸 `t(key)` 会渲染出字面的大括号。 */
-                      runFailureUi
-                        ? t(runFailureUi.titleKey, runFailureCopyVars)
-                        : t('chat.runError.title.generic')
-                    }
+                    title={displayErrorTitle}
                     description={displayError}
                     actions={(
                       <>
-                        {/*
-                          * 三颗按钮那一排(OPEND-2807):〔联系我们〕〔导出日志〕+
-                          * 第三颗 CTA。前两颗**恒在、恒为次级**,不挑失败类型、也不挑
-                          * agent;顺序按稿子:次要在左,主动作在最右。
-                          *
-                          * 可见提示按稿子 `729fa43ce7` 的 `src/body-scene.html:302`
-                          * (`data-tip="联系支持"`)补上。
-                          *
-                          * ⚠️ 稿子这一颗**自相矛盾**:场景页是纯图标 + tip,组件全集页
-                          * (`src/body-components.html:1452`)是图标 + 可见文字「联系」、
-                          * 一个 tip 都没有。这里只补 tip、**不动形态**——「要不要退回
-                          * 纯图标」是产品要拍的,不能顺手做掉。
-                          * ⚠️ 文字本身已按 OPEND-2807 从「联系支持」改成「联系我们」
-                          * (19 语齐),所以 tip 和稿子的 `data-tip` 字面不再一致;
-                          * 工单是较新的权威。
-                          */}
+                        {/* OPEND-2807: two standing actions and one runtime action. */}
                         <RunErrorCardAction
                           type="button"
                           className="od-tooltip"
@@ -4297,68 +4508,29 @@ export function ChatPane({
                           {t('chat.runError.contactSupportCta')}
                         </RunErrorCardAction>
                         <ExportLogsAction />
-                        {showByokRecoveryCta ? (
-                          <RunErrorCardAction
-                            type="button"
-                            variant={errorActionVariant}
-                            onClick={onSwitchToLocalCli}
-                          >
-                            {t('avatar.useLocal')}
-                          </RunErrorCardAction>
-                        ) : null}
-                        {/*
-                          * 重试(OPEND-2807)。
-                          *
-                          * 工单:「[ChatPanel] 错误卡片未还原设计样式,**应该只有三个
-                          * 按钮**」——
-                          *   使用 OpenDesign Cloud:联系我们 / 导出日志 / **重试**
-                          *   使用 CLI / BYOK:      联系我们 / 导出日志 / **切换到 Cloud**
-                          * 用户当面补充:「别分那么多情况了」「amr 只有这个 cta」。
-                          *
-                          * 于是这里**不再按失败类型分档**:阶梯算出来的那一整套对症动作
-                          * (授权并重试 / 去设置 / 去充值 / 升级套餐 / 更换模型 /
-                          * 在终端登录 / 在终端换模型 / 继续运行)整块从卡上撤掉,
-                          * 只剩这一颗重试,而且只在**没有** Cloud CTA 时出现 ——
-                          * 也就是这一轮已经跑在 Cloud 上(`withoutCloudSelfPromotion`)。
-                          * 两颗按钮天然互斥,所以卡上永远正好三颗。
-                          *
-                          * 同一副壳(共享 `Button size="sm"`):稿子 3360-3377 那一排
-                          * 三颗都是 `.btn`,差别只在 primary / secondary。
-                          */}
-                        {showRetryCta && retryAssistant && onRetry ? (
+                        {showCloudRetry && retryAssistant && onRetry ? (
                           <RunErrorCardAction
                             type="button"
                             variant="primary"
                             data-testid="chat-error-retry"
+                            disabled={recoveryActionsDisabled}
                             onClick={() => {
                               trackRecoveryClick(retryAssistant, 'manual_retry');
                               onRetry(retryAssistant, 'manual_retry');
                             }}
                           >
                             <Icon name="refresh" size={11} />
-                            {t('promptTemplates.retry')}
+                            {t(retryLabelKey)}
                           </RunErrorCardAction>
                         ) : null}
-                        {/*
-                          * 主按钮位:〔切换到 OpenDesign Cloud 并重试〕(OPEND-2772)。
-                          *
-                          * 这一颗**不是新造的**。它原来长在报错卡下面那张独立的
-                          * `AmrGuidance` 上,于是同一次失败在屏幕上出两张卡 —— 工单
-                          * 截图圈的正是这个,产品原话「不能新旧一起出现吧??」。
-                          * 那张卡整块删掉,这颗 CTA 收进来,排在最右(稿子第 79 格:
-                          * 次要在左、主动作在最右)。
-                          *
-                          * **文案一个字没动**:仍是切换卡上那句 `chat.amrCard.switchCta`。
-                          * 动作也没重造:走 `onSwitchToAmrAndRetry` ——
-                          * `ProjectView.handleSwitchToAmrAndRetry` 先武装一次性自动重试,
-                          * 再**先切 mode 再切 agent**(顺序有坑:反过来 BYOK 用户会留在
-                          * 原 provider)。宿主没接的时候回落打开 Cloud 设置,和原来一样。
-                          */}
-                        {showCloudSwitchCta && cloudSwitchTracking ? (
+                        {showCloudSwitchCta ? (
                           <RunErrorCardAction
                             type="button"
                             variant="primary"
                             data-testid="chat-error-switch-to-cloud"
+                            // `handleSwitchToAmrAndRetry` 头一行就是同一道门控;
+                            // 挡住时这颗按钮点下去连设置面板都不会开。
+                            disabled={recoveryActionsDisabled}
                             onClick={() => {
                               trackRunFailedToastGoAmrClick(analytics.track, {
                                 page_name: 'chat_panel',
@@ -4425,6 +4597,7 @@ export function ChatPane({
                     attempt={reconnect.attempt}
                     max={reconnect.max}
                     exhausted={reconnect.exhausted}
+                    manualRetry={reconnect.manualRetry}
                     reason={reconnect.reason}
                     /* 〔重新连接〕只属于传输层那一行:线断了才有东西可重连。
                        daemon 重跑一轮时连接是通的,给一颗「重新连接」既没有对应的
@@ -4484,7 +4657,9 @@ export function ChatPane({
               {chatLogTray}
             </div>
             <QueuedSendStrip
+              key={activeConversationId ?? projectId ?? 'draft'}
               containerRef={queuedSendStripRef}
+              onExpandedChange={setQueuedSendExpanded}
               items={queuedItems}
               editingId={editingQueuedSendId}
               onEdit={(item) => {
@@ -4510,20 +4685,13 @@ export function ChatPane({
                   }
                 : undefined}
               onReorder={onReorderQueuedSends}
+              /* One button, one event. The row's leading action used to report
+                 `send_now` or `steer` depending on which of the two faces was
+                 showing; the faces merged (2026-09-08 ruling), so the survivor
+                 reports `'steer'` — the name the button now carries. This
+                 surface no longer emits `send_now` at all. */
               onSendNow={onSendQueuedNow
                 ? (id) => {
-                    trackMessageQueueClick(analytics.track, {
-                      page_name: 'chat_panel',
-                      area: 'message_queue',
-                      element: 'send_now',
-                      project_id: projectId ?? '',
-                      queue_length: queuedItems.length,
-                    });
-                    onSendQueuedNow(id);
-                  }
-                : undefined}
-              onSteer={onSteerQueuedSend
-                ? (item) => {
                     trackMessageQueueClick(analytics.track, {
                       page_name: 'chat_panel',
                       area: 'message_queue',
@@ -4531,7 +4699,7 @@ export function ChatPane({
                       project_id: projectId ?? '',
                       queue_length: queuedItems.length,
                     });
-                    onSteerQueuedSend(item.id);
+                    onSendQueuedNow(id);
                   }
                 : undefined}
               steerBlockedReason={steerBlockedReason ?? null}
@@ -4558,6 +4726,7 @@ export function ChatPane({
                    */
                   <div
                     {...chatSeam('chat-composer-fixed-layer')}
+                    data-composer-layer-hidden={composerLayerHidden ? '' : undefined}
                     ref={composerLayerRef}
                     data-chat-panel-top={composerPortalRect.top}
                     style={{
@@ -4695,9 +4864,6 @@ function ChatMessageRail({
   );
   const [preview, setPreview] = useState<{ id: string; y: number } | null>(null);
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
-  // Picking a message retracts the module until the pointer leaves it, so the
-  // jump lands without the rail lingering over the destination.
-  const [retracted, setRetracted] = useState(false);
   const navRef = useRef<HTMLElement | null>(null);
   const trackRef = useRef<HTMLDivElement | null>(null);
 
@@ -4711,7 +4877,6 @@ function ChatMessageRail({
    */
   useEffect(() => {
     setPreview(null);
-    setRetracted(false);
     setActiveMessageId(null);
   }, [activeConversationKey]);
 
@@ -4741,7 +4906,6 @@ function ChatMessageRail({
   // The track scrolls, so the preview anchor is measured from the marker's
   // on-screen position at hover time instead of derived from its index.
   const showPreview = (id: string, marker: HTMLElement) => {
-    if (retracted) return;
     const nav = navRef.current;
     const y = nav
       ? marker.getBoundingClientRect().top - nav.getBoundingClientRect().top + 4
@@ -4858,40 +5022,6 @@ function ChatMessageRail({
     return () => nav.removeEventListener('wheel', onWheel);
   }, [logRef, railVisible]);
 
-  /**
-   * 退避态的解除不能只靠 nav 自己的 `mouseleave`。
-   *
-   * 隐形的东西不该继续吃输入,所以 `.is-retracted` 现在连 `pointer-events`
-   * 一起关掉(`chat.css`)。可 `mouseleave` 的前提是这个元素还在命中测试里 ——
-   * 一个刚被设成 `pointer-events: none` 的元素会不会补发一次 `mouseleave`,
-   * 规范没有要求,各浏览器实现也不一致。赌输了 `retracted` 就永远解不掉,
-   * 导轨从此再也不亮,比原来的缺陷更糟。
-   *
-   * 所以解除条件自己拿:退避期间在 document 上听指针移动,指针一旦离开导轨的
-   * 矩形就解除 —— 和 `mouseleave` 同一个语义,但不依赖导轨能不能被命中。
-   * `onMouseLeave` 一并保留:指针在样式落下之前就滑出去时它更早一步,而且它
-   * 顺手清 `preview`。
-   */
-  useEffect(() => {
-    if (!retracted) return;
-    const release = (ev: MouseEvent) => {
-      const nav = navRef.current;
-      if (!nav) {
-        setRetracted(false);
-        return;
-      }
-      const rect = nav.getBoundingClientRect();
-      const inside =
-        ev.clientX >= rect.left
-        && ev.clientX <= rect.right
-        && ev.clientY >= rect.top
-        && ev.clientY <= rect.bottom;
-      if (!inside) setRetracted(false);
-    };
-    document.addEventListener('pointermove', release, { passive: true });
-    return () => document.removeEventListener('pointermove', release);
-  }, [retracted]);
-
   if (!railVisible) {
     return null;
   }
@@ -4899,7 +5029,7 @@ function ChatMessageRail({
   const previewItem =
     userMessages.find((item) => item.message.id === preview?.id) ?? null;
   const hoverIndex =
-    !retracted && preview
+    preview
       ? userMessages.findIndex((item) => item.message.id === preview.id)
       : -1;
 
@@ -4909,11 +5039,10 @@ function ChatMessageRail({
        非 passive 监听,见 `CHAT_RAIL_WHEEL_LISTENER_OPTIONS`。 */
     <nav
       ref={navRef}
-      className={`chat-message-rail${retracted ? ' is-retracted' : ''}`}
+      className="chat-message-rail"
       aria-label={t('chat.messageRail.aria')}
       onMouseLeave={() => {
         setPreview(null);
-        setRetracted(false);
       }}
       data-wheel={userMessages.length > CHAT_RAIL_WHEEL_MIN_USER_MESSAGES ? 'true' : 'false'}
       data-testid="chat-message-rail"
@@ -4946,7 +5075,6 @@ function ChatMessageRail({
               onBlur={() => setPreview(null)}
               onClick={() => {
                 setPreview(null);
-                setRetracted(true);
                 onNavigate(item.message, item.messageIndex);
               }}
             >
@@ -5226,7 +5354,7 @@ function ChatRows({
     }
     return byMessageId;
   }, [messages]);
-  const virtualized = items.length > CHAT_MESSAGE_VIRTUALIZE_THRESHOLD;
+  const virtualized = isChatVirtualized(items);
   const virtualWindow = useMeasuredVirtualWindow(items, {
     enabled: virtualized,
     containerRef: scrollContainerRef,
@@ -5475,12 +5603,31 @@ function VirtualChatRow({
  * 意图澄清表单的答案(`^[form answers`)。答案已经以摘要形式长在上一条助手消息
  * 上;再画一个用户气泡等于把同一个决定说两遍,还会把 `[form answers — <id>]`
  * 这种机器载荷摆到用户脸上(#5496)。这是产品取向,不是权宜之计。
+ *
+ * ## 【不变量】没送出去的那一份答案**不在**被收走的范围里
+ *
+ * 收走的前提是「答案已经以摘要形式长在上一条助手消息上」—— 那句话只有在这一轮
+ * **真的开出去了**的时候才成立。`POST /api/runs` 还没给回 runId 就失败时,
+ * `ProjectView` 的 `onError` 会按设计删掉那条乐观的 assistant 行(从没有过 agent
+ * 进程,留着它等于伪造一轮),只把用户那一行盖成 `sendFailed`,而且显式
+ * `setError(null)` 不出全局横幅。于是这一行就是「这一轮为什么没了」的**唯一凭据**,
+ * 它上面那颗常驻的「重试」是**唯一的复原入口**。
+ *
+ * 老写法把它也一起收走,结果就是 QA 报的那个形状:答完表单屏幕上确实新开了一轮,
+ * 过一会儿整轮凭空消失 —— 没有报错、没有卡片、没有重试,而表单自己已经落成
+ * 「已作答」锁死了(`handleSend` 在建流那一刻就返回 `true`)。
+ *
+ * 机器载荷那一半由 `formAnswersDisplayBody` 在气泡里摘掉,#5496 那条取向照旧成立。
  */
 function buildChatRenderItems(messages: ChatMessage[]): ChatRenderItem[] {
   const items: ChatRenderItem[] = [];
   for (let i = 0; i < messages.length; i += 1) {
     const message = messages[i]!;
-    if (message.role === 'user' && /^\[form answers\b/i.test(message.content.trim())) {
+    if (
+      message.role === 'user'
+      && message.sendFailed !== true
+      && isFormAnswersMessage(message.content)
+    ) {
       continue;
     }
     items.push({
@@ -5491,6 +5638,18 @@ function buildChatRenderItems(messages: ChatMessage[]): ChatRenderItem[] {
     });
   }
   return items;
+}
+
+/**
+ * 转录此刻**走不走虚拟窗口**。
+ *
+ * 一个判据,两个消费者:`ChatRows` 按它决定怎么画,chat-health 按它上报
+ * `virtualized`。写成两处 `items.length > 阈值` 今天读起来一模一样,
+ * 等这条规则长出第二个条件的那天就会分家 —— 那时埋点描述的是渲染层
+ * **已经不用了**的那种模式,而看板上没有任何东西会喊。
+ */
+function isChatVirtualized(items: ChatRenderItem[]): boolean {
+  return items.length > CHAT_MESSAGE_VIRTUALIZE_THRESHOLD;
 }
 
 /**
@@ -5787,37 +5946,38 @@ function queuedTipPlacement(
   onRemove,
   onReorder,
   onSendNow,
-  onSteer,
   steerBlockedReason,
+  onExpandedChange,
 }: {
   containerRef?: MutableRefObject<HTMLDivElement | null>;
   editingId?: string | null;
   items: QueuedSendItem[];
+  /** Forwarded to `QueuedSendStack`: the stack is spread open over the transcript. */
+  onExpandedChange?: (expanded: boolean) => void;
   onEdit?: (item: QueuedSendItem) => void;
   onRemove?: (id: string) => void;
   onReorder?: (orderedIds: string[]) => void;
-  onSendNow?: (id: string) => void;
   /**
-   * B11 「引导对话」. Present ONLY when there is a live run on this conversation
-   * to interrupt. The parent owns that judgement — the strip must never infer
-   * it, or the button ends up promising an interruption that never happens.
+   * Send this queued item now. Rendered as the row's leading 「引导对话」
+   * button — one button, always that name (product ruling 2026-09-08; see the
+   * long note at the render site). The host decides whether "now" means
+   * "interrupt the turn in flight first"; the strip never infers it.
    */
-  onSteer?: (item: QueuedSendItem) => void;
+  onSendNow?: (id: string) => void;
   /**
    * Why steering is unavailable right now (e.g. 「当前 agent 不支持中途插话」).
    *
-   * NOT rendered. It used to be the fallback button's `title` / `data-tooltip`,
-   * which is that button's only visible name — so the one string on screen was
-   * answering "why is this not 引导对话" while the button's actual job (stop the
-   * running turn, send this row as its own turn) went unnamed. The name slot is
-   * back to naming the button; where this explanation belongs is a UI-placement
-   * decision that has not been made, so it stays threaded rather than deleted.
+   * NOT rendered, and has no producer anywhere in the repo — it was already
+   * dormant before the two button faces were merged. It is kept deliberately:
+   * where this explanation belongs on screen is a UI-placement decision that
+   * has not been made, and `tests/i18n/queue-steer-terminology.test.ts` pins
+   * the sibling copy keys against the day it gets placed. Deleting it is its
+   * own decision, not a side effect of merging the button.
    */
   steerBlockedReason?: string | null;
 }) {
   const t = useT();
   const [dragState, setDragState] = useState<QueuedSendDragState | null>(null);
-  if (items.length === 0) return null;
   const canReorder = Boolean(onReorder && items.length > 1);
 
   const handleDragStart = (
@@ -5881,26 +6041,24 @@ function queuedTipPlacement(
   };
 
   return (
-    <div
-      ref={containerRef}
-      className="chat-queued-send-strip"
-      data-testid="chat-queued-send-strip"
+    <QueuedSendStack
+      containerRef={containerRef}
+      onExpandedChange={onExpandedChange}
+      label={`${t('chat.queuedHeader')} · ${items.length}`}
+      dragging={Boolean(dragState)}
       onDragLeave={(event) => {
         const related = event.relatedTarget;
         if (related instanceof Node && event.currentTarget.contains(related)) return;
         setDragState(null);
       }}
-    >
-      {/* 稿子没有卡头:队列就贴在输入框底下,是什么一目了然,不用再单起一行说「排队中 · N 条」 */}
-      <div className="chat-queued-send-list">
-        {items.map((item, index) => {
+      items={items.map((item, index) => {
           const isDragging = dragState?.draggingId === item.id;
           const dropClass = dragState?.overId === item.id
             && dragState.draggingId !== item.id
             && dragState.edge
             ? ` chat-queued-send-row-drop-${dragState.edge}`
             : '';
-          return (
+          return { id: item.id, content: (
             <div
               /* 首行**不换任何样式**:稿子 `.queue .q:first-child`
                  (`361b78253e:docs/design/chat-panel/src/components.css:2898`)
@@ -5915,8 +6073,9 @@ function queuedTipPlacement(
               onDragOver={(event) => handleDragOver(event, item.id)}
               onDrop={(event) => handleDrop(event, item.id)}
             >
-              {/* 稿子这一行是 `grip → ix → tx → qops`:**拖动手柄在最左**,序号跟在它右边。
-                  原来这两个是反的(序号在最左),整行的起手就和稿子对不上。 */}
+              {/* 稿子这一行是 `grip → ix → tx → qops`:**拖动手柄在最左**。
+                  序号(`ix`)K1 起不再渲染(参照 #8165 提交 1):每条是一张独立的
+                  浮动卡,卡的顺序就是队列顺序,出队重排后位置一目了然。 */}
               <button
                 type="button"
                 className="chat-queued-send-drag-handle chat-queued-send-tooltip od-tooltip"
@@ -5931,72 +6090,67 @@ function queuedTipPlacement(
               >
                 <Icon name="grip-vertical" size={14} />
               </button>
-              {/* 序号:出队后重排是数组下标的自然结果,不用另外维护 */}
-              <span className="chat-queued-send-index" data-testid="chat-queued-send-index" aria-hidden>{index + 1}</span>
               <div className="chat-queued-send-main">
                 <span className="chat-queued-send-title">{summarizeQueuedPrompt(item, t)}</span>
               </div>
               {/* 三颗按的是**升级顺序**:先「对现在这一轮动手」,最后才是「删掉」
-                  (OPEND-2715)。领头那一颗永远是「立刻让它生效」—— 有在跑的一轮
-                  时是「引导对话」(掐掉重发),没有时退回普通的「立即发送」;两副
-                  面孔换的是名字和语义,不换位置,所以这一格的落点是稳的。
+                  (OPEND-2715)。领头那一颗永远是「引导对话」,落点是稳的。
                   「移除」压在最后:指针从行末扫过来,第一个碰到的不该是不可逆的那颗。
                   「编辑」用的是稿子的**魔杖**,不是铅笔。 */}
               <div className="chat-queued-send-actions">
                 {/* 领头这一颗 —— 稿子标的是「引导对话」(B11),排在这一组的
-                    最前面是 OPEND-2715 的裁决。产品裁决(OPEND-2602,
-                    2026-09-03)之后它干的事是:**中断正在跑的那一轮,然后立刻把这条
-                    发出去**。原来那条「不打断、把消息写进 agent 子进程还开着的 stdin」
-                    的路已经作废 —— 27 个 runtime 里只有两个的 CLI 中途还读 stdin,
-                    而实测连真 claude 也不处理轮次中途写进去的 user 帧。
+                    最前面是 OPEND-2715 的裁决。
 
-                    所以这颗只由「此刻有没有一轮可中断」决定:
-                      · `onSteer` 有值 = 当前会话有一轮在跑 → 「引导对话」。
-                      · 没有 → 退回普通的「立即发送」,**连名字一起退回去**。
-                    这里不再看 agent 能不能中途插话:中断对所有 agent 都成立。
-                    也不再看这一行带不带附件:中断 + 重发走的是完整的发送路径,
-                    附件和批注原样跟着走。
+                    ## 为什么只有一颗
 
-                    引导态**带文字标签**(稿子 `.qops button.mod-steer` 的 `<svg/><span>`)。
-                    这不是装饰:两副面孔永远不同时出现(下面是二选一的三元式),
-                    所以用户没有「和旁边那颗比一比」的机会 —— 图标一样时他无从知道
-                    按下去是「排在后面」还是「掐掉这一轮重来」。让这一行自己把名字说出来,
-                    是唯一在屏幕上分得开两条路的办法。退回态仍旧只有图标:
-                    它就是普通的「发送」,和编辑 / 移除同级。
+                    这里曾经是个二选一的三元式:有一轮可中断时画「引导对话」,
+                    没有时退回一颗只有图标的「立即发送」。产品 2026-09-08 当面
+                    裁掉了那个分叉:
 
-                    引导态的 hover 三处说的是它按下去干的事里**最要紧**的那一半 ——
-                    会中断当前运行。它按名字开头(`chat.queuedSteerInterrupts` 各语言
-                    都以可见标签起手),所以无障碍名仍旧含着屏幕上那行字。
-                    退回态没有可见文字,tooltip 就是它唯一的名字,那一格只写「发送」。 */}
-                {onSteer ? (
-                  <button
-                    type="button"
-                    className="chat-queued-send-action chat-queued-send-action-steer chat-queued-send-tooltip od-tooltip"
-                    title={t('chat.queuedSteerInterrupts')}
-                    data-tooltip={t('chat.queuedSteerInterrupts')}
-                    data-tooltip-placement={queuedTipPlacement(index, 'top')}
-                    aria-label={t('chat.queuedSteerInterrupts')}
-                    data-testid="chat-queued-send-steer"
-                    onClick={() => onSteer(item)}
-                  >
-                    <Icon name="arrow-up" size={13} />
-                    <span className="chat-queued-send-action-label">{t('chat.queuedSteer')}</span>
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className="chat-queued-send-action chat-queued-send-tooltip od-tooltip"
-                    title={t('chat.send')}
-                    data-tooltip={t('chat.send')}
-                    data-tooltip-placement={queuedTipPlacement(index, 'top')}
-                    aria-label={t('chat.send')}
-                    data-testid="chat-queued-send-now"
-                    onClick={() => onSendNow?.(item.id)}
-                    disabled={!onSendNow}
-                  >
-                    <Icon name="arrow-up" size={13} />
-                  </button>
-                )}                {onEdit ? (
+                      「引导对话就是原本的立即发送啊,只不过我们换了个名字
+                        跟 codex 客户端对齐了下」
+
+                    照着代码核过,这话是字面成立的 —— `ProjectView` 喂给两边的
+                    实参**是同一个函数** `sendQueuedChatSendNow`,它自己按
+                    `currentConversationBusy` 分支:在跑就先掐掉那一轮再发,
+                    没在跑就直接发。两副面孔换掉的只有名字、一个门
+                    (`canSteerCurrentTurn`)和埋点的 `element` 值,按下去发生的
+                    事一模一样。门和退回态因此一起撤掉。
+
+                    交付稿(`729fa43ce7:docs/design/chat-panel-next.html` 组件 17
+                    「Queue」)里也只有这一颗:三行队列样例每一行都是
+                    `<button class="mod-tip-e mod-steer" aria-label="引导对话"
+                    data-tip="引导对话"><svg/><span>引导对话</span></button>`,
+                    那颗无标签的图标键**稿子里根本不存在**。
+
+                    ## 名字
+
+                    带文字标签是稿子的 `.qops button.mod-steer`(`<svg/><span>`),
+                    不是装饰:队列行里三颗按钮挨着,只有它把自己干的事写在脸上。
+                    三处名字(`title` / `data-tooltip` / `aria-label`)按稿子的
+                    `data-tip` 逐字收敛回「引导对话」本身 —— 屏幕上写着一句、
+                    读屏念出另一句是 WCAG 2.5.3(Label in Name)那一条。
+                    早先挂在 hover 上的 `chat.queuedSteerInterrupts`
+                    (「会中断当前运行」)是稿子之外后加的,随这次收敛退场。
+
+                    这里不看 agent 能不能中途插话(中断对所有 agent 都成立),
+                    也不看这一行带不带附件:中断 + 重发走的是完整发送路径,
+                    附件和批注原样跟着走。 */}
+                <button
+                  type="button"
+                  className="chat-queued-send-action chat-queued-send-action-steer chat-queued-send-tooltip od-tooltip"
+                  title={t('chat.queuedSteer')}
+                  data-tooltip={t('chat.queuedSteer')}
+                  data-tooltip-placement={queuedTipPlacement(index, 'top')}
+                  aria-label={t('chat.queuedSteer')}
+                  data-testid="chat-queued-send-steer"
+                  onClick={() => onSendNow?.(item.id)}
+                  disabled={!onSendNow}
+                >
+                  <Icon name="arrow-up" size={13} />
+                  <span className="chat-queued-send-action-label">{t('chat.queuedSteer')}</span>
+                </button>
+                {onEdit ? (
                   <button
                     type="button"
                     className="chat-queued-send-action chat-queued-send-tooltip od-tooltip"
@@ -6025,10 +6179,9 @@ function queuedTipPlacement(
 
               </div>
             </div>
-          );
+          ) };
         })}
-      </div>
-    </div>
+    />
   );
 }
 
@@ -6395,47 +6548,15 @@ function filterConversations(
   });
 }
 
-function conversationMessageCount(
-  conversation: Conversation,
-  activeConversationId: string | null,
-  messagesConversationId: string | null,
-  activeMessageCount: number,
-): number | null {
-  // The live `messages` array is authoritative for the active conversation —
-  // it stays fresh as a run streams new turns in — but ONLY once it has
-  // actually loaded for that conversation. While a switch is mid-flight (or a
-  // load failed) `messages` is reset to [] and `messagesConversationId` no
-  // longer matches the active id; trusting `messages.length` there renders a
-  // phantom "0 msg". Fall back to the persisted server count until the live
-  // array catches up.
-  if (
-    conversation.id === activeConversationId &&
-    messagesConversationId === activeConversationId
-  ) {
-    return activeMessageCount;
-  }
-  return typeof conversation.messageCount === 'number' ? conversation.messageCount : null;
-}
-
-function compactCount(value: number): string {
-  if (value < 1000) return String(value);
-  const compact = Math.floor(value / 100) / 10;
-  return `${compact}k`;
-}
-
 function ConversationRow({
   conversation,
   active,
-  messageCount,
   onSelect,
-  onDelete,
   t,
 }: {
   conversation: Conversation;
   active: boolean;
-  messageCount: number | null;
   onSelect: () => void;
-  onDelete: () => void;
   t: TranslateFn;
 }) {
   const displayTitle =
@@ -6459,25 +6580,8 @@ function ConversationRow({
         className="chat-conv-item-meta"
         data-testid={`conversation-meta-${conversation.id}`}
       >
-        {messageCount !== null ? `${compactCount(messageCount)} msg · ` : ''}
         {conversationMetaLabel(conversation, t)}
       </span>
-      <button
-        type="button"
-        className="chat-conv-item-del"
-        data-testid={`conversation-delete-${conversation.id}`}
-        title={t('chat.deleteConversation')}
-        onClick={(e) => {
-          e.stopPropagation();
-          if (
-            confirm(t('chat.deleteConversationConfirm', { title: displayTitle }))
-          ) {
-            onDelete();
-          }
-        }}
-      >
-        <Icon name="close" size={12} />
-      </button>
     </div>
   );
 }
@@ -6531,9 +6635,13 @@ const UserMessage = memo(UserMessageImpl);
 
      `displayContent` 仍留着:它是「复制」按钮真正会写进剪贴板的那一段,
      用户复制到的应该是卡面上看得见的标题,不是内部 prompt。 */
+  /* 表单答案只有在**没送出去**的时候才走到这里(`buildChatRenderItems` 收走的是
+     交付成功的那些)。这一条要留给用户看的是他自己填的答案,不是顶上那行
+     `[form answers — <id>]` 路由头 —— #5496 说的就是别把机器载荷摆到用户脸上。
+     重发走的是 `message.content`(`handleResendUserMessage`),头一行原样保留。 */
   const displayContent = isDesignSystemWorkspaceRequest
     ? t('chat.designSystemStatus.title')
-    : message.content;
+    : formAnswersDisplayBody(message.content);
 
   useEffect(() => {
     return () => {
@@ -7074,50 +7182,3 @@ function isProgrammaticBrandAssistantMessage(message: ChatMessage | null | undef
   );
 }
 
-function relTime(ts: number, t: TranslateFn): string {
-  const diff = Date.now() - ts;
-  const min = 60_000;
-  const hr = 60 * min;
-  const day = 24 * hr;
-  if (diff < min) return t('common.now');
-  if (diff < hr) return t('common.minutesShort', { n: Math.floor(diff / min) });
-  if (diff < day) return t('common.hoursShort', { n: Math.floor(diff / hr) });
-  if (diff < 7 * day) return t('common.daysShort', { n: Math.floor(diff / day) });
-  return new Date(ts).toLocaleDateString();
-}
-
-export function conversationMetaLabel(
-  conversation: Conversation,
-  t: TranslateFn,
-): string {
-  const latestRun = conversation.latestRun;
-  if (
-    latestRun &&
-    (latestRun.status === 'succeeded' ||
-      latestRun.status === 'failed' ||
-      latestRun.status === 'canceled') &&
-    typeof conversation.totalDurationMs === 'number' &&
-    Number.isFinite(conversation.totalDurationMs)
-  ) {
-    return formatDurationShort(conversation.totalDurationMs);
-  }
-  if (
-    latestRun &&
-    (latestRun.status === 'succeeded' ||
-      latestRun.status === 'failed' ||
-      latestRun.status === 'canceled') &&
-    typeof latestRun.durationMs === 'number' &&
-    Number.isFinite(latestRun.durationMs)
-  ) {
-    return formatDurationShort(latestRun.durationMs);
-  }
-  return relTime(conversation.updatedAt, t);
-}
-
-function formatDurationShort(ms: number): string {
-  const s = Math.max(0, ms) / 1000;
-  if (s < 60) return `${s.toFixed(s < 10 ? 1 : 0)}s`;
-  const m = Math.floor(s / 60);
-  const rem = Math.floor(s - m * 60);
-  return `${m}m ${rem.toString().padStart(2, '0')}s`;
-}

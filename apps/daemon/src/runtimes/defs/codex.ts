@@ -165,6 +165,8 @@ const CODEX_SHELL_ENVIRONMENT_INCLUDE_KEYS = [
   'OD_DATA_DIR',
   'OD_PROJECT_ID',
   'OD_PROJECT_DIR',
+  'OD_WORKSPACE_ID',
+  'OD_WORKSPACE_MEMBER_ID',
   'OD_TASK_INPUT_DIR',
 ] as const;
 
@@ -469,7 +471,8 @@ export const CODEX_APP_SERVER_STREAM_FORMAT = 'codex-app-server';
  *
  * Two notifications land later than this floor and degrade quietly when
  * absent: `warning` (rust-v0.122.0) simply produces no warning pill, and
- * `item/fileChange/patchUpdated` (rust-v0.123.0) is not consumed at all.
+ * `item/fileChange/patchUpdated` (rust-v0.123.0) is enabled per thread only
+ * when the running server's initialize response reports a supported version.
  */
 export const CODEX_APP_SERVER_MIN_VERSION = '0.95.0';
 

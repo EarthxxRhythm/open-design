@@ -211,7 +211,6 @@ function state(el: Element, prop: string, states: readonly string[] = []): strin
 interface Stage {
   rows: HTMLElement[];
   grip: (row: HTMLElement) => HTMLElement;
-  index: (row: HTMLElement) => HTMLElement;
   title: (row: HTMLElement) => HTMLElement;
   actions: (row: HTMLElement) => HTMLElement[];
   tips: (row: HTMLElement) => HTMLElement[];
@@ -246,7 +245,6 @@ function stage(onReorder?: (ids: string[]) => void): Stage {
   return {
     rows,
     grip: (row) => one(row, '.chat-queued-send-drag-handle'),
-    index: (row) => one(row, '.chat-queued-send-index'),
     title: (row) => one(row, '.chat-queued-send-title'),
     actions: (row) => Array.from(row.querySelectorAll<HTMLElement>('.chat-queued-send-action')),
     tips: (row) => Array.from(row.querySelectorAll<HTMLElement>('[data-tooltip]')),
@@ -258,7 +256,11 @@ function stage(onReorder?: (ids: string[]) => void): Stage {
 describe('队列 · 两把尺子先各自证明看得见东西', () => {
   it('小尺子和共享量尺在重叠属性上读数一致', () => {
     const s = stage();
-    const action = s.actions(s.rows[0]!)[0]!;
+    // 领头那颗是「引导对话」,带可见文字,稿子 `.qops button.mod-steer` 专门把
+    // 它的宽度放开(`width: auto`)—— 这里要的是**方形命中框**那一类,所以跳过它。
+    const action = s
+      .actions(s.rows[0]!)
+      .find((el) => !el.classList.contains('chat-queued-send-action-steer'))!;
     const grip = s.grip(s.rows[0]!);
     // `.chat-queued-send-action { width: 16px }`(前块)与 `{ width: 22px }`(后块)
     // 同为 (0,1,0),后置的赢。两把尺子都得读回 22px,不然它们的层叠规矩不是一套。
@@ -374,16 +376,13 @@ describe('A2 · 最左是拖拽手柄,不是上移箭头', () => {
   });
 });
 
-describe('A3 · 序号用等宽字体', () => {
-  it('字族 / 字号 / 字色逐值对稿(稿 :2911)', () => {
+describe('A3 · 序号已经不在行里(K1,参照 #8165 提交 1)', () => {
+  it('行里没有序号那一格 —— 出队重排后的位置由顺序本身表达', () => {
     const s = stage();
-    const ix = s.index(s.rows[0]!);
-    expect(state(ix, 'font-family')).toBe(DRAFT.mono);
-    expect(CSS.resolved(ix)['font-size']).toBe(DRAFT.tCap);
-    expect(CSS.resolved(ix).color).toBe(DRAFT.textSoft);
+    for (const row of s.rows) expect(row.querySelector('.chat-queued-send-index')).toBeNull();
   });
 
-  it('等宽不是从行上继承来的 —— 正文那一格仍是无衬线', () => {
+  it('正文那一格仍是无衬线', () => {
     const s = stage();
     expect(state(s.title(s.rows[0]!), 'font-family')).not.toBe(DRAFT.mono);
   });

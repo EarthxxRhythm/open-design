@@ -1,27 +1,9 @@
 // @vitest-environment jsdom
 /**
- * OPEND-2772 · 一次失败只出一张卡,主按钮一律是〔切换到 OpenDesign Cloud〕。
- *
- * **工单看到的**(截图,Claude 本地 CLI 登录过期):红框圈住的是**上下两张卡
- * 同时出现** —— 上面 `RunErrorCard`(「需要登录 / Claude 尚未登录…」,三颗动作),
- * 下面另起一张 `AmrGuidance`(「模型调用失败,当前任务已暂停」+〔切换到
- * OpenDesign Cloud 并重试〕)。产品原话:「**不能新旧一起出现吧??**」
- *
- * **产品裁决(2026-09-07,逐字)**:
- *   「2772 的「统一」是「铺到所有报错」,主 cta 都是切换至 cloud,具体样式按设计稿」
- *   「应该是所有 cta 按钮都是切换到 cloud?……我们应该直接干掉旧的报错卡片」
- *   「8-26 推翻掉吧」—— 即 `run-error-catalog.md` §6.Z 那条「不是一律劝切 Cloud、
- *   第 1 档永远优先」。
- *
- * 所以这份红测钉三件事,一件都不许回退:
- *   ① **只有一张卡**(第二张切换卡整块不存在);
- *   ② **主按钮是切换到 Cloud**,而且铺到 BYOK / 本地 CLI 的**所有**失败类,
- *      不只今天出切换卡的那 6 类;
- *   ③ **AMR 自己不出这颗 CTA** —— 不能对着已经在 Cloud 上的人劝他买 Cloud
- *      (`withoutCloudSelfPromotion` 的反向用例)。
- *
- * ⚠️ 合并当时文案一个字没动;文案是**后来**由 OPEND-2807 改的 ——
- * `chat.amrCard.switchCta` 现在是「切换到 OpenDesign Cloud」。
+ * OPEND-2772 保留一次失败仅一张卡的守卫。
+ * 最新 OPEND-2807 / G16：CLI/BYOK 固定联系我们、导出日志、切换到 OpenDesign Cloud；
+ * Cloud 固定联系我们、导出日志、重试。旧的额外重试和恢复阶梯已被用户明确撤销。
+ * 标题正文仍按批准文案，不随按钮组合改变。
  */
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
@@ -96,11 +78,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-/**
- * 产品文案逐字 —— `chat.amrCard.switchCta`。
- * ⚠️ OPEND-2807 把这句从「切换到 OpenDesign Cloud 并重试」缩成工单写的
- * 「切换到 OpenDesign Cloud」(19 语齐)。
- */
+/** 产品文案逐字 —— `chat.amrCard.switchCta` */
 const CLOUD_CTA = '切换到 OpenDesign Cloud';
 
 function failedMessage(opts: { agentId: string; code: string; detail?: string }): ChatMessage {
@@ -194,7 +172,14 @@ describe('OPEND-2772 · 一次失败只出一张卡', () => {
   });
 });
 
-describe('OPEND-2772 · 主按钮一律是切换到 Cloud', () => {
+describe('OPEND-2807 · CLI/BYOK 主按钮固定切换到 OpenDesign Cloud', () => {
+  it('按钮逐字使用工单和 G16 的「切换到 OpenDesign Cloud」', () => {
+    renderFailure({ agentId: 'claude', code: 'AGENT_AUTH_REQUIRED' });
+
+    const cta = screen.getByTestId('chat-error-switch-to-cloud');
+    expect((cta.textContent ?? '').trim()).toBe(CLOUD_CTA);
+  });
+
   it('主按钮就是那颗 CTA,而且整张卡只有一颗主按钮', () => {
     const { container } = renderFailure({ agentId: 'claude', code: 'AGENT_AUTH_REQUIRED' });
 
@@ -203,22 +188,14 @@ describe('OPEND-2772 · 主按钮一律是切换到 Cloud', () => {
     expect((primaries[0]!.textContent ?? '').trim()).toBe(CLOUD_CTA);
   });
 
-  /*
-   * ⚠️ 本轮实现取的是 §6.ZB 末尾的候选 A(阶梯那颗降为次级、留在卡上),
-   * 这条原本钉的是「〔重试〕没有被删,只是让出了主位」。
-   *
-   * 产品 2026-09-08 改选**候选 B**(用户转述同事,逐字):「同事说还有情况会出现
-   * **重试**和**切换至 cloud 并重试**,两个 CTA 按钮…**有切换至 cloud 一律只显示
-   * 切换至 cloud,没有的情况下再显示那个重试**」。所以这条改成钉新裁决:
-   * 有 Cloud CTA 时〔重试〕不再渲染,两颗常驻次级仍在。
-   *
-   * 两侧的完整矩阵(含「没有 Cloud CTA 时重试照旧点得动」)在
-   * `opend-2772b-cloud-cta-replaces-retry.test.tsx`。
-   */
-  it('有 Cloud CTA 时〔重试〕不再渲染,两颗常驻次级仍在', () => {
+  it('CLI/BYOK 不再保留旧重试，整张卡只有固定三颗', () => {
     const { container } = renderFailure({ agentId: 'claude', code: 'AGENT_AUTH_REQUIRED' });
 
     expect(screen.queryByTestId('chat-error-retry')).toBeNull();
+    expect(Array.from(screen.getByTestId('chat-run-error-card').querySelectorAll('button'),
+      (button) => button.dataset.testid)).toEqual([
+      'chat-error-contact-support', 'chat-error-export-logs', 'chat-error-switch-to-cloud',
+    ]);
     // 常驻两颗照旧在
     expect(container.querySelector('[data-testid="chat-error-contact-support"]')).toBeTruthy();
     expect(container.querySelector('[data-testid="chat-error-export-logs"]')).toBeTruthy();
@@ -310,5 +287,10 @@ describe('OPEND-2772 · AMR 自己不许被劝去买 AMR', () => {
     );
     expect(hits).toHaveLength(0);
     expect(screen.queryByTestId('amr-guidance')).toBeNull();
+    expect(Array.from(screen.getByTestId('chat-run-error-card').querySelectorAll('button'),
+      (button) => button.dataset.testid)).toEqual([
+      'chat-error-contact-support', 'chat-error-export-logs', 'chat-error-retry',
+    ]);
+    expect(screen.getByTestId('chat-error-retry').dataset.runErrorAction).toBe('primary');
   });
 });

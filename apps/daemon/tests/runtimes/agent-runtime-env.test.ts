@@ -15,6 +15,45 @@ import { spawnEnvForAgent } from '../../src/runtimes/env.js';
 import { withPlatform } from './helpers/test-helpers.js';
 
 describe('agent runtime tool environment', () => {
+  it('passes the pinned Workspace pair to dynamic Skill wrappers, clearing ambient identity for unbound runs', () => {
+    const scoped = createOpenDesignToolEnv({
+      daemonUrl: 'http://127.0.0.1:7456',
+      projectId: 'project-a',
+      workspaceScope: {
+        schemaVersion: 1,
+        projectId: 'project-a',
+        workspaceId: 'workspace-a',
+        workspaceMemberId: 'member-a',
+        source: 'persisted_project_binding',
+      },
+    });
+    expect(scoped).toMatchObject({
+      OD_WORKSPACE_ID: 'workspace-a',
+      OD_WORKSPACE_MEMBER_ID: 'member-a',
+    });
+    const unbound = {
+      ...scoped,
+      ...createOpenDesignToolEnv({
+        daemonUrl: 'http://127.0.0.1:7456',
+        projectId: 'unbound',
+      }),
+    };
+    expect(unbound.OD_WORKSPACE_ID).toBe('');
+    expect(unbound.OD_WORKSPACE_MEMBER_ID).toBe('');
+    const historical = createOpenDesignToolEnv({
+      daemonUrl: 'http://127.0.0.1:7456',
+      projectId: 'project-a',
+      workspaceScope: {
+        schemaVersion: 1,
+        projectId: 'project-a',
+        workspaceId: 'workspace-a',
+        source: 'persisted_project_binding',
+      },
+    });
+    expect(historical.OD_WORKSPACE_ID).toBe('workspace-a');
+    expect(historical.OD_WORKSPACE_MEMBER_ID).toBe('');
+  });
+
   it('prefers explicit OD_NODE_BIN over the process executable', () => {
     expect(resolveOpenDesignNodeBin({
       env: { OD_NODE_BIN: 'C:\\Open Design\\resources\\open-design\\bin\\node.exe' },
