@@ -1499,22 +1499,7 @@ describe("ProductionCampaignModal device impressions", () => {
 	it.each(["no-decision", "stale-revocation"] as const)(
 		"keeps the displayed campaign on screen when a retained %s poll recovers",
 		async (interim) => {
-			vi.useFakeTimers({
-				toFake: [
-					"Date",
-					"performance",
-					"setTimeout",
-					"clearTimeout",
-					"setInterval",
-					"clearInterval",
-				],
-			});
-			vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
-			const active = decision({
-				authorizationExpiresAt: new Date(
-					Date.now() + 5 * 60_000,
-				).toISOString(),
-			});
+			const active = decision();
 			let calls = 0;
 			const fetchMock = vi.fn(async () => {
 				calls += 1;
@@ -1537,21 +1522,22 @@ describe("ProductionCampaignModal device impressions", () => {
 			});
 			vi.stubGlobal("fetch", fetchMock);
 			render(<ProductionCampaignModal authenticated sessionSubject="user-a" />);
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(10);
-			});
+			await waitFor(() => expect(calls).toBe(1));
 			const host = document.querySelector("opend-touchpoint");
 			expect(host).not.toBeNull();
-			localStorage.setItem(marker(), "1");
+			// The host is inserted before its asynchronous mount finishes. Wait for
+			// the visibility record so this test cannot race a focus refresh against
+			// creation of the open-presentation guard it is meant to exercise.
+			await waitFor(() => expect(localStorage.getItem(marker())).toBe("1"));
 			await act(async () => {
-				await vi.advanceTimersByTimeAsync(30_000);
+				fireEvent(window, new Event("focus"));
 			});
-			expect(calls).toBe(2);
+			await waitFor(() => expect(calls).toBe(2));
 			expect(document.querySelector("opend-touchpoint")).toBe(host);
 			await act(async () => {
-				await vi.advanceTimersByTimeAsync(30_000);
+				fireEvent(window, new Event("focus"));
 			});
-			expect(calls).toBeGreaterThanOrEqual(3);
+			await waitFor(() => expect(calls).toBe(3));
 			expect(document.querySelector("opend-touchpoint")).toBe(host);
 			expect(screen.queryByRole("dialog")).not.toBeNull();
 		},
