@@ -7,7 +7,29 @@ function markdownCodeRanges(text: string): Range[] {
     ? ranges : [...ranges, [unclosedFenceStart, text.length]];
 }
 
-/** Preserve Markdown code examples; decode real cards with the shared protocol parser. */
+/**
+ * Preserve Markdown code examples; decode real cards with the shared protocol parser.
+ *
+ * A closed `<od-card>…</od-card>` block whose payload does not parse is DROPPED —
+ * never painted as prose. Product ruling (user, 2026-09-18): "od-card 如果 json
+ * 不对, 就不显示, 不然用户会觉得是乱码...还不如不显示". A tail comma, a missing
+ * `summary`, a misspelled `type` — the model writes all three — used to put the
+ * whole `<od-card …>{…}</od-card>` block on screen as user-visible text, Markdown
+ * and all (`user_profile` even came out italic). That reads as garbage, so the
+ * card is simply absent instead.
+ *
+ * "Malformed" and "still streaming" are different states and only the first one
+ * is dropped here. A card that has an opener but no `</od-card>` yet is a card
+ * mid-flight: the `live` branches below withhold it (showing the prose written
+ * before it) so a later delta can still complete it into a real card. Dropping a
+ * block requires a matched close tag, i.e. a payload that is final and wrong.
+ *
+ * The decision stays in this render-layer helper rather than in the shared
+ * `splitOnOdCards` parser: that parser is a lossless index-preserving split whose
+ * other callers (`chat-protocol-context` Markdown skip-ranges, daemon
+ * `memory-verify`) read spans of the ORIGINAL text, and it must keep returning
+ * every character it was given.
+ */
 export function splitShellCards(text: string, live: boolean): OdCardSegment[] {
   let markdownStart = 0;
   let codeRanges = markdownCodeRanges(text);
@@ -40,15 +62,21 @@ export function splitShellCards(text: string, live: boolean): OdCardSegment[] {
     // Only the opening marker is classified by Markdown context. A real card's
     // JSON can itself quote markup/backticks; its payload must remain opaque.
     const decoded = splitOnOdCards(raw);
-    for (const segment of decoded) {
-      if (segment.kind === 'text') appendText(segment.text);
-      else result.push(segment);
+    const parsed = decoded.some((segment) => segment.kind === 'card');
+    // A closed block that did not parse is dropped, not appended: the user sees
+    // nothing rather than raw protocol markup (see the ruling in the docblock).
+    if (parsed) {
+      for (const segment of decoded) {
+        if (segment.kind === 'text') appendText(segment.text);
+        else result.push(segment);
+      }
     }
     cursor = close.lastIndex;
     open.lastIndex = cursor;
-    if (decoded.some((segment) => segment.kind === 'card')) {
+    if (parsed) {
       // Cards separate Markdown renders. Their JSON must not open a code span
-      // in the following prose; malformed card text keeps its existing context.
+      // in the following prose; a dropped block leaves the surrounding prose as
+      // one Markdown render, so its context is deliberately left untouched.
       markdownStart = cursor;
       codeRanges = markdownCodeRanges(text.slice(markdownStart));
     }

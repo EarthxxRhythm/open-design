@@ -37,10 +37,30 @@ describe('shell card decoding', () => {
     expect(segments[1]?.kind).toBe('card');
   });
 
-  it('keeps malformed complete protocol as text beside valid cards', () => {
-    const malformed = '<od-card type="task-brief">invalid JSON</od-card>\n';
-    const segments = splitShellCards(malformed + card, false);
-    expect(segments[0]).toEqual({ kind: 'text', text: malformed });
-    expect(segments[1]?.kind).toBe('card');
+  // Product ruling (user, 2026-09-18): a closed card whose JSON does not parse
+  // is not shown at all — raw protocol markup reads as garbage to the user.
+  it('drops a malformed complete block instead of painting it beside valid cards', () => {
+    const malformed = '<od-card type="task-brief">invalid JSON</od-card>';
+    const segments = splitShellCards(`${malformed}\n${card}`, false);
+    expect(segments).toEqual([
+      { kind: 'text', text: '\n' },
+      { kind: 'card', card: { kind: 'task-brief', ...payload }, raw: card },
+    ]);
+  });
+
+  it('keeps the prose around a dropped malformed block', () => {
+    const malformed = '<od-card type="memory-applied">{"used":[],}</od-card>';
+    expect(splitShellCards(`Before.\n${malformed}\nAfter.`, false)).toEqual([
+      { kind: 'text', text: 'Before.\n\nAfter.' },
+    ]);
+  });
+
+  // "Malformed" is not "still being written": an opener with no close tag yet is
+  // withheld while streaming so a later delta can complete it into a real card.
+  it('withholds an unclosed opener while streaming instead of dropping the turn', () => {
+    const partial = 'Reading your preferences.\n\n<od-card type="memory-applied">{"sum';
+    expect(splitShellCards(partial, true)).toEqual([
+      { kind: 'text', text: 'Reading your preferences.\n\n' },
+    ]);
   });
 });
