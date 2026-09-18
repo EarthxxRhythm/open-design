@@ -242,7 +242,7 @@ export const VELA_SINGLE_AGENT_BEST_EFFORT_MANIFESTS = [
   { runtime: 'dsh', companionVersion: '0.1.5-rc.1', recordingDigest: 'sha256:d810b966ca329b4f2c2a6cc85ccb9b9b546e4042837851b6475fc957e057974a' },
   { runtime: 'none', companionVersion: undefined, recordingDigest: 'sha256:ea2984aa588abe825d1324d0212001e3b813d3f01f717e168d3d62735919e195' },
   // Oh My Pi joined on the harness-evaluation build; recorded with that Vela.
-  { runtime: 'ohmypi', companionVersion: 'omp/18.2.5', recordingDigest: 'sha256:f089e1de4a5176de27994d029b0d833ed62ce66d8aa4218a1fb13740f2c7571b', agentCliVersion: '0.0.1-test.harness-align.ga3f35c9' },
+  { runtime: 'ohmypi', companionVersion: 'omp/18.2.5', recordingDigest: 'sha256:c192aea5eb9120447b156e5bfa5d412f49a6b8ff0726eea709cc960b0baa2976', agentCliVersion: '0.0.1-test.harness-align.g2c74f44' },
 ].map(({ runtime, companionVersion, recordingDigest, agentCliVersion }: { runtime: string; companionVersion: string | undefined; recordingDigest: string; agentCliVersion?: string }) => RuntimeCapabilityFixtureManifestV1Schema.parse({
   schema: OD_NEXT_RUNTIME_FIXTURE_MANIFEST_V1_SCHEMA,
   fixtureVersion: `vela-${runtime}-six-local-continuation/v1`,
