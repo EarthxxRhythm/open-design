@@ -1,5 +1,5 @@
 /** Run-scoped AMR execution runtimes. `none` calls the model through AMR without a harness. */
-export const AMR_RUNTIMES = ['opencode', 'pi', 'codex', 'claude', 'dsh', 'none'] as const;
+export const AMR_RUNTIMES = ['opencode', 'pi', 'codex', 'claude', 'dsh', 'ohmypi', 'none'] as const;
 export type AmrRuntime = (typeof AMR_RUNTIMES)[number];
 
 export function isAmrRuntime(value: unknown): value is AmrRuntime {

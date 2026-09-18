@@ -158,7 +158,7 @@ describe('OD Next runtime capability gate', () => {
       'child_success', 'child_failure_parent_recovers',
     ]);
   });
-  it.each(['codex', 'claude', 'dsh'] as const)('admits verified AMR %s continuation without borrowing OpenCode child evidence', (runtime) => {
+  it.each(['codex', 'claude', 'dsh', 'ohmypi'] as const)('admits verified AMR %s continuation without borrowing OpenCode child evidence', (runtime) => {
     const capability = resolveBundledOdNextRuntimeCapability({
       agentId: 'amr', amrRuntime: runtime, agentCliVersion: '0.0.1-test.latest-frozen.g0479e8f22dd2',
       runtimeCompanionName: 'opencode', runtimeCompanionVersion: '1.18.18',
@@ -176,14 +176,15 @@ describe('OD Next runtime capability gate', () => {
   it.each([
     { runtime: 'opencode' as const, companionVersion: '1.18.30-powerformer.g92ba6a3b82b5' },
     { runtime: 'pi' as const, companionVersion: '0.85.1' },
-  ])('uses the installed new $runtime tuple with its own simple-only evidence', ({ runtime, companionVersion }) => {
+    { runtime: 'ohmypi' as const, companionVersion: 'omp/18.2.5', velaVersion: '0.0.1-test.harness-align.gf4a0838d' },
+  ])('uses the installed new $runtime tuple with its own simple-only evidence', ({ runtime, companionVersion, velaVersion = '0.0.1-test.latest-frozen.g0479e8f22dd2' }) => {
     const capability = resolveBundledOdNextRuntimeCapability({
-      agentId: 'amr', amrRuntime: runtime, agentCliVersion: '0.0.1-test.latest-frozen.g0479e8f22dd2',
+      agentId: 'amr', amrRuntime: runtime, agentCliVersion: velaVersion,
       runtimeCompanionName: runtime, runtimeCompanionVersion: companionVersion,
     });
     expect(capability.reason).toBe('capability_resolved');
     expect(capability.snapshot).toMatchObject({
-      recordedAgentCliVersion: '0.0.1-test.latest-frozen.g0479e8f22dd2',
+      recordedAgentCliVersion: velaVersion,
       recordedRuntimeCompanionName: runtime, recordedRuntimeCompanionVersion: companionVersion,
       nativeSessionContinuation: { support: 'verified' }, nativeSubagents: { support: 'unknown' },
     });
@@ -199,7 +200,7 @@ describe('OD Next runtime capability gate', () => {
     const entry = OD_NEXT_RUNTIME_CAPABILITY_REGISTRY.find((item) => item.runtimePath === 'vela-none')!;
     expect(entry.evidence.caseResults.find((item) => item.id === 'tool')?.outcome).toBe('unavailable');
   });
-  it.each(['opencode', 'pi', 'codex', 'claude', 'dsh', 'none'] as const)('records actual %s HTTP/ACP observations independently of declared outcomes', (runtime) => {
+  it.each(['opencode', 'pi', 'codex', 'claude', 'dsh', 'ohmypi', 'none'] as const)('records actual %s HTTP/ACP observations independently of declared outcomes', (runtime) => {
     const seed = JSON.parse(readFileSync(join(fixtureDir, `vela-${runtime}-six-local.sanitized-real-seed.json`), 'utf8'));
     const digest = `sha256:${createHash('sha256').update(JSON.stringify(seed.observations)).digest('hex')}`;
     expect(seed.recordingDigest).toBe(digest);
@@ -229,7 +230,7 @@ describe('OD Next runtime capability gate', () => {
     // Harness-evaluation branch: VELA_OPENCODE_LOCAL_BEST_EFFORT_MANIFEST (the
     // seven-path complex evidence) is excluded from the active registry so AMR
     // opencode resolves simple-only like the other five AMR harnesses.
-    expect(OD_NEXT_RUNTIME_CAPABILITY_REGISTRY).toHaveLength(10);
+    expect(OD_NEXT_RUNTIME_CAPABILITY_REGISTRY).toHaveLength(11);
     expect(OD_NEXT_RUNTIME_CAPABILITY_FIXTURE_MANIFESTS).toEqual([
       CODEX_0_147_0_BEST_EFFORT_MANIFEST,
       CLAUDE_2_1_233_BEST_EFFORT_MANIFEST,

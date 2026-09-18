@@ -16,7 +16,7 @@ describe('per-run AMR runtime selection', () => {
     },
   );
 
-  it.each(['pi', 'codex', 'claude', 'dsh', 'none'])('accepts explicit %s without changing its identity', (runtime) => {
+  it.each(['pi', 'codex', 'claude', 'dsh', 'ohmypi', 'none'])('accepts explicit %s without changing its identity', (runtime) => {
     expect(resolveAmrRuntime('amr', runtime)).toBe(runtime);
   });
 
@@ -38,7 +38,7 @@ describe('AMR catalog and backend model observations', () => {
 
 it('uses the existing text artifact contract only for AMR direct-model calls', () => {
   expect(executionProfileForRuntime('amr', 'acp-json-rpc', 'none')).toBe('text_artifact');
-  for (const runtime of ['opencode', 'pi', 'codex', 'claude', 'dsh'] as const) {
+  for (const runtime of ['opencode', 'pi', 'codex', 'claude', 'dsh', 'ohmypi'] as const) {
     expect(executionProfileForRuntime('amr', 'acp-json-rpc', runtime)).toBe('filesystem');
   }
   expect(executionProfileForRuntime('codex', 'json-event')).toBe('filesystem');

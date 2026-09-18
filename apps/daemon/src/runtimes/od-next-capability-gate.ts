@@ -65,7 +65,7 @@ export const OD_NEXT_RUNTIME_PATH_DESCRIPTORS = [
     runtimeAdapterVersion: 'od-vela-none-acp/v1',
     admissionMode: 'simple',
   },
-  ...(['codex', 'claude', 'dsh'] as const).map((runtime) => ({
+  ...(['codex', 'claude', 'dsh', 'ohmypi'] as const).map((runtime) => ({
     runtimePath: `vela-${runtime}`,
     agentId: 'amr',
     runtimeAdapterVersion: `od-vela-${runtime}-acp/v1`,
@@ -241,12 +241,14 @@ export const VELA_SINGLE_AGENT_BEST_EFFORT_MANIFESTS = [
   { runtime: 'claude', companionVersion: '2.1.267 (Claude Code)', recordingDigest: 'sha256:7f6f0a16788b764b46c158a0810c8f21b00d320e8ad8bd9386c81ead2378ade4' },
   { runtime: 'dsh', companionVersion: '0.1.5-rc.1', recordingDigest: 'sha256:d810b966ca329b4f2c2a6cc85ccb9b9b546e4042837851b6475fc957e057974a' },
   { runtime: 'none', companionVersion: undefined, recordingDigest: 'sha256:ea2984aa588abe825d1324d0212001e3b813d3f01f717e168d3d62735919e195' },
-].map(({ runtime, companionVersion, recordingDigest }) => RuntimeCapabilityFixtureManifestV1Schema.parse({
+  // Oh My Pi joined on the harness-evaluation build; recorded with that Vela.
+  { runtime: 'ohmypi', companionVersion: 'omp/18.2.5', recordingDigest: 'sha256:084e6c24f607b29898d2d4af29001668aada682ad65f52ccc561b2bf28bf3c19', agentCliVersion: '0.0.1-test.harness-align.gf4a0838d' },
+].map(({ runtime, companionVersion, recordingDigest, agentCliVersion }: { runtime: string; companionVersion: string | undefined; recordingDigest: string; agentCliVersion?: string }) => RuntimeCapabilityFixtureManifestV1Schema.parse({
   schema: OD_NEXT_RUNTIME_FIXTURE_MANIFEST_V1_SCHEMA,
   fixtureVersion: `vela-${runtime}-six-local-continuation/v1`,
   runtimePath: `vela-${runtime}`,
   agentId: 'amr',
-  agentCliVersion: '0.0.1-test.latest-frozen.g0479e8f22dd2',
+  agentCliVersion: agentCliVersion ?? '0.0.1-test.latest-frozen.g0479e8f22dd2',
   runtimeAdapterVersion: `od-vela-${runtime}-acp/v1`,
   ...(companionVersion ? { runtimeCompanionName: runtime, runtimeCompanionVersion: companionVersion } : {}),
   provenance: {
