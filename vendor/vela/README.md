@@ -9,6 +9,7 @@ This branch carries an immutable Vela test package for the Vela / Open Design / 
 | Codex | 0.154.0 |
 | Claude Code | 2.1.267 |
 | DSH | 0.1.5-rc.1; DSH pi-ai transport 0.85.1 |
+| Oh My Pi | 18.2.5 (`omp` GitHub release binary; not carried by the Vela package, the ODEval Runner provisions it and injects `VELA_OHMYPI_BIN`) |
 | none | Included in the Vela binary; no external CLI |
 
 `manifest.json` records the exact Vela source, archive version, OpenCode source, binary hash and archive hashes.
@@ -31,6 +32,6 @@ pnpm install --frozen-lockfile
 
 Keep the meta-package version in the lockfile identical to the archive manifest. The native optional dependency snapshot must stay fully qualified (`@powerformer/vela-cli-darwin-arm64@file:vendor/vela/...tgz`), including when the package is platform-skipped on Linux. Do not overwrite these archives or refresh their dependencies during the evaluation. Any later change requires a new package version and a new evaluation configuration. Old results retain their original versions.
 
-Six native CLI process replays with loopback provider responses establish local integration, tools where available, continuation, cancellation and model/usage evidence. They do not establish live-model quality or completed evaluation batches. The `none` runtime has no native tool loop and is not an OD Next tool-strategy capability claim. Nodes still need an ODEval Runner supporting the selected runtime; this branch does not upgrade the Runner.
+Seven native CLI process replays with loopback provider responses establish local integration, tools where available, continuation, cancellation and model/usage evidence. They do not establish live-model quality or completed evaluation batches. The `none` runtime has no native tool loop and is not an OD Next tool-strategy capability claim. Nodes still need an ODEval Runner supporting the selected runtime; this branch does not upgrade the Runner.
 
 The repository's normal dependency-spec guard rejects relative `file:` packages. This temporary evaluation distribution follows the existing portable test branch; the guard remains unchanged. A product release must use published immutable packages.
