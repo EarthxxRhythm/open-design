@@ -111,6 +111,21 @@ describe('ChatPane releases the scroll takeover on a conversation switch', () =>
 
     rerender(chatPane({ messages: [userMessage('m2')], activeConversationId: 'conv-2' }));
 
+    // Two: the cleanup for conv-1 and the effect for conv-2. Both are the same
+    // idempotent release; the cleanup is what covers an unmount (below).
+    expect(release.mock.calls.length).toBe(afterMount + 2);
+  });
+
+  it('releases when the panel unmounts', () => {
+    // A route change or tab switch removes the chat log with no conversation
+    // change; the takeover must not outlive the node it was engaged on.
+    const { unmount } = render(
+      chatPane({ messages: [userMessage('m1')], activeConversationId: 'conv-1' }),
+    );
+    const afterMount = release.mock.calls.length;
+
+    unmount();
+
     expect(release.mock.calls.length).toBe(afterMount + 1);
   });
 

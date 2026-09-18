@@ -177,8 +177,8 @@ const CAPTURE = { capture: true } as const;
 /** Viewport height assumed for a page-mode wheel before the first frame lands. */
 const FALLBACK_VIEWPORT_PX = 800;
 
-/** Home / End: a request no layout can exceed, clamped where it is applied. */
-const JUMP_TO_EDGE_PX = Number.POSITIVE_INFINITY;
+/** Where Home / End send the log. Kept apart from pixel steps — see `Surface.pendingEdge`. */
+type PendingEdge = 'top' | 'bottom';
 
 export type ChatScrollTakeoverPhase =
   /** No surface. */
@@ -228,8 +228,23 @@ interface Surface {
   inconclusiveNotches: number;
 
   // -- the takeover ---------------------------------------------------------
-  /** Wheel and key pixels accumulated since the last applied frame. */
+  /**
+   * Wheel and key pixels accumulated since the last applied frame, measured
+   * from `pendingEdge` when one is set and from the current position otherwise.
+   */
   pendingPx: number;
+  /**
+   * An edge jump (Home / End) queued for the next frame.
+   *
+   * Kept out of `pendingPx` on purpose. Edges used to be ±Infinity folded into
+   * the same accumulator as the arrows, and two edge keys in one frame — Home
+   * then End, or key repeat — summed to NaN; a NaN `scrollTop` write is read by
+   * the browser as 0, so End could not reach the bottom. The last edge pressed
+   * wins, and pressing one discards the steps queued before it: the user asked
+   * for the edge, not the edge plus wherever the earlier steps would have gone.
+   * Steps pressed AFTER the edge apply on top of it.
+   */
+  pendingEdge: PendingEdge | null;
   framePending: boolean;
   /** In-flight `requestAnimationFrame` handle, so disengaging can cancel it. */
   frameHandle: number | null;
@@ -353,6 +368,7 @@ function kick(
     observation: null,
     inconclusiveNotches: 0,
     pendingPx: 0,
+    pendingEdge: null,
     framePending: false,
     frameHandle: null,
     geometry,
@@ -562,6 +578,7 @@ function engage(active: Surface, geometry: ScrollGeometry): void {
   active.phase = 'engaged';
   active.geometry = geometry;
   active.pendingPx = 0;
+  active.pendingEdge = null;
   active.keyboardOwner = true;
   active.element.removeEventListener('wheel', onWheelObserve, CAPTURE);
   active.element.removeEventListener('scroll', onSurfaceScroll);
@@ -589,7 +606,24 @@ function disengage(): void {
   active.observation = null;
   cancelFrame(active);
   active.pendingPx = 0;
+  active.pendingEdge = null;
   active.phase = 'idle';
+}
+
+/**
+ * The node this surface was engaged on is gone from the document.
+ *
+ * A tab switch or a route change unmounts the chat log without a conversation
+ * change, and the probe only notices a missing node on its next scroll — which
+ * a log that no longer exists never sends. Until then the document-level
+ * keydown listener was still cancelling arrows and paging with nothing left to
+ * scroll. Every input path asks this first and, when it is true, lets go and
+ * hands the event back to the browser.
+ */
+function surfaceLost(active: Surface): boolean {
+  if (active.element.isConnected) return false;
+  disengage();
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -612,6 +646,7 @@ function onWheelCapture(event: WheelEvent): void {
   // arrive here — but if one ever did, moving it would be moving the wrong
   // log.
   if (event.currentTarget !== active.element) return;
+  if (surfaceLost(active)) return;
 
   // ctrl+wheel is pinch-to-zoom on a trackpad and browser zoom on a mouse.
   // Consuming it would take page zoom away from the user; meta is left alone
@@ -657,7 +692,7 @@ function onWheelCapture(event: WheelEvent): void {
 function travelRemains(active: Surface, px: number): boolean {
   const travel = Math.max(0, active.geometry.scrollHeight - active.geometry.clientHeight);
   if (travel <= 0) return false;
-  const projectedTop = clamp(active.geometry.scrollTop + active.pendingPx, 0, travel);
+  const projectedTop = clamp(pendingBase(active, active.geometry.scrollTop, travel) + active.pendingPx, 0, travel);
   const remaining = px > 0 ? travel - projectedTop : projectedTop;
   return remaining > 0;
 }
@@ -712,16 +747,23 @@ function onKeyDown(event: KeyboardEvent): void {
   if (active === null || active.phase !== 'engaged') return;
   if (event.defaultPrevented) return;
   if (event.ctrlKey || event.metaKey || event.altKey) return;
-  const step = keyboardStepPx(event.key, event.shiftKey, viewportPxOf(active));
-  if (step == null) return;
+  const request = keyboardRequest(event.key, event.shiftKey, viewportPxOf(active));
+  if (request == null) return;
   if (!keyboardAimsAtLog(active, event.key)) return;
+  if (surfaceLost(active)) return;
 
   event.preventDefault();
-  active.pendingPx += step;
+  if (typeof request === 'number') {
+    active.pendingPx += request;
+  } else {
+    active.pendingEdge = request;
+    active.pendingPx = 0;
+  }
   scheduleApply(active);
 }
 
-function keyboardStepPx(key: string, shift: boolean, viewportPx: number): number | null {
+/** A pixel step, an edge to jump to, or `null` for a key that does not scroll. */
+function keyboardRequest(key: string, shift: boolean, viewportPx: number): number | PendingEdge | null {
   const page = Math.round(viewportPx * KEYBOARD_PAGE_FRACTION);
   switch (key) {
     case 'ArrowDown':
@@ -736,12 +778,19 @@ function keyboardStepPx(key: string, shift: boolean, viewportPx: number): number
     case 'Spacebar':
       return shift ? -page : page;
     case 'End':
-      return JUMP_TO_EDGE_PX;
+      return 'bottom';
     case 'Home':
-      return -JUMP_TO_EDGE_PX;
+      return 'top';
     default:
       return null;
   }
+}
+
+/** Where the pending pixels are measured from: the queued edge, else the current position. */
+function pendingBase(active: Surface, scrollTop: number, max: number): number {
+  if (active.pendingEdge === 'top') return 0;
+  if (active.pendingEdge === 'bottom') return max;
+  return scrollTop;
 }
 
 function keyboardAimsAtLog(active: Surface, key: string): boolean {
@@ -830,22 +879,28 @@ function cancelAnimationFrameSafely(handle: number | null): void {
 
 function applyPending(active: Surface): void {
   if (surface !== active || active.phase !== 'engaged') return;
+  if (surfaceLost(active)) return;
   const element = active.element;
-  if (!element.isConnected) return;
 
   const pending = active.pendingPx;
+  const edge = active.pendingEdge;
   active.pendingPx = 0;
+  active.pendingEdge = null;
 
   // The frame is where layout is read, and it is read fresh: the log has been
   // growing underneath this gesture if a turn is streaming, and clamping
   // against a stale extent is how a takeover would refuse to reach the bottom.
   const geometry = readGeometry(element);
   active.geometry = geometry;
-  if (pending === 0) return;
+  if (pending === 0 && edge === null) return;
 
   const max = Math.max(0, geometry.scrollHeight - geometry.clientHeight);
-  const next = clamp(geometry.scrollTop + pending, 0, max);
-  if (next === geometry.scrollTop) return;
+  // Edge first, then the steps pressed after it — and never a non-finite
+  // number: both inputs are finite by construction now, and the clamp holds
+  // the sum inside the layout.
+  const base = edge === 'top' ? 0 : edge === 'bottom' ? max : geometry.scrollTop;
+  const next = clamp(base + pending, 0, max);
+  if (!Number.isFinite(next) || next === geometry.scrollTop) return;
 
   element.scrollTop = next;
   // Keep the cache in step with what was just written, so a wheel arriving

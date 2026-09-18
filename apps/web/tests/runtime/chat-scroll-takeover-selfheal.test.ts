@@ -703,6 +703,70 @@ describe('self-heal — the keyboard during a takeover', () => {
     expect(geometry.writes).toEqual([]);
   });
 
+  it('lands at the bottom when Home and End arrive in the same frame', () => {
+    // Review finding: Home and End used to be ±Infinity folded into the same
+    // pixel accumulator as the arrows, so Home-then-End summed to NaN, and a
+    // NaN write is read by the browser as 0 — End could not reach the bottom.
+    const { geometry } = mountEngaged();
+    geometry.setTop(500);
+    pressOnBody('Home');
+    pressOnBody('End');
+    runFrames();
+    expect(geometry.writes).toEqual([LAYOUT_MAX]);
+    expect(geometry.top()).toBe(LAYOUT_MAX);
+  });
+
+  it('lands at the top when End and Home arrive in the same frame', () => {
+    const { geometry } = mountEngaged();
+    geometry.setTop(500);
+    pressOnBody('End');
+    pressOnBody('Home');
+    runFrames();
+    expect(geometry.writes).toEqual([0]);
+    expect(geometry.top()).toBe(0);
+  });
+
+  it('never writes a non-finite scrollTop, whatever mix of edge jumps and steps arrives', () => {
+    const { geometry } = mountEngaged();
+    geometry.setTop(500);
+    pressOnBody('ArrowDown');
+    pressOnBody('Home');
+    pressOnBody('End');
+    pressOnBody('PageUp');
+    pressOnBody('Home');
+    pressOnBody('ArrowDown');
+    runFrames();
+    for (const write of geometry.writes) expect(Number.isFinite(write)).toBe(true);
+    expect(Number.isFinite(geometry.top())).toBe(true);
+    // An edge jump discards the steps queued before it; steps after it apply
+    // on top of the edge: Home then ArrowDown is 0 + 40.
+    expect(geometry.writes).toEqual([KEYBOARD_LINE_PX]);
+  });
+
+  it('lets go of the keyboard when the chat log is removed while engaged', () => {
+    // Review finding: a tab or route unmount that removes the node before the
+    // probe has noticed left the takeover engaged with a document-level keydown
+    // listener — arrows and paging were still cancelled with no log to scroll.
+    const { log, geometry } = mountEngaged();
+    log.remove();
+    const event = pressOnBody('ArrowDown');
+    runFrames();
+    expect(event.defaultPrevented).toBe(false);
+    expect(geometry.writes).toEqual([]);
+    expect(chatScrollTakeoverEngaged()).toBe(false);
+    expect(chatScrollTakeoverPhase()).toBe('idle');
+  });
+
+  it('disengages from the frame path too when the chat log is removed', () => {
+    const { log, geometry } = mountEngaged();
+    const wheel = wheelEvent(log, 120);
+    expect(wheel.defaultPrevented).toBe(true);
+    log.remove();
+    runFrames();
+    expect(geometry.writes).toEqual([]);
+    expect(chatScrollTakeoverEngaged()).toBe(false);
+  });
+
   it('lets go of the keyboard when released', () => {
     const { geometry } = mountEngaged();
     releaseChatScrollTakeover();
