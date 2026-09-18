@@ -716,6 +716,53 @@ describe("Production campaign live refresh", () => {
 		expect(screen.queryByRole("dialog")).toBeNull();
 	});
 
+	// OPEND-3363 at the component seam. `online` used to run the destructive
+	// wake, which published a null decision and unmounted the dialog — taking the
+	// scroll lock, the focus trap and the mounted host element with it — before
+	// any evidence about the activity had arrived. Everything observable here is
+	// asserted INSIDE the pending revalidation window.
+	it("keeps the dialog mounted, scroll-locked and focus-trapped while an online revalidation is pending", async () => {
+		available = true;
+		let stall!: (value: Response) => void;
+		let calls = 0;
+		const staged = vi.fn(async () => {
+			calls += 1;
+			if (calls === 1)
+				return new Response(JSON.stringify(decision()), { status: 200 });
+			return new Promise<Response>((resolve) => {
+				stall = resolve;
+			});
+		});
+		vi.stubGlobal("fetch", staged);
+		await open();
+		await tick(16);
+		const dialog = screen.getByRole("dialog");
+		const modal = dialog.firstElementChild as HTMLElement;
+		const element = document.querySelector("opend-touchpoint");
+		expect(element).not.toBeNull();
+		expect(document.body.style.overflow).toBe("hidden");
+		const outside = document.createElement("button");
+		document.body.append(outside);
+		outside.focus();
+		await act(async () => {
+			window.dispatchEvent(new Event("online"));
+		});
+		expect(staged).toHaveBeenCalledTimes(2);
+		expect(screen.getByRole("dialog")).toBe(dialog);
+		expect(document.querySelector("opend-touchpoint")).toBe(element);
+		expect(OpenDesignTouchpointElement.prototype.mount).toHaveBeenCalledTimes(1);
+		expect(document.body.style.overflow).toBe("hidden");
+		fireEvent.keyDown(document, { key: "Tab" });
+		expect(modal.contains(document.activeElement)).toBe(true);
+		outside.remove();
+		await act(async () => {
+			stall(new Response(JSON.stringify(decision()), { status: 200 }));
+		});
+		expect(screen.getByRole("dialog")).toBe(dialog);
+		expect(document.querySelector("opend-touchpoint")).toBe(element);
+		expect(OpenDesignTouchpointElement.prototype.mount).toHaveBeenCalledTimes(1);
+	});
+
 	it("does not poll signed-out users and removes timers and wake listeners on cleanup", async () => {
 		const view = await open(false);
 		await tick(30_000);
@@ -1155,7 +1202,12 @@ describe("ProductionCampaignModal mount lifetime", () => {
 		}
 	});
 
-	it("fences the old modal action until recovery mounts a fresh decision", async () => {
+	// OPEND-3363, deliberate contract change. This case used to require that
+	// recovery FENCE the mounted decision and mount a second time before the
+	// action was authorized again — the destructive `wake` seen from the action
+	// path. Recovery no longer withdraws a live lease, so the host mounted once
+	// stays the authorized one across both events.
+	it("keeps the mounted modal action authorized across focus and online recovery", async () => {
 		(globalThis as CampaignHostGlobal).__openDesignCampaignTestHost = {
 			client: { osLocale: "en-US", type: "desktop" },
 		};
@@ -1190,11 +1242,12 @@ describe("ProductionCampaignModal mount lifetime", () => {
 		});
 		render(<ProductionCampaignModal authenticated sessionSubject="user-a" />);
 		await waitFor(() => expect(dispatchAction).toBeTypeOf("function"));
+		const host = document.querySelector("opend-touchpoint");
 		window.dispatchEvent(new Event("focus"));
 		window.dispatchEvent(new Event("online"));
-		await waitFor(() =>
-			expect(OpenDesignTouchpointElement.prototype.mount).toHaveBeenCalledTimes(2),
-		);
+		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+		expect(OpenDesignTouchpointElement.prototype.mount).toHaveBeenCalledTimes(1);
+		expect(document.querySelector("opend-touchpoint")).toBe(host);
 		await dispatchAction?.("learn");
 		expect(fetchMock).toHaveBeenCalledWith(
 			"/api/touchpoints/production-runtime/events",

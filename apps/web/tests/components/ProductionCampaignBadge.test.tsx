@@ -108,6 +108,10 @@ describe("ProductionCampaignBadge", () => {
     await Promise.resolve();
     expect(screen.queryByTestId("production-campaign-badge")).toBeNull();
   });
+  // OPEND-3363 contract change: `online` no longer withdraws the badge and
+  // re-requests. It joins the revalidation `focus` already has in flight, so the
+  // pair costs one request instead of two, and the mounted host is never torn
+  // down between them.
   it("keeps the mounted badge action authorized across focus, online, and interval refreshes", async () => {
     getOpenDesignHostMock.mockReturnValue({ client: { type: "desktop", osLocale: "en-US" } });
     let dispatchAction: ((actionId: string) => Promise<void>) | undefined;
@@ -126,10 +130,13 @@ describe("ProductionCampaignBadge", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(dispatchAction).toBeTypeOf("function");
+    const host = screen.getByTestId("production-campaign-badge").querySelector("opend-touchpoint");
     await act(async () => { window.dispatchEvent(new Event("focus")); window.dispatchEvent(new Event("online")); await Promise.resolve(); });
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId("production-campaign-badge").querySelector("opend-touchpoint")).toBe(host);
+    expect(OpenDesignTouchpointElement.prototype.mount).toHaveBeenCalledTimes(1);
     await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     await dispatchAction?.("learn");
     expect(fetchMock).toHaveBeenCalledWith("/api/touchpoints/production-runtime/events", expect.objectContaining({ method: "POST" }));
     expect(openExternalUrlMock).toHaveBeenCalledWith("https://example.com");

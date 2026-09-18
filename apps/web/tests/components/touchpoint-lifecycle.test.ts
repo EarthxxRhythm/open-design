@@ -276,14 +276,18 @@ describe("shared display lifecycle", () => {
 		expect(result.current.generation).toBe(generation);
 	});
 
-	it("still withdraws display and authority on actual page hiding", async () => {
+	// OPEND-3363 contract change: hiding the page fences `isCurrent`, which is what
+	// gates receipts and actions, but it is not evidence the activity ended. The
+	// lease it was granted survives the page being backgrounded.
+	it("fences a hidden page without withdrawing the lease it was granted", async () => {
 		const load = vi.fn<Load>().mockResolvedValue({ kind: "decision", value: first, key: "same", validForMs: 60_000 });
 		const { result } = renderHook(() => useTouchpointLifecycle({ enabled: true, identity: "test", load }));
 		await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 		const generation = result.current.generation;
 		vi.spyOn(document, "hidden", "get").mockReturnValue(true);
 		act(() => { document.dispatchEvent(new Event("visibilitychange")); });
-		expect(result.current.current).toBeNull();
+		expect(result.current.current).toBe(first);
+		expect(result.current.generation).toBe(generation);
 		expect(result.current.isCurrent(generation)).toBe(false);
 	});
 	it("renews authority without replacing a visible decision, then expires even after no-decision polls", async () => {
@@ -353,17 +357,132 @@ describe("shared display lifecycle", () => {
 		expect(result.current.current).toBeNull();
 	});
 
-	it("withdraws old authority synchronously on wake and rejects a timed-out revalidation", async () => {
+	// OPEND-3363, deliberate contract change. This case previously pinned the
+	// destructive `wake()`: `online` withdrew authority synchronously, before any
+	// evidence had arrived, and a single timed-out revalidation then made the loss
+	// permanent. Page recovery is now non-destructive, so the same events are
+	// asserted here with the opposite outcome.
+	it("keeps an unexpired visible decision mounted while an online revalidation is pending", async () => {
 		const pending = deferred<TouchpointLifecycleLoad<Content>>();
 		const load = vi.fn<Load>().mockResolvedValueOnce({ kind: "decision", value: first, key: "same", validForMs: 60_000 }).mockReturnValue(pending.promise);
 		const { result } = renderHook(() => useTouchpointLifecycle({ enabled: true, identity: "production", load }));
 		await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 		const generation = result.current.generation;
-		act(() => { window.dispatchEvent(new Event("online")); expect(result.current.isCurrent(generation)).toBe(false); });
-		expect(result.current.current).toBeNull();
+		act(() => { window.dispatchEvent(new Event("online")); });
+		// Inside the pending window: the revalidation has been issued and has NOT
+		// resolved, which is exactly where the old shape had already gone blank.
+		expect(load).toHaveBeenCalledTimes(2);
+		expect(result.current.current).toBe(first);
+		expect(result.current.generation).toBe(generation);
+		expect(result.current.isCurrent(generation)).toBe(true);
+		// A revalidation that never answers is still not a withdrawal.
 		await act(async () => { await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS); });
+		expect(result.current.current).toBe(first);
+		expect(result.current.generation).toBe(generation);
+		expect(result.current.status).toBe("active");
+	});
+
+	it("keeps an unexpired visible decision mounted while a pageshow revalidation is pending", async () => {
+		const pending = deferred<TouchpointLifecycleLoad<Content>>();
+		const load = vi.fn<Load>().mockResolvedValueOnce({ kind: "decision", value: first, key: "same", validForMs: 60_000 }).mockReturnValue(pending.promise);
+		const { result } = renderHook(() => useTouchpointLifecycle({ enabled: true, identity: "production", load }));
+		await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+		const generation = result.current.generation;
+		act(() => { window.dispatchEvent(new Event("pageshow")); });
+		expect(load).toHaveBeenCalledTimes(2);
+		expect(result.current.current).toBe(first);
+		expect(result.current.generation).toBe(generation);
+		expect(result.current.isCurrent(generation)).toBe(true);
+	});
+
+	it("keeps an unexpired visible decision mounted while a visibilitychange revalidation is pending", async () => {
+		const pending = deferred<TouchpointLifecycleLoad<Content>>();
+		const load = vi.fn<Load>().mockResolvedValueOnce({ kind: "decision", value: first, key: "same", validForMs: 60_000 }).mockReturnValue(pending.promise);
+		const { result } = renderHook(() => useTouchpointLifecycle({ enabled: true, identity: "production", load }));
+		await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+		const generation = result.current.generation;
+		act(() => { document.dispatchEvent(new Event("visibilitychange")); });
+		expect(load).toHaveBeenCalledTimes(2);
+		expect(result.current.current).toBe(first);
+		expect(result.current.generation).toBe(generation);
+		expect(result.current.isCurrent(generation)).toBe(true);
+	});
+
+	// The permanent-loss path, end to end. `wake()` emptied the lease, the very
+	// next failure short-circuited on `!lease.current` and dropped the saved
+	// revalidation lease too, and the retry that DID succeed had nothing left to
+	// restore. Nothing here should ever need restoring: it never goes away.
+	it("rides out one failed recovery revalidation and never has to restore the display", async () => {
+		const load = vi.fn<Load>()
+			.mockResolvedValueOnce({ kind: "decision", value: first, key: "same", validForMs: 60_000 })
+			.mockRejectedValueOnce(new Error("touchpoint_test_load_failed"))
+			.mockResolvedValue({ kind: "retain" });
+		const onError = vi.fn();
+		const { result } = renderHook(() => useTouchpointLifecycle({ enabled: true, identity: "production", load, onError }));
+		await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+		const generation = result.current.generation;
+		act(() => { window.dispatchEvent(new Event("online")); });
+		expect(result.current.current).toBe(first);
+		await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+		expect(onError).toHaveBeenCalledTimes(1);
+		expect(result.current.current).toBe(first);
+		expect(result.current.status).toBe("active");
+		await act(async () => { await vi.advanceTimersByTimeAsync(RETRY_BACKOFF_MS[0] ?? 0); });
+		expect(load).toHaveBeenCalledTimes(3);
+		expect(result.current.current).toBe(first);
+		expect(result.current.generation).toBe(generation);
+		expect(result.current.isCurrent(generation)).toBe(true);
+	});
+
+	it("cancels only the in-flight request while the page is hidden, then revalidates once on return", async () => {
+		let aborted = false;
+		const pending = deferred<TouchpointLifecycleLoad<Content>>();
+		const load = vi.fn<Load>()
+			.mockResolvedValueOnce({ kind: "decision", value: first, key: "same", validForMs: 120_000 })
+			.mockImplementationOnce(async signal => { signal.addEventListener("abort", () => { aborted = true; }); return pending.promise; })
+			.mockResolvedValue({ kind: "retain" });
+		const { result } = renderHook(() => useTouchpointLifecycle({ enabled: true, identity: "production", load }));
+		await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+		const generation = result.current.generation;
+		await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+		expect(load).toHaveBeenCalledTimes(2);
+		const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+		act(() => { document.dispatchEvent(new Event("visibilitychange")); });
+		expect(aborted).toBe(true);
+		expect(result.current.current).toBe(first);
+		expect(result.current.generation).toBe(generation);
+		hidden.mockReturnValue(false);
+		act(() => { document.dispatchEvent(new Event("visibilitychange")); });
+		expect(load).toHaveBeenCalledTimes(3);
+		expect(result.current.current).toBe(first);
+		expect(result.current.isCurrent(generation)).toBe(true);
+	});
+
+	it("closes at once when a recovery revalidation carries the server's own withdrawal", async () => {
+		const withdrawal = Object.assign(new Error("touchpoint_load_failed"), { touchpointWithdrawal: true });
+		const load = vi.fn<Load>().mockResolvedValueOnce({ kind: "decision", value: first, key: "same", validForMs: 60_000 }).mockRejectedValue(withdrawal);
+		const { result } = renderHook(() => useTouchpointLifecycle({ enabled: true, identity: "production", load }));
+		await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+		act(() => { window.dispatchEvent(new Event("online")); });
+		expect(result.current.current).toBe(first);
+		await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+		expect(result.current.current).toBeNull();
 		expect(result.current.status).toBe("error");
-		await act(async () => { pending.resolve({ kind: "decision", value: first, key: "same", validForMs: 60_000 }); });
+	});
+
+	it("retires a lease at its own deadline when recovery revalidation keeps failing, and never restores it", async () => {
+		const load = vi.fn<Load>().mockResolvedValueOnce({ kind: "decision", value: first, key: "same", validForMs: 60_000 }).mockRejectedValue(new Error("touchpoint_test_load_failed"));
+		const { result } = renderHook(() => useTouchpointLifecycle({ enabled: true, identity: "production", load }));
+		await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+		const generation = result.current.generation;
+		act(() => { window.dispatchEvent(new Event("online")); });
+		await act(async () => { await vi.advanceTimersByTimeAsync(59_999); });
+		expect(result.current.current).toBe(first);
+		await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+		expect(result.current.current).toBeNull();
+		expect(result.current.isCurrent(generation)).toBe(false);
+		act(() => { window.dispatchEvent(new Event("online")); });
+		await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
 		expect(result.current.current).toBeNull();
 	});
 	it("keeps a visible lease when a polling refresh times out, then retires it at its own deadline", async () => {

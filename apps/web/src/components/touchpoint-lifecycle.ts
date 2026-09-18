@@ -129,8 +129,8 @@ export function useTouchpointLifecycle<T>({ enabled, identity, load, onError }: 
 		 * and keep display authority the server already granted; `armExpiry`
 		 * still retires it at its own deadline, so one poll may be missed and a
 		 * second consecutive failure lets the lease lapse on its own. A lease
-		 * already fenced by `wake` stays withdrawn: page recovery has no
-		 * evidence the activity is still live.
+		 * already withdrawn by `wake` stays withdrawn: the client knew its
+		 * authority was gone before it asked, and a failure cannot bring it back.
 		 */
 		const abandonAttempt = (error: unknown) => {
 			cancelRequest();
@@ -259,6 +259,12 @@ export function useTouchpointLifecycle<T>({ enabled, identity, load, onError }: 
 				}
 			}
 		};
+		/**
+		 * Withdraw display first and ask afterwards. Reserved for the cases where
+		 * the client already knows the authority is gone — the lease lapsed, the
+		 * identity changed, the content failed verification — never for a page
+		 * that merely came back.
+		 */
 		const wake = () => {
 			if (stopped || ended) return;
 			revalidationLease = lease.current ?? revalidationLease;
@@ -266,35 +272,52 @@ export function useTouchpointLifecycle<T>({ enabled, identity, load, onError }: 
 			revoke();
 			if (!document.hidden) void refresh();
 		};
-		// Ordinary window focus is not page recovery. A still-valid visible lease
-		// keeps its mount while refreshing; hidden/pageshow/online still fence it.
-		const focus = () => {
+		/**
+		 * Returning to the page is not evidence that the activity ended.
+		 *
+		 * `online`, `pageshow` and `visibilitychange` used to run `wake`, which
+		 * revoked synchronously and left nothing on screen while the revalidation
+		 * it started was still in flight — so switching Wi-Fi, waking from sleep
+		 * or tabbing away tore down a campaign the server had authorized. Worse,
+		 * an emptied lease made `abandonAttempt`'s `!lease.current` branch true,
+		 * so one failed revalidation dropped the saved lease too and the activity
+		 * could never be restored for the rest of the session.
+		 *
+		 * A lease that is still inside the window the server granted therefore
+		 * keeps its mount and revalidates in the background. Only a lapsed lease
+		 * falls through to `wake`. A hidden page cancels the attempt in flight,
+		 * because no answer can be acted on while `isCurrent` fences it, and
+		 * leaves the lease exactly as it was: `armExpiry` still retires it on the
+		 * server's own deadline whether the page is watching or not.
+		 */
+		const resume = () => {
 			if (stopped || ended) return;
-			const current = lease.current;
-			if (!document.hidden && current && elapsed(current.start) < current.validForMs) {
-				void refresh();
-			} else {
-				wake();
+			if (document.hidden) {
+				cancelRequest();
+				return;
 			}
+			const current = lease.current;
+			if (current && elapsed(current.start) < current.validForMs) void refresh();
+			else wake();
 		};
 		const offline = () => cancelRequest();
 		void refresh();
 		const interval = setInterval(() => void refresh(), POLL_MS);
-		window.addEventListener("focus", focus);
-		window.addEventListener("online", wake);
-		window.addEventListener("pageshow", wake);
+		window.addEventListener("focus", resume);
+		window.addEventListener("online", resume);
+		window.addEventListener("pageshow", resume);
 		window.addEventListener("offline", offline);
-		document.addEventListener("visibilitychange", wake);
+		document.addEventListener("visibilitychange", resume);
 		return () => {
 			stopped = true;
 			revoke();
 			clearTimeout(retryTimer);
 			clearInterval(interval);
-			window.removeEventListener("focus", focus);
-			window.removeEventListener("online", wake);
-			window.removeEventListener("pageshow", wake);
+			window.removeEventListener("focus", resume);
+			window.removeEventListener("online", resume);
+			window.removeEventListener("pageshow", resume);
 			window.removeEventListener("offline", offline);
-			document.removeEventListener("visibilitychange", wake);
+			document.removeEventListener("visibilitychange", resume);
 		};
 	}, [enabled, identity, load]);
 
