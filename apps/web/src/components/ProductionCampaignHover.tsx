@@ -22,6 +22,7 @@ import {
 	loadProductionTouchpointDecision,
 } from "./production-touchpoint-loader";
 import {
+	PRODUCTION_MAX_LEASE_MS,
 	resolveAuthorizationDeadline,
 	type TouchpointLifecycleLoad,
 	useTouchpointLifecycle,
@@ -31,7 +32,6 @@ import { requireCampaignAction } from "./touchpoint-navigation";
 
 const ENTRY_PLACEMENT = "opend.home.hover-entry";
 const LAYER_PLACEMENT = "opend.home.hover-layer";
-const MAX_LEASE_MS = 5 * 60_000;
 const supportedCapabilities = new Set(["hover", "static-action"]);
 type RuntimeDecision = Readonly<{
 	activityId: string;
@@ -61,7 +61,7 @@ function validDecision(
 ): { valid: ValidDecision; validForMs: number } | null {
 	if (!value || typeof value !== "object") return null;
 	const decision = value as RuntimeDecision;
-	const deadline = resolveAuthorizationDeadline(decision, MAX_LEASE_MS);
+	const deadline = resolveAuthorizationDeadline(decision, PRODUCTION_MAX_LEASE_MS);
 	if (
 		!decision.activityId ||
 		!decision.touchpointDecisionId ||

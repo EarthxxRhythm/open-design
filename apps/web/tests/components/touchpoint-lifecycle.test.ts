@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mountTouchpoint, REQUEST_TIMEOUT_MS, resolveAuthorizationDeadline, RETRY_BACKOFF_MS, useTouchpointLifecycle, type TouchpointLifecycleLoad, type TouchpointLifecycleOptions } from "../../src/components/touchpoint-lifecycle";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { mountTouchpoint, PRODUCTION_MAX_LEASE_MS, REQUEST_TIMEOUT_MS, resolveAuthorizationDeadline, RETRY_BACKOFF_MS, useTouchpointLifecycle, type TouchpointLifecycleLoad, type TouchpointLifecycleOptions } from "../../src/components/touchpoint-lifecycle";
 import * as host from "../../src/components/touchpoint-component";
 
 const content: host.WebTouchpointContent = {
@@ -237,6 +239,28 @@ describe("resolveAuthorizationDeadline", () => {
 	it("expires at a valid authorization before the activity end", () => {
 		expect(resolveAuthorizationDeadline({ ...timing, authorizationExpiresAt: "2030-01-01T00:00:30.000Z" }, 60_000, true)).toBe(Date.parse("2030-01-01T00:00:30.000Z"));
 	});
+	// OPEND-3366. Until A3 the server never granted more than a minute, so no
+	// case existed for an authorization longer than the client's own cap — the
+	// cap simply truncated it, silently, back to five minutes.
+	it("keeps a server authorization that outlives the old five-minute client cap", () => {
+		const long = { serverTime: "2030-01-01T00:00:00.000Z", endsAt: "2030-01-01T06:00:00.000Z", authorizationExpiresAt: "2030-01-01T02:00:00.000Z" };
+		expect(resolveAuthorizationDeadline(long, 5 * 60_000)).toBe(Date.parse("2030-01-01T00:05:00.000Z"));
+		expect(resolveAuthorizationDeadline(long, PRODUCTION_MAX_LEASE_MS)).toBe(Date.parse(long.authorizationExpiresAt));
+	});
+	it("never lets an authorization outlive the activity itself", () => {
+		const past = { serverTime: "2030-01-01T00:00:00.000Z", endsAt: "2030-01-01T00:20:00.000Z", authorizationExpiresAt: "2030-01-01T06:00:00.000Z" };
+		expect(resolveAuthorizationDeadline(past, PRODUCTION_MAX_LEASE_MS)).toBe(Date.parse(past.endsAt));
+	});
+	// The cap is one value, in one place, because three copies of it is exactly
+	// how the Badge and the Hover kept a five-minute lease after the Modal was
+	// fixed. Deleting this case means re-opening that door.
+	it("bounds all three production placements with the one shared cap", () => {
+		for (const file of ["ProductionCampaignModal.tsx", "ProductionCampaignBadge.tsx", "ProductionCampaignHover.tsx"]) {
+			const source = readFileSync(resolve(process.cwd(), "src/components", file), "utf8");
+			expect(source, `${file} must not redeclare a local lease cap`).not.toMatch(/const\s+MAX_LEASE_MS\s*=/u);
+			expect(source, `${file} must take the shared cap`).toContain("PRODUCTION_MAX_LEASE_MS");
+		}
+	});
 });
 
 type Content = { text: string };
@@ -308,6 +332,40 @@ describe("shared display lifecycle", () => {
 		expect(result.current.current).toBeNull();
 		expect(result.current.isCurrent(generation)).toBe(false);
 		expect(result.current.status).toBe("active");
+	});
+
+	// OPEND-3366: the whole remaining activity window, not five minutes. Thirty
+	// minutes offline with every single check failing, and the display never
+	// flickers — then it retires exactly on the deadline it was granted.
+	it("displays for a whole thirty-minute authorization while every check fails, then retires on the deadline", async () => {
+		const validForMs = 30 * 60_000;
+		const load = vi.fn<Load>().mockResolvedValueOnce({ kind: "decision", value: first, key: "same", validForMs }).mockRejectedValue(new Error("touchpoint_test_load_failed"));
+		const { result } = renderHook(() => useTouchpointLifecycle({ enabled: true, identity: "production", load }));
+		await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+		const generation = result.current.generation;
+		for (let minute = 5; minute <= 30; minute += 5) {
+			await act(async () => { await vi.advanceTimersByTimeAsync(5 * 60_000 - (minute === 30 ? 1 : 0)); });
+			expect(result.current.current, `must still display at ${minute} minutes`).toBe(first);
+			expect(result.current.generation).toBe(generation);
+		}
+		expect(load.mock.calls.length).toBeGreaterThan(30);
+		await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+		expect(result.current.current).toBeNull();
+		expect(result.current.isCurrent(generation)).toBe(false);
+	});
+
+	// A lease can now outlast the largest delay `setTimeout` can name, where a
+	// single timer would overflow and fire immediately. `armExpiry` segments it;
+	// this pins that on the virtual clock rather than waiting out the segment.
+	it("arms a lease longer than one timer can name in segments", async () => {
+		const MAX_TIMER_MS = 2_147_483_647;
+		const timer = vi.spyOn(globalThis, "setTimeout");
+		const load = vi.fn<Load>().mockResolvedValue({ kind: "decision", value: first, key: "same", validForMs: MAX_TIMER_MS + 60_000 });
+		const { result } = renderHook(() => useTouchpointLifecycle({ enabled: true, identity: "production", load }));
+		await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+		expect(result.current.current).toBe(first);
+		expect(timer.mock.calls.some(([, delay]) => delay === MAX_TIMER_MS)).toBe(true);
+		expect(timer.mock.calls.every(([, delay]) => (delay ?? 0) <= MAX_TIMER_MS)).toBe(true);
 	});
 
 	it("refetches at the start boundary but cannot activate until the server grants authority", async () => {

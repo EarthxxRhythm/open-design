@@ -23,6 +23,7 @@ import {
 	loadProductionTouchpointDecision,
 } from "./production-touchpoint-loader";
 import {
+	PRODUCTION_MAX_LEASE_MS,
 	resolveAuthorizationDeadline,
 	touchpointWithdrawsDisplay,
 	useTouchpointLifecycle,
@@ -36,7 +37,6 @@ import {
 import type { TestCampaignPlacement, TestDecision } from "./TestCampaignModal";
 import styles from "./TestCampaignModal.module.css";
 const PLACEMENT = "opend.home.campaign-modal";
-const MAX_LEASE_MS = 5 * 60_000;
 export const PRODUCTION_ACTION_TELEMETRY_TIMEOUT_MS = 3_000;
 const supportedCapabilities = new Set(["close", "static-action"]);
 
@@ -282,7 +282,7 @@ export function ProductionCampaignModal({
 				return active ? { kind: "retain" } : { kind: "clear" };
 			}
 			const next = loaded.value as Decision;
-			const deadline = resolveAuthorizationDeadline(next, MAX_LEASE_MS);
+			const deadline = resolveAuthorizationDeadline(next, PRODUCTION_MAX_LEASE_MS);
 			const serverTime = Date.parse(next.serverTime);
 			if (!next.activityId || !next.touchpointDecisionId || !next.deploymentId || !next.content?.id || next.placementKey !== PLACEMENT || next.content?.placementKey !== PLACEMENT || deadline === null || !Number.isFinite(serverTime) || !supportsWebTouchpointCapabilities(next.content, next.requiredCapabilities, supportedCapabilities)) {
 				clearOpenPresentation();

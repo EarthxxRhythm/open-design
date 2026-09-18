@@ -69,6 +69,20 @@ export const REQUEST_TIMEOUT_MS = 15_000;
  */
 export const RETRY_BACKOFF_MS = [1_000, 3_000] as const;
 const MAX_TIMER_MS = 2_147_483_647;
+/**
+ * The client's own bound on production display authority, shared by every
+ * production placement so the three of them can never drift apart.
+ *
+ * It is a backstop against a server clock that grants past the activity, not a
+ * policy: `resolveAuthorizationDeadline` already takes the minimum of the
+ * authorization, `endsAt` and this. A five-minute value made it the binding
+ * term instead, so a long authorization was silently truncated to five minutes
+ * and a client that could not reach the server went blank in the middle of an
+ * activity that was still running. At the longest interval a timer can name it
+ * stops binding, and `endsAt` governs, which is what the server means.
+ * `armExpiry` segments the resulting wait, so no single timer overflows.
+ */
+export const PRODUCTION_MAX_LEASE_MS = MAX_TIMER_MS;
 /** Only a failure carrying the server's own withdrawal may end a live lease. */
 export const touchpointWithdrawsDisplay = (error: unknown) =>
 	typeof error === "object" && error !== null && (error as { touchpointWithdrawal?: unknown }).touchpointWithdrawal === true;
