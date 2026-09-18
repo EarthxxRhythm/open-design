@@ -64,3 +64,56 @@ describe('shell card decoding', () => {
     ]);
   });
 });
+
+/**
+ * Markdown classification must be computed over the text that will actually be
+ * RENDERED. A dropped block contributes no characters to the render, so nothing
+ * inside its payload may decide whether a later `<od-card` opener counts as a
+ * quoted example. The view is "retained prose + unprocessed suffix" — neither
+ * the raw input (stale: the payload still votes) nor the suffix alone (lossy:
+ * the prose before the drop stops voting, and both halves render together).
+ */
+describe('shell card decoding · Markdown context around a dropped block', () => {
+  it('does not let a fence hidden in a dropped payload swallow the next valid card', () => {
+    // The payload carries an unclosed fence on its own line. Left in the
+    // classifier's view it marks everything after it as code, so the valid card
+    // below is never decoded and falls out of the tail `appendText` as raw
+    // markup — the exact leak this whole change exists to remove.
+    const malformed = '<od-card type="memory-applied">{"summary":"x",\n```\n"used":[],}</od-card>';
+
+    expect(splitShellCards(`${malformed}\n${card}`, false)).toEqual([
+      { kind: 'text', text: '\n' },
+      { kind: 'card', card: { kind: 'task-brief', ...payload }, raw: card },
+    ]);
+  });
+
+  it('keeps a fenced protocol example quoted before a dropped block as prose', () => {
+    // Reverse anchor: recomputing the context must not start decoding cards the
+    // user only quoted. The fenced example stays raw; the malformed block after
+    // it is still dropped.
+    const quoted = '```html\n<od-card type="task-brief">{"summary":"Doc"}</od-card>\n```\n';
+    const malformed = '<od-card type="memory-applied">{"used":[],}</od-card>';
+
+    expect(splitShellCards(`${quoted}${malformed}\ntail`, false)).toEqual([
+      { kind: 'text', text: `${quoted}\ntail` },
+    ]);
+  });
+
+  it('keeps the retained prose in the view instead of reclassifying the suffix alone', () => {
+    // The prose before the drop does not end in a newline, so the ``` that
+    // follows the dropped block is mid-line and opens nothing. Classify the
+    // suffix on its own and that ``` becomes a line-leading fence that runs to
+    // the end of the buffer, hiding the valid card below it and leaking it as
+    // raw markup. Both halves render as one Markdown string, so both must vote.
+    // (A backtick-free payload here, so only the ``` decides the outcome.)
+    const malformed = '<od-card type="memory-applied">{"used":[],}</od-card>';
+    const plainPayload = { summary: 'Applied palette', used: [{ type: 'rule', name: 'Palette' }] };
+    const plain = `<od-card type="memory-applied">${JSON.stringify(plainPayload)}</od-card>`;
+
+    expect(splitShellCards(`Inline example: ${malformed}\`\`\`\nstill prose\n${plain}`, false))
+      .toEqual([
+        { kind: 'text', text: 'Inline example: ```\nstill prose\n' },
+        { kind: 'card', card: { kind: 'memory-applied', ...plainPayload }, raw: plain },
+      ]);
+  });
+});

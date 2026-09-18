@@ -29,9 +29,21 @@ function markdownCodeRanges(text: string): Range[] {
  * other callers (`chat-protocol-context` Markdown skip-ranges, daemon
  * `memory-verify`) read spans of the ORIGINAL text, and it must keep returning
  * every character it was given.
+ *
+ * Because a dropped block contributes no characters to the render, Markdown
+ * context is classified over `renderedView()` — the prose kept so far in the
+ * current Markdown render plus the not-yet-consumed suffix — rather than over
+ * the raw input. Dropping without that recomputation is a leak: a payload
+ * carrying an unclosed fence would mark everything after it as code, so the next
+ * perfectly valid card is never decoded and falls out of the tail `appendText`
+ * as raw markup. The suffix alone is equally wrong in the other direction — a
+ * dropped block does not split the render, both halves are handed to Markdown as
+ * one string, so prose before the drop must keep its say over what follows.
  */
 export function splitShellCards(text: string, live: boolean): OdCardSegment[] {
-  let markdownStart = 0;
+  // Prose retained since the current Markdown render began, up to `cursor`.
+  // A parsed card ends a render and clears it; a dropped block does not.
+  let renderedPrefix = '';
   let codeRanges = markdownCodeRanges(text);
   const result: OdCardSegment[] = [];
   const open = /<od-card(?=\s|>)[^>]*>/gi;
@@ -45,8 +57,18 @@ export function splitShellCards(text: string, live: boolean): OdCardSegment[] {
     else result.push({ kind: 'text', text: value });
   }
 
+  /** The Markdown string positions in `codeRanges` are measured against. */
+  function renderedView(): string {
+    return renderedPrefix + text.slice(cursor);
+  }
+
+  /** Map an index into `text` at or after `cursor` onto `renderedView()`. */
+  function viewIndex(position: number): number {
+    return renderedPrefix.length + position - cursor;
+  }
+
   while ((match = open.exec(text))) {
-    if (rangeContains(codeRanges, match.index - markdownStart)) continue;
+    if (rangeContains(codeRanges, viewIndex(match.index))) continue;
     const close = /<\/od-card>/gi;
     close.lastIndex = open.lastIndex;
     const end = close.exec(text);
@@ -57,7 +79,8 @@ export function splitShellCards(text: string, live: boolean): OdCardSegment[] {
       }
       break;
     }
-    appendText(text.slice(cursor, match.index));
+    const retained = text.slice(cursor, match.index);
+    appendText(retained);
     const raw = text.slice(match.index, close.lastIndex);
     // Only the opening marker is classified by Markdown context. A real card's
     // JSON can itself quote markup/backticks; its payload must remain opaque.
@@ -74,16 +97,19 @@ export function splitShellCards(text: string, live: boolean): OdCardSegment[] {
     cursor = close.lastIndex;
     open.lastIndex = cursor;
     if (parsed) {
-      // Cards separate Markdown renders. Their JSON must not open a code span
-      // in the following prose; a dropped block leaves the surrounding prose as
-      // one Markdown render, so its context is deliberately left untouched.
-      markdownStart = cursor;
-      codeRanges = markdownCodeRanges(text.slice(markdownStart));
+      // A rendered card ends the Markdown render, so nothing before it can open
+      // a code span in the prose that follows.
+      renderedPrefix = '';
+    } else {
+      // A dropped block is a hole in one continuous render: the prose on both
+      // sides still renders together, and the payload gets no vote at all.
+      renderedPrefix += retained;
     }
+    codeRanges = markdownCodeRanges(renderedView());
   }
   if (live) {
     const candidateStart = text.lastIndexOf('<');
-    if (candidateStart >= cursor && !rangeContains(codeRanges, candidateStart - markdownStart)) {
+    if (candidateStart >= cursor && !rangeContains(codeRanges, viewIndex(candidateStart))) {
       const candidate = text.slice(candidateStart).toLowerCase();
       const opener = '<od-card';
       const partialName = candidate.startsWith('<od-') && opener.startsWith(candidate);

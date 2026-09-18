@@ -251,6 +251,29 @@ describe('OPEND-2745 ② 解析失败的卡不得当成用户正文', () => {
         .not.toContain('<od-card');
     });
   }
+
+  /**
+   * 丢掉一张卡**不能**顺手把它后面那张好卡顶成原文。
+   *
+   * 畸形载荷里藏一个独占一行、没闭合的 ``` 围栏:只要 markdown 上下文还是按**含
+   * 被丢弃载荷的原文**算的,这个围栏就把它之后的一切标成代码 —— 后面那张完全合法
+   * 的卡因此不会被解码,最后从兜底的 `appendText` 里原样吐给用户。
+   *
+   * 即:一个本来为了消灭标签泄漏的改动,自己开了一条新的泄漏路径。
+   */
+  it('畸形载荷里的围栏不得把它后面的合法卡顶成原文', () => {
+    const malformedWithFence =
+      '<od-card type="memory-applied">{"summary":"坏掉的那张",\n```\n"used":[],}</od-card>';
+    const text = renderAssistantProse(`${malformedWithFence}\n\n${VALID_CARD}`);
+
+    expect(
+      document.querySelector('[data-od-card="memory-applied"]'),
+      '畸形卡后面那张合法卡没渲染成卡 —— 被丢弃载荷里的围栏把它标成代码了',
+    ).not.toBeNull();
+    expect(text, '合法卡的标签原文被兜底路径原样吐出来了 —— 修复自己开了新的泄漏口')
+      .not.toContain('<od-card');
+    expect(text, '夹具坏了 —— 合法卡的正文没上屏').toContain('已记住 1 条偏好');
+  });
 });
 
 /**
