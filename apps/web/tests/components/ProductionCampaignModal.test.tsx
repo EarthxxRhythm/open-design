@@ -1454,6 +1454,48 @@ describe("ProductionCampaignModal device impressions", () => {
 		await act(async () => {});
 		expect(screen.queryByRole("dialog")).toBeNull();
 	});
+	it("keeps the displayed campaign on screen when a poll fails and its retry recovers", async () => {
+		// A transport failure is not a withdrawal: the lifecycle keeps the lease
+		// and retries inside the same cycle. The presentation has to survive with
+		// it, or the recovering poll reads the device impression and closes the
+		// activity that never left the screen.
+		vi.useFakeTimers({
+			toFake: [
+				"Date",
+				"performance",
+				"setTimeout",
+				"clearTimeout",
+				"setInterval",
+				"clearInterval",
+			],
+		});
+		vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+		let calls = 0;
+		const fetchMock = vi.fn(async () => {
+			calls += 1;
+			if (calls === 2) throw new TypeError("Failed to fetch");
+			return new Response(JSON.stringify(decision()), { status: 200 });
+		});
+		vi.stubGlobal("fetch", fetchMock);
+		render(<ProductionCampaignModal authenticated sessionSubject="user-a" />);
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(10);
+		});
+		expect(document.querySelector("opend-touchpoint")).not.toBeNull();
+		// Fake timers do not drive jsdom's animation frames, so record the
+		// impression the paint would have recorded.
+		localStorage.setItem(marker(), "1");
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(30_000);
+		});
+		expect(document.querySelector("opend-touchpoint")).not.toBeNull();
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(1_500);
+		});
+		expect(calls).toBeGreaterThanOrEqual(3);
+		expect(document.querySelector("opend-touchpoint")).not.toBeNull();
+		expect(screen.queryByRole("dialog")).not.toBeNull();
+	});
 	it("keeps the existing badge and its manual static action usable after automatic suppression", async () => {
 		localStorage.setItem(marker(), "1");
 		const placementKey = "opend.home.account-badge";

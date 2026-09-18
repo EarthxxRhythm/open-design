@@ -24,6 +24,7 @@ import {
 } from "./production-touchpoint-loader";
 import {
 	resolveAuthorizationDeadline,
+	touchpointWithdrawsDisplay,
 	useTouchpointLifecycle,
 	type TouchpointLifecycleLoad,
 } from "./touchpoint-lifecycle";
@@ -323,7 +324,12 @@ export function ProductionCampaignModal({
 		[clearOpenPresentation, locale, sessionSubject],
 	);
 	const onError = useCallback((error: unknown) => {
-		clearOpenPresentation();
+		// The lifecycle keeps display authority through a transport failure and
+		// ends it only for the server's own withdrawal; the presentation on screen
+		// has to follow the same rule. Releasing it on every error told the
+		// impression gate the modal was gone while it was still mounted, so the
+		// recovering poll suppressed the activity it was still showing.
+		if (touchpointWithdrawsDisplay(error)) clearOpenPresentation();
 		const diagnostic = emitProductionTouchpointLoadDiagnostic(error);
 		if (diagnostic) emitWebTouchpointDiagnostic(diagnostic);
 	}, [clearOpenPresentation]);
