@@ -45,17 +45,13 @@ export function TemplatePicker({
   useEffect(() => { setOpen(false); }, [activeChipId]);
   const active = templates.find((chip) => chip.id === activeChipId) ?? null;
 
-  // Nothing picked → no pill. The type row under the composer owns the empty
-  // state, so a composer nobody has touched carries no type chrome at all.
-  if (!active) return null;
-
-  const valueLabel = labelFor(active.id);
+  const valueLabel = active ? labelFor(active.id) : t('homeHero.templatePicker.label');
 
   return (
     <div
       ref={rootRef}
-      className={`home-hero__footer-option home-hero__footer-option--select home-hero__template-option has-selection ${styles.picker}${open ? ' is-open' : ''}`}
-      data-type={active.id}
+      className={`home-hero__footer-option home-hero__footer-option--select home-hero__template-option${active ? ' has-selection' : ''} ${styles.picker}${open ? ' is-open' : ''}`}
+      data-type={active?.id}
       data-field-name="template"
       data-testid="home-hero-template-picker"
     >
@@ -64,9 +60,9 @@ export function TemplatePicker({
         data-testid="home-hero-template-trigger"
         title={t('homeHero.templatePicker.label')}
       >
-        <span className="home-hero__footer-option-icon home-hero__footer-option-icon--compact" aria-hidden="true">
+        {active ? <span className="home-hero__footer-option-icon home-hero__footer-option-icon--compact" aria-hidden="true">
           <Icon name={active.icon} size={16} className="home-hero__template-icon-glyph" />
-        </span>
+        </span> : null}
         <button type="button" ref={triggerRef} className={styles.switcher}
           aria-label={t('homeHero.templatePicker.label')} aria-haspopup="listbox"
           aria-expanded={open} aria-controls={open ? menuId : undefined} disabled={disabled}

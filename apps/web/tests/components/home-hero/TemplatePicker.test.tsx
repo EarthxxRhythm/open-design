@@ -52,15 +52,14 @@ describe('TemplatePicker', () => {
 
   });
 
-  it('renders nothing at all with no template picked', () => {
-    // The pill IS the committed value. An empty placeholder in the card would
-    // name a field that is answered by the type row below it.
+  it('offers the dropdown before a type is selected', () => {
     render(
       <TemplatePicker templates={templates} activeChipId={null} labelFor={labelFor} />,
     );
 
-    expect(screen.queryByTestId('home-hero-template-picker')).toBeNull();
-    expect(screen.queryByTestId('home-hero-template-trigger')).toBeNull();
+    fireEvent.click(screen.getByTestId('home-hero-template-trigger').querySelector('button')!);
+    expect(screen.getAllByRole('option')).toHaveLength(templates.length);
+    expect(screen.getAllByRole('option').every((option) => option.getAttribute('aria-selected') === 'false')).toBe(true);
   });
 
   it('keeps the leading icon without a clear control', () => {
