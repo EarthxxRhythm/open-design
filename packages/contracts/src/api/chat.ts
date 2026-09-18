@@ -1219,27 +1219,11 @@ export type PersistedAgentEvent =
        *  projection can read a truncation as incomplete after reload (#1247). */
       stopReason?: string;
     }
-<<<<<<< HEAD
-  | { kind: 'raw'; line: string };
-=======
-  // Per-request token usage for one model request (assistant `message`),
-  // keyed by `requestId` (provider `msg_…` id). Persisted alongside the
-  // run-level `usage` record so request-level cost/percentile analysis has a
-  // durable source; the per-request token sum reconciles with `usage`.
-  | {
-      kind: 'request_usage';
-      requestId: string;
-      inputTokens?: number;
-      outputTokens?: number;
-      cacheCreationInputTokens?: number;
-      cacheReadInputTokens?: number;
-    }
   /**
    * A stdout line the agent's parser did not recognise. Nothing renders it; it
    * is kept as a bounded breadcrumb (`truncated` says when it was shortened).
    */
   | { kind: 'raw'; line: string; truncated?: AgentEventPayloadTruncation };
->>>>>>> 792480fe21 (fix(daemon): bound stored run events and keep crashed runs from acting on truncated prompts (#8170))
 
 /**
  * What a chat card DRAWS.

@@ -14339,19 +14339,6 @@ export async function startServer({
       }
       lifecycle.mark('launch_preflight_end');
       lifecycle.mark('process_spawn_start');
-<<<<<<< HEAD
-      child = spawn(invocation.command, invocation.args, {
-=======
-      if (isIntentResolution) {
-        if (run.cancelRequested || design.runs.isTerminal(run.status)) {
-          cleanupPromptFile();
-          revokeToolToken('child_exit');
-          unregisterChatAgentEventSink();
-          cleanupOdNextRunInputProjection();
-          return;
-        }
-        startIntentResolution(db, strategyTaskAtStart.taskExecutionId, run.id);
-      }
       // A plain-text stdin prompt is handed over as a complete file at spawn;
       // framed stdin protocols (stream-json, JSON-RPC) keep the pipe. The
       // agent stays on record until its process group is gone, so a daemon
@@ -14359,7 +14346,6 @@ export async function startServer({
       const spawnedAgent = spawnAgentProcess({
         command: invocation.command,
         args: invocation.args,
->>>>>>> 792480fe21 (fix(daemon): bound stored run events and keep crashed runs from acting on truncated prompts (#8170))
         env,
         cwd: effectiveCwd,
         windowsVerbatimArguments: invocation.windowsVerbatimArguments,
