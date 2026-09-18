@@ -300,14 +300,24 @@ export function ProductionCampaignModal({
 				(presentation.sessionSubject !== sessionSubject || presentation.deadline <= Date.now())
 			)
 				clearOpenPresentation();
-			// Only this mounted activity may cross a locale transition. A stored impression
-			// never overrides a fresh authorization, expiry, revocation, or account fence.
+			// Only the presentation still on screen may cross a locale transition or a
+			// lease renewal. `active` is not that test: a lease revoked by the page
+			// fence stays behind as the revalidation subject, so keying the exemption
+			// on its activity let every wake re-offer an activity this device had
+			// already been shown. A stored impression never overrides a fresh
+			// authorization, expiry, revocation, or account fence.
 			const continuesOpenPresentation =
 				openPresentation.current === presentation &&
 				presentation?.sessionSubject === sessionSubject &&
 				presentation.activityId === next.activityId &&
 				presentation.deadline > Date.now();
-			if (!continuesOpenPresentation && active?.activityId !== next.activityId && wasDisplayed(sessionSubject, next.activityId)) return { kind: "retain" };
+			// A recorded activity that is not the open presentation may not be
+			// published. Retaining is only for an offer arriving BESIDE a live
+			// presentation, which keeps its mount; with nothing on screen a retain
+			// would republish the very lease the page fence just withdrew, so the
+			// suppressed offer has to clear instead.
+			if (!continuesOpenPresentation && wasDisplayed(sessionSubject, next.activityId))
+				return openPresentation.current ? { kind: "retain" } : { kind: "clear" };
 			return { kind: "decision", value: { ...next, sessionSubject }, key: next.touchpointDecisionId + ":" + next.deploymentId + ":" + next.activityId + ":" + next.content.id, validForMs: deadline - serverTime };
 		},
 		[clearOpenPresentation, locale, sessionSubject],
@@ -327,6 +337,19 @@ export function ProductionCampaignModal({
 		if (!authenticated || !sessionSubject || openPresentation.current?.sessionSubject !== sessionSubject)
 			clearOpenPresentation();
 	}, [authenticated, clearOpenPresentation, sessionSubject]);
+	/**
+	 * A hidden page (screen sleep, an occluded window) withdraws the lease and
+	 * takes this modal down with it. That presentation is over, so it may not
+	 * continue into the refresh that follows on wake: the device impression
+	 * decides that new offer like any other.
+	 */
+	useEffect(() => {
+		const fence = () => {
+			if (document.hidden) clearOpenPresentation();
+		};
+		document.addEventListener("visibilitychange", fence);
+		return () => document.removeEventListener("visibilitychange", fence);
+	}, [clearOpenPresentation]);
 	useEffect(() => {
 		ensureWebTouchpointElement();
 	}, []);

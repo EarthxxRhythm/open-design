@@ -1432,6 +1432,28 @@ describe("ProductionCampaignModal device impressions", () => {
 		await screen.findByRole("dialog");
 		await waitFor(() => expect(localStorage.getItem(marker())).toBe("1"));
 	});
+	it("does not re-present a displayed campaign after the page is hidden and shown again", async () => {
+		// Screen sleep hides the page, which withdraws the lease and takes the
+		// modal down. Waking is a NEW presentation, not a renewal: the recorded
+		// impression has to close it even though the server still offers the
+		// same activity.
+		let hidden = false;
+		vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
+		render(<ProductionCampaignModal authenticated sessionSubject="user-a" />);
+		await screen.findByRole("dialog");
+		await waitFor(() => expect(localStorage.getItem(marker())).toBe("1"));
+		hidden = true;
+		await act(async () => {
+			fireEvent(document, new Event("visibilitychange"));
+		});
+		expect(screen.queryByRole("dialog")).toBeNull();
+		hidden = false;
+		await act(async () => {
+			fireEvent(document, new Event("visibilitychange"));
+		});
+		await act(async () => {});
+		expect(screen.queryByRole("dialog")).toBeNull();
+	});
 	it("keeps the existing badge and its manual static action usable after automatic suppression", async () => {
 		localStorage.setItem(marker(), "1");
 		const placementKey = "opend.home.account-badge";
