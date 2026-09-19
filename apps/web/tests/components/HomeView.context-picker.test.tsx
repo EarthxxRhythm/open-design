@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { useEffect } from 'react';
 import { pickHomeTemplate } from '../helpers/home-template-picker';
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -37,6 +38,21 @@ let workspaceContextState: {
 
 vi.mock('../../src/components/home-hero/PlaceholderCarousel', () => ({
   PlaceholderCarousel: () => null,
+}));
+
+// Team plugin projections load after stream activation. This suite exercises
+// context serialization; supply the same readiness signal as a live workspace.
+vi.mock('../../src/collab/workspace-events', () => ({
+  useWorkspaceInvalidation: (
+    _handlers: unknown,
+    options?: { onActive?: () => void; enabled?: boolean; workspaceContext?: WorkspaceCollabContext | null },
+  ) => {
+    const identity = options?.workspaceContext?.workspaceId;
+    useEffect(() => {
+      if (options?.enabled && identity) options.onActive?.();
+    }, [identity, options?.enabled]);
+    return { connected: false };
+  },
 }));
 
 vi.mock('../../src/collab/useWorkspaceContext', async (importOriginal) => {
@@ -153,6 +169,8 @@ afterEach(() => {
   workspaceContextState = { context: workspaceA, loading: false };
   cleanup();
   vi.unstubAllGlobals();
+  window.localStorage.clear();
+  window.sessionStorage.clear();
 });
 
 // #5517 removed the inline template rail from Home; scenario templates are
@@ -216,6 +234,7 @@ describe('HomeView context picker', () => {
         onOpenProject={() => undefined}
       />,
     );
+    await waitFor(() => expect((screen.getByTestId('home-hero-submit') as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByTestId('home-hero-submit'));
 
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
@@ -283,6 +302,7 @@ describe('HomeView context picker', () => {
     });
 
     await waitFor(() => expect(screen.getByText('brief.pdf')).toBeTruthy());
+    await waitFor(() => expect((screen.getByTestId('home-hero-submit') as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByTestId('home-hero-submit'));
 
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
@@ -455,6 +475,7 @@ describe('HomeView context picker', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/apply'))).toBe(false);
     expect(homeHeroPromptText()).not.toContain('Hydrated query');
 
+    await waitFor(() => expect((screen.getByTestId('home-hero-submit') as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByTestId('home-hero-submit'));
 
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
@@ -509,6 +530,7 @@ describe('HomeView context picker', () => {
       expect(screen.getByTestId('home-hero-active-skill')).toBeTruthy();
     });
 
+    await waitFor(() => expect((screen.getByTestId('home-hero-submit') as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByTestId('home-hero-submit'));
 
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
@@ -573,6 +595,7 @@ describe('HomeView context picker', () => {
     // task-type Skill in the prompt.
     expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Prototype');
 
+    await waitFor(() => expect((screen.getByTestId('home-hero-submit') as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByTestId('home-hero-submit'));
 
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
@@ -635,6 +658,7 @@ describe('HomeView context picker', () => {
 
     setHomeHeroPrompt('Build a pricing-page prototype.');
     await settle();
+    await waitFor(() => expect((screen.getByTestId('home-hero-submit') as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByTestId('home-hero-submit'));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
@@ -699,6 +723,7 @@ describe('HomeView context picker', () => {
       expect(homeHeroPromptText().trim()).toBe('@Linear @Slack');
     });
 
+    await waitFor(() => expect((screen.getByTestId('home-hero-submit') as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByTestId('home-hero-submit'));
 
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
@@ -811,6 +836,7 @@ describe('HomeView context picker', () => {
     // A reference on its own is not a request; type first, then submit.
     setHomeHeroPrompt('Describe this');
     await settle();
+    await waitFor(() => expect((screen.getByTestId('home-hero-submit') as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByTestId('home-hero-submit'));
 
     await waitFor(() => {
@@ -914,6 +940,7 @@ describe('HomeView context picker', () => {
     await settle();
 
     expect(screen.getByTestId('working-dir-trigger').textContent).toContain('Reference A');
+    await waitFor(() => expect((screen.getByTestId('home-hero-submit') as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByTestId('home-hero-submit'));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
@@ -980,6 +1007,7 @@ describe('HomeView context picker', () => {
     setHomeHeroPrompt('Summarize @Slack, then draft follow-ups');
     await settle();
 
+    await waitFor(() => expect((screen.getByTestId('home-hero-submit') as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByTestId('home-hero-submit'));
 
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
