@@ -24,6 +24,7 @@ import {
 import {
 	PRODUCTION_MAX_LEASE_MS,
 	resolveAuthorizationDeadline,
+	touchpointContentIdentity,
 	type TouchpointLifecycleLoad,
 	useTouchpointLifecycle,
 } from "./touchpoint-lifecycle";
@@ -193,7 +194,15 @@ export function ProductionCampaignHover({
 			return {
 				kind: "decision",
 				value: { entry: entry.valid, layer: layer.valid, sessionSubject },
-				key: `${entry.valid.decision.activityId}:${entry.valid.decision.deploymentId}:${entry.valid.decision.content.id}:${entry.valid.decision.touchpointDecisionId}:${layer.valid.decision.touchpointDecisionId}`,
+				// The pair is refused above unless both halves agree on activity and
+				// deployment, so one `touchpointContentIdentity` covers those for
+				// both. The layer's own content version is NOT implied by the
+				// entry's — whether a deployment always hands both placements the
+				// same `content.id` is a server-side property this side cannot
+				// check — and it was previously tracked only by accident, through
+				// the layer's credential. Name it, so a layer swapped underneath
+				// the pair still rebuilds.
+				key: `${touchpointContentIdentity(entry.valid.decision)}:${layer.valid.decision.content.id}`,
 				validForMs: Math.min(entry.validForMs, layer.validForMs),
 			};
 		},

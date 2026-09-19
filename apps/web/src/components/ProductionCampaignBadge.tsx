@@ -17,7 +17,7 @@ import {
 } from "./touchpoint-static-actions";
 import { dispatchProductionCampaignAction } from "./ProductionCampaignModal";
 import { emitProductionTouchpointLoadDiagnostic, loadProductionTouchpointDecision } from "./production-touchpoint-loader";
-import { PRODUCTION_MAX_LEASE_MS, resolveAuthorizationDeadline, type TouchpointLifecycleLoad, useTouchpointLifecycle } from "./touchpoint-lifecycle";
+import { PRODUCTION_MAX_LEASE_MS, resolveAuthorizationDeadline, touchpointContentIdentity, type TouchpointLifecycleLoad, useTouchpointLifecycle } from "./touchpoint-lifecycle";
 import {
 	TestTouchpointMount,
 	recordVisibleTestTouchpoint,
@@ -83,7 +83,7 @@ export function ProductionCampaignBadge({
 			emitWebTouchpointDiagnostic({ code: "touchpoint_capability_unsupported", detail: next.requiredCapabilities?.join(",") });
 			return { kind: "clear" };
 		}
-		return { kind: "decision", value: { ...next, sessionSubject }, key: `${next.activityId}:${next.deploymentId}:${next.touchpointDecisionId}:${next.content.id}`, validForMs: deadline - Date.parse(next.serverTime) };
+		return { kind: "decision", value: { ...next, sessionSubject }, key: touchpointContentIdentity(next), validForMs: deadline - Date.parse(next.serverTime) };
 	}, [locale, sessionSubject]);
 	const onError = useCallback((error: unknown) => {
 		const diagnostic = emitProductionTouchpointLoadDiagnostic(error);

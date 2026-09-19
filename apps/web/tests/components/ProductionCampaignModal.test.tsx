@@ -763,12 +763,13 @@ describe("Production campaign live refresh", () => {
 		expect(OpenDesignTouchpointElement.prototype.mount).toHaveBeenCalledTimes(1);
 	});
 
-	// OPEND-3369 at the seam that decides whether a rotating decision id costs
-	// anything. The lease key the Modal builds is
+	// OPEND-3369 measured this; OPEND-3374 reversed it. **Deliberate contract
+	// change.** The Modal's key was
 	// `touchpointDecisionId:deploymentId:activityId:content.id`, so an id that
-	// changes every poll changes the key, bumps `generation`, and rebuilds the
-	// host — the same activity, torn down and re-mounted 120 times an hour.
-	it("rebuilds the mounted host on every poll when only the decision id changes", async () => {
+	// rotated every poll rebuilt the host 120 times an hour. The key is now
+	// content identity alone, so the same hour of rotating credentials costs
+	// nothing: one host, one mount.
+	it("keeps one mounted host for a whole hour of rotating decision ids", async () => {
 		const POLLS = 120; // one hour at the 30s interval
 		let issued = 0;
 		const rotating = vi.fn(async () => {
@@ -789,13 +790,14 @@ describe("Production campaign live refresh", () => {
 			hosts.add(document.querySelector("opend-touchpoint") as Element);
 		}
 		expect(rotating).toHaveBeenCalledTimes(POLLS + 1);
-		// A distinct host element per poll, and one mount call for each of them.
-		expect(hosts.size).toBe(POLLS + 1);
-		expect(OpenDesignTouchpointElement.prototype.mount).toHaveBeenCalledTimes(POLLS + 1);
+		// One host element for the whole hour, mounted once.
+		expect(hosts.size).toBe(1);
+		expect(OpenDesignTouchpointElement.prototype.mount).toHaveBeenCalledTimes(1);
 	});
 
-	// The control, and the shape a stable id gives: the same hour of polling
-	// keeps one host and mounts it once.
+	// The control it used to need: with a stable id the answer was already one
+	// host and one mount, and it still is. The two cases now agree, which is the
+	// point — the credential has stopped being able to change the answer.
 	it("keeps one mounted host for a whole hour when the decision id is stable", async () => {
 		const POLLS = 120;
 		available = true;
@@ -807,6 +809,248 @@ describe("Production campaign live refresh", () => {
 		expect(fetchMock).toHaveBeenCalledTimes(POLLS + 1);
 		expect(document.querySelector("opend-touchpoint")).toBe(host);
 		expect(OpenDesignTouchpointElement.prototype.mount).toHaveBeenCalledTimes(1);
+	});
+
+	// OPEND-3374, the core case. The server credential row lives 60s and the
+	// client polls every 30s, so missing two polls — a Wi-Fi switch, a tunnel, a
+	// closed lid — expires it. On recovery the server INSERTs a new row and
+	// issues a NEW `touchpointDecisionId`, everything else identical. While the
+	// id was part of the lease key that was a changed key, so the campaign was
+	// torn down and rebuilt: shadow DOM, Blob URLs, entry animation, scroll lock.
+	// After OPEND-3369 it was the ONLY thing that still caused a remount, which
+	// moved the flicker from "every 30s for everyone" to "whenever the network
+	// wobbles" — the same users the P1 was about.
+	it("REGRESSION: a network outage that outlives the server credential does not remount the campaign", async () => {
+		const longLived = (overrides: Record<string, unknown> = {}) => {
+			const now = Date.now();
+			return decision({
+				authorizationExpiresAt: new Date(now + 30 * 60_000).toISOString(),
+				endsAt: new Date(now + 40 * 60_000).toISOString(),
+				...overrides,
+			});
+		};
+		let online = true;
+		let decisionId = "decision-1";
+		const requests: string[] = [];
+		const staged = vi.fn(async (input: RequestInfo | URL) => {
+			requests.push(String(input));
+			if (!online) throw new TypeError("Failed to fetch");
+			return new Response(
+				JSON.stringify(longLived({ touchpointDecisionId: decisionId })),
+				{ status: 200 },
+			);
+		});
+		vi.stubGlobal("fetch", staged);
+		await open();
+		await tick(16);
+		const dialog = screen.getByRole("dialog");
+		const host = document.querySelector("opend-touchpoint");
+		expect(host).not.toBeNull();
+		expect(OpenDesignTouchpointElement.prototype.mount).toHaveBeenCalledTimes(1);
+
+		// Three polls' worth of outage: past the 60s credential TTL, well inside
+		// the authorization the server granted.
+		online = false;
+		await tick(90_000);
+		expect(screen.getByRole("dialog")).toBe(dialog);
+		expect(document.querySelector("opend-touchpoint")).toBe(host);
+
+		// Recovery. Same activity, same deployment, same content — new credential.
+		online = true;
+		decisionId = "decision-2";
+		requests.length = 0;
+		await tick(30_000);
+		expect(requests.length).toBeGreaterThan(0);
+		// The client still identifies itself with the credential it is holding,
+		// which by now the server has expired (OPEND-3372 keeps it answerable).
+		expect(requests[0]).toContain("activeDecisionId=decision-1");
+		expect(screen.getByRole("dialog")).toBe(dialog);
+		expect(document.querySelector("opend-touchpoint")).toBe(host);
+		// One mount for the whole episode: no rebuilt shadow DOM, no replayed
+		// entry animation, no scroll lock released and re-taken.
+		expect(OpenDesignTouchpointElement.prototype.mount).toHaveBeenCalledTimes(1);
+		expect(document.body.style.overflow).toBe("hidden");
+	});
+
+	// The other half of OPEND-3372's premise: the client now holds a credential
+	// the server has long since expired, and still has to be able to be told the
+	// activity was withdrawn. The receipt comparison is four fields, and the one
+	// the client offers is the stale id.
+	it("still clears on a 410 whose receipt echoes the stale decision id the client kept", async () => {
+		const longLived = (overrides: Record<string, unknown> = {}) => {
+			const now = Date.now();
+			return decision({
+				authorizationExpiresAt: new Date(now + 30 * 60_000).toISOString(),
+				endsAt: new Date(now + 40 * 60_000).toISOString(),
+				...overrides,
+			});
+		};
+		const original = longLived({ touchpointDecisionId: "decision-1" });
+		let call = 0;
+		const staged = vi.fn(async () => {
+			call += 1;
+			if (call === 1) return new Response(JSON.stringify(original), { status: 200 });
+			if (call === 2)
+				return new Response(
+					JSON.stringify(longLived({ touchpointDecisionId: "decision-2" })),
+					{ status: 200 },
+				);
+			return new Response(
+				JSON.stringify({
+					error: "production_runtime_revoked",
+					receipt: {
+						touchpointDecisionId: "decision-1",
+						deploymentId: original.deploymentId,
+						activityId: original.activityId,
+						contentVersionId: original.content.id,
+					},
+				}),
+				{ status: 410 },
+			);
+		});
+		vi.stubGlobal("fetch", staged);
+		await open();
+		await tick(16);
+		await tick(30_000);
+		expect(screen.getByRole("dialog")).toBeTruthy();
+		await tick(30_000);
+		await tick(16);
+		expect(staged.mock.calls.length).toBeGreaterThanOrEqual(3);
+		expect(screen.queryByRole("dialog")).toBeNull();
+	});
+
+	// OPEND-3364's premise, stated as an assertion rather than an assumption: a
+	// click after the credential rotated reports the id the client is holding,
+	// which is the stale one. Settlement has to be bound to the deployment
+	// window, not to that credential's own sixty seconds.
+	it("reports the stale decision id on a click after the credential rotated", async () => {
+		const longLived = (overrides: Record<string, unknown> = {}) => {
+			const now = Date.now();
+			return decision({
+				authorizationExpiresAt: new Date(now + 30 * 60_000).toISOString(),
+				endsAt: new Date(now + 40 * 60_000).toISOString(),
+				...overrides,
+			});
+		};
+		let dispatchAction: ((actionId: string) => Promise<void>) | undefined;
+		vi
+			.spyOn(OpenDesignTouchpointElement.prototype, "mount")
+			.mockImplementation(async function (
+				this: OpenDesignTouchpointElement,
+				_entry,
+				_digest,
+				_context,
+				_urls,
+				_actions,
+				options,
+			) {
+				dispatchAction = options?.dispatchAction;
+				this.shadowRoot?.replaceChildren(
+					document.createTextNode("Verified campaign"),
+				);
+			});
+		Object.defineProperty(navigator, "userActivation", {
+			configurable: true,
+			value: { isActive: true },
+		});
+		let decisionId = "decision-1";
+		const posted: unknown[] = [];
+		const staged = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+			if (init?.method === "POST") {
+				posted.push(JSON.parse(String(init.body)));
+				return new Response(JSON.stringify({ ok: true }), { status: 200 });
+			}
+			return new Response(
+				JSON.stringify(longLived({ touchpointDecisionId: decisionId })),
+				{ status: 200 },
+			);
+		});
+		vi.stubGlobal("fetch", staged);
+		await open();
+		await tick(16);
+		decisionId = "decision-2";
+		await tick(30_000);
+		await act(async () => {
+			await dispatchAction?.("learn");
+		});
+		expect(posted).toHaveLength(1);
+		expect(posted[0]).toMatchObject({ touchpointDecisionId: "decision-1" });
+	});
+
+	it.each([
+		["the content version changes", { content: { ...content, id: "version-2" } }],
+		["the deployment changes", { deploymentId: "deployment-2" }],
+		["the activity changes", { activityId: "campaign-2" }],
+	])("still rebuilds the host when %s", async (_label, overrides) => {
+		const longLived = (extra: Record<string, unknown> = {}) => {
+			const now = Date.now();
+			return decision({
+				authorizationExpiresAt: new Date(now + 30 * 60_000).toISOString(),
+				endsAt: new Date(now + 40 * 60_000).toISOString(),
+				...extra,
+			});
+		};
+		let next: Record<string, unknown> = {};
+		const staged = vi.fn(
+			async () => new Response(JSON.stringify(longLived(next)), { status: 200 }),
+		);
+		vi.stubGlobal("fetch", staged);
+		await open();
+		await tick(16);
+		const host = document.querySelector("opend-touchpoint");
+		expect(host).not.toBeNull();
+		next = overrides;
+		await tick(30_000);
+		await tick(16);
+		expect(document.querySelector("opend-touchpoint")).not.toBe(host);
+		expect(OpenDesignTouchpointElement.prototype.mount).toHaveBeenCalledTimes(2);
+	});
+
+	// Keeping the previous decision OBJECT when the key matches must never mean
+	// keeping the previous deadline: `validForMs` always comes from the new
+	// result, so an activity cut short still ends on time.
+	it("honours an authorization the server shortens even though the decision object is kept", async () => {
+		let call = 0;
+		const staged = vi.fn(async () => {
+			call += 1;
+			const now = Date.now();
+			if (call === 1)
+				return new Response(
+					JSON.stringify(
+						decision({
+							touchpointDecisionId: "decision-1",
+							authorizationExpiresAt: new Date(now + 30 * 60_000).toISOString(),
+							endsAt: new Date(now + 40 * 60_000).toISOString(),
+						}),
+					),
+					{ status: 200 },
+				);
+			if (call === 2)
+				return new Response(
+					JSON.stringify(
+						decision({
+							touchpointDecisionId: "decision-2",
+							authorizationExpiresAt: new Date(now + 45_000).toISOString(),
+							endsAt: new Date(now + 45_000).toISOString(),
+						}),
+					),
+					{ status: 200 },
+				);
+			throw new TypeError("Failed to fetch");
+		});
+		vi.stubGlobal("fetch", staged);
+		await open();
+		await tick(16);
+		const host = document.querySelector("opend-touchpoint");
+		await tick(30_000);
+		// Same key, so the host survives...
+		expect(document.querySelector("opend-touchpoint")).toBe(host);
+		await tick(44_000);
+		expect(screen.getByRole("dialog")).toBeTruthy();
+		// ...but the shortened authorization still retires it on the new deadline.
+		await tick(1_500);
+		await tick(16);
+		expect(screen.queryByRole("dialog")).toBeNull();
 	});
 
 	it("does not poll signed-out users and removes timers and wake listeners on cleanup", async () => {

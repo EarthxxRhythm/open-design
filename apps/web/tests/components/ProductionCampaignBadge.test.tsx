@@ -142,6 +142,64 @@ describe("ProductionCampaignBadge", () => {
     expect(openExternalUrlMock).toHaveBeenCalledWith("https://example.com");
   });
 
+  // OPEND-3374 at the badge. Same story as the modal: a credential that expires
+  // while the network is down comes back as a new `touchpointDecisionId`, and
+  // while that id was in the lease key it rebuilt the badge for no reason.
+  it("REGRESSION: a network outage that outlives the server credential does not remount the badge", async () => {
+    getOpenDesignHostMock.mockReturnValue({ client: { type: "desktop", osLocale: "en-US" } });
+    vi.spyOn(touchpointComponent, "verifyWebTouchpoint").mockResolvedValue({ entryUrl: "blob:badge", resourceUrls: new Map(), dispose: vi.fn() } as never);
+    let online = true;
+    let decisionId = "decision-1";
+    const requests: string[] = [];
+    const longLived = (overrides: Record<string, unknown> = {}) => {
+      const now = Date.now();
+      return decision({ touchpointDecisionId: decisionId, authorizationExpiresAt: new Date(now + 30 * 60_000).toISOString(), endsAt: new Date(now + 40 * 60_000).toISOString(), ...overrides });
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      requests.push(String(input));
+      if (!online) throw new TypeError("Failed to fetch");
+      return new Response(JSON.stringify(longLived()), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date());
+    render(<ProductionCampaignBadge authenticated sessionSubject="account-a" />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+    const host = screen.getByTestId("production-campaign-badge").querySelector("opend-touchpoint");
+    expect(host).not.toBeNull();
+    expect(OpenDesignTouchpointElement.prototype.mount).toHaveBeenCalledTimes(1);
+    online = false;
+    await act(async () => { await vi.advanceTimersByTimeAsync(90_000); });
+    online = true;
+    decisionId = "decision-2";
+    requests.length = 0;
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(requests[0]).toContain("activeDecisionId=decision-1");
+    expect(screen.getByTestId("production-campaign-badge").querySelector("opend-touchpoint")).toBe(host);
+    expect(OpenDesignTouchpointElement.prototype.mount).toHaveBeenCalledTimes(1);
+  });
+
+  it("still remounts the badge when the content version changes", async () => {
+    getOpenDesignHostMock.mockReturnValue({ client: { type: "desktop", osLocale: "en-US" } });
+    vi.spyOn(touchpointComponent, "verifyWebTouchpoint").mockResolvedValue({ entryUrl: "blob:badge", resourceUrls: new Map(), dispose: vi.fn() } as never);
+    let nextContent = content;
+    const fetchMock = vi.fn(async () => {
+      const now = Date.now();
+      return new Response(JSON.stringify(decision({ content: nextContent, authorizationExpiresAt: new Date(now + 30 * 60_000).toISOString(), endsAt: new Date(now + 40 * 60_000).toISOString() })), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date());
+    render(<ProductionCampaignBadge authenticated sessionSubject="account-a" />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+    const host = screen.getByTestId("production-campaign-badge").querySelector("opend-touchpoint");
+    nextContent = { ...content, id: "version-badge-2" };
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(16); });
+    expect(screen.getByTestId("production-campaign-badge").querySelector("opend-touchpoint")).not.toBe(host);
+    expect(OpenDesignTouchpointElement.prototype.mount).toHaveBeenCalledTimes(2);
+  });
+
   it("mounts valid badge content when a refresh starts while verification is deferred", async () => {
     getOpenDesignHostMock.mockReturnValue({ client: { type: "desktop", osLocale: "en-US" } });
     let resolveVerified: ((value: any) => void) | undefined;

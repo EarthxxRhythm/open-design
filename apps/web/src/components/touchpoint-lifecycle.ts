@@ -28,6 +28,36 @@ export function resolveAuthorizationDeadline(timing: AuthorizationTiming, maximu
 	return Math.min(authorizationExpiresAt, endsAt, serverTime + maximumLeaseMs);
 }
 
+/**
+ * The identity a lease key exists to compare: is this still the same content,
+ * for the same person, from the same deployment?
+ *
+ * `touchpointDecisionId` used to be part of every placement's key. It is not
+ * content identity — it is a one-shot credential the server re-issues whenever
+ * its own sixty-second row lapses. With a thirty-second poll, missing two polls
+ * (a Wi-Fi switch, a tunnel, a closed lid) was enough to get a new one, and a
+ * new key means `++generation`: shadow DOM rebuilt, Blob URLs re-created, entry
+ * animation replayed, scroll lock released and re-taken. Stabilising the id
+ * server-side (OPEND-3369) removed the every-thirty-seconds version of that
+ * churn but left the network-wobble version, which lands on exactly the users
+ * the recovery-lifecycle P1 was about.
+ *
+ * Keeping the credential out of the key means a matching key retains the
+ * previous decision OBJECT, so the client goes on presenting a credential the
+ * server has long since expired. That is safe because the server no longer
+ * ties either use of it to the credential's own window: revocation receipts
+ * answer for aged ids (OPEND-3372) and click settlement is bound to the
+ * deployment's delivery window (OPEND-3364). `validForMs` is always taken from
+ * the new response, so a shortened authorization still applies immediately.
+ *
+ * Shared by all three production placements so their keys cannot drift apart.
+ */
+export const touchpointContentIdentity = (decision: {
+	activityId: string;
+	deploymentId: string;
+	content: { id: string };
+}) => `${decision.activityId}:${decision.deploymentId}:${decision.content.id}`;
+
 export type TouchpointLifecycleLoad<T> =
 	| Readonly<{ kind: "decision"; value: T; key: string; validForMs: number }>
 	| Readonly<{ kind: "waiting"; retryAfterMs: number }>

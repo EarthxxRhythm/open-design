@@ -368,20 +368,20 @@ describe("shared display lifecycle", () => {
 		expect(timer.mock.calls.every(([, delay]) => (delay ?? 0) <= MAX_TIMER_MS)).toBe(true);
 	});
 
-	// OPEND-3369, the client half. The server-side measurement (a rotating
-	// `touchpointDecisionId` — 120 distinct ids in an hour of polling) can only
-	// show that the ids differ. Whether that COSTS anything is decided here, in
-	// the lease key: `refresh` bumps `generation` whenever the key changes, and
-	// the mount effects are keyed on `generation`, so a rotating decision id is a
-	// full remount per poll. Every other case in this file uses `key: "same"`, so
-	// this path has never been observed.
-	it("remounts once per poll when the decision id rotates, and not at all when it is stable", async () => {
+	// OPEND-3369 → OPEND-3374. This case was written to measure what a rotating
+	// `touchpointDecisionId` cost the client; OPEND-3374 took that id out of the
+	// lease key, so the id is no longer what drives this. The measurement it was
+	// written for still matters and is unchanged — it is a property of the KEY,
+	// which is now content identity: a key that changes every poll is a remount
+	// every poll, and a stable one is none. Which inputs produce a changing key
+	// is now decided in the three placements, and asserted in their own suites.
+	it("remounts once per poll when the lease key rotates, and not at all when it is stable", async () => {
 		const POLLS = 120; // one hour at the 30s interval
 		let issued = 0;
 		const rotating = vi.fn<Load>().mockImplementation(async () => ({
 			kind: "decision",
 			value: { text: "campaign" },
-			key: `decision-${++issued}:deployment-1:activity-1:version-1`,
+			key: `activity-1:deployment-1:version-${++issued}`,
 			validForMs: 60_000,
 		}));
 		const rotatingHook = renderHook(() => useTouchpointLifecycle({ enabled: true, identity: "production", load: rotating }));
@@ -410,7 +410,7 @@ describe("shared display lifecycle", () => {
 		const stable = vi.fn<Load>().mockImplementation(async () => ({
 			kind: "decision",
 			value: { text: "campaign" },
-			key: "decision-1:deployment-1:activity-1:version-1",
+			key: "activity-1:deployment-1:version-1",
 			validForMs: 60_000,
 		}));
 		const stableHook = renderHook(() => useTouchpointLifecycle({ enabled: true, identity: "production", load: stable }));

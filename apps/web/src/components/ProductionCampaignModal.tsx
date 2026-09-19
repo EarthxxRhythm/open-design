@@ -25,6 +25,7 @@ import {
 import {
 	PRODUCTION_MAX_LEASE_MS,
 	resolveAuthorizationDeadline,
+	touchpointContentIdentity,
 	touchpointWithdrawsDisplay,
 	useTouchpointLifecycle,
 	type TouchpointLifecycleLoad,
@@ -325,7 +326,7 @@ export function ProductionCampaignModal({
 			// suppressed offer has to clear instead.
 			if (!continuesOpenPresentation && wasDisplayed(sessionSubject, next.activityId))
 				return openPresentation.current ? { kind: "retain" } : { kind: "clear" };
-			return { kind: "decision", value: { ...next, sessionSubject }, key: next.touchpointDecisionId + ":" + next.deploymentId + ":" + next.activityId + ":" + next.content.id, validForMs: deadline - serverTime };
+			return { kind: "decision", value: { ...next, sessionSubject }, key: touchpointContentIdentity(next), validForMs: deadline - serverTime };
 		},
 		[clearOpenPresentation, locale, sessionSubject],
 	);
