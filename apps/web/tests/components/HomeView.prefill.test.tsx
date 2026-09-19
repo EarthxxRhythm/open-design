@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { pickHomeTemplate, homeTemplateTrigger } from '../helpers/home-template-picker';
 
 import { act } from 'react';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -573,9 +574,41 @@ describe('HomeView prompt handoff', () => {
     expect(screen.getByTestId('home-hero-submit').getAttribute('aria-busy')).toBe('false');
   });
 
-  // Removed with the fresh-home default type seed: Home no longer binds a
-  // type on its own, so there is no binding turn for Send to wait on. Picking
-  // a type from the row below the composer is the only thing that binds one.
+  it('defaults a fresh Home to Prototype without applying a plugin or changing the draft', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (url) => {
+      if (url === '/api/plugins') return new Response(JSON.stringify({ plugins: [WEB_PROTOTYPE_PLUGIN, SIMPLE_DECK_PLUGIN] }));
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    stubAnimationFrame();
+    window.localStorage.setItem('open-design:home-composer:prompt', 'Keep my draft');
+    const onSubmit = vi.fn();
+    render(<HomeView projects={[]} onSubmit={onSubmit} onOpenProject={() => undefined} />);
+    await waitFor(() => expect(screen.getByTestId('home-hero-template-picker').getAttribute('data-type')).toBe('prototype'));
+    expect(homeHeroPromptValue()).toBe('Keep my draft');
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/apply'))).toBe(false);
+    expect(onSubmit).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId('home-hero-submit'));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: 'Keep my draft', projectKind: 'prototype', automaticStrategyTaskProfile: 'prototype',
+    })));
+  });
+
+  it('keeps an explicit queued type ahead of the fresh-home default', async () => {
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ plugins: [WEB_PROTOTYPE_PLUGIN, SIMPLE_DECK_PLUGIN] }))));
+    stubAnimationFrame();
+    requestHomeChip('deck');
+    render(<HomeView projects={[]} onSubmit={() => undefined} onOpenProject={() => undefined} />);
+    await waitFor(() => expect(screen.getByTestId('home-hero-template-picker').getAttribute('data-type')).toBe('deck'));
+    expect(homeHeroPromptValue()).toBe('');
+  });
+
+  it('leaves the dock type to its host', async () => {
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ plugins: [WEB_PROTOTYPE_PLUGIN] }))));
+    render(<HomeView variant="dock" projects={[]} onSubmit={() => undefined} onOpenProject={() => undefined} />);
+    await waitFor(() => expect(homeTemplateTrigger().disabled).toBe(false));
+    expect(screen.getByTestId('home-hero-template-picker').getAttribute('data-type')).toBeNull();
+  });
 
   it('keeps creation types actionable while an expired plugin cache refreshes after a project round trip', async () => {
     let resolveRefresh: (response: Response) => void = () => undefined;
@@ -607,7 +640,7 @@ describe('HomeView prompt handoff', () => {
         onOpenProject={() => undefined}
       />,
     );
-    const firstTrigger = await screen.findByTestId('home-hero-type-pill-deck');
+    const firstTrigger = homeTemplateTrigger();
     await waitFor(() => expect((firstTrigger as HTMLButtonElement).disabled).toBe(false));
     firstHome.unmount();
 
@@ -627,7 +660,7 @@ describe('HomeView prompt handoff', () => {
 
       expect(pluginListReads).toBe(2);
       expect(
-        (screen.getByTestId('home-hero-type-pill-deck') as HTMLButtonElement).disabled,
+        (homeTemplateTrigger() as HTMLButtonElement).disabled,
       ).toBe(false);
 
       await act(async () => {
@@ -2580,33 +2613,7 @@ async function clearActiveTypeChip() {
 // #5517 removed the inline template rail (and the "Start with a template…"
 // bar that held it) from Home. Scenario templates are now picked from the
 // composer footer's radial Template picker.
-async function pickHomeTemplate(id: string) {
-  // A type already picked retires the row, and the pill has no menu — so
-  // switching means clearing back to the empty state first.
-  const clear = screen.queryByTestId('home-hero-template-clear');
-  if (clear) fireEvent.click(clear);
-  const lead = await screen.findByTestId('home-hero-type-pill-prototype');
-  await waitFor(() => expect((lead as HTMLButtonElement).disabled).toBe(false));
-  let pill = screen.queryByTestId(`home-hero-type-pill-${id}`);
-  if (!pill) {
-    // Types behind 更多 mount only while its popover is open.
-    fireEvent.click(screen.getByTestId('home-hero-type-pills-more'));
-    pill = screen.queryByTestId(`home-hero-type-pill-${id}-more`);
-  }
-  if (pill) {
-    fireEvent.click(pill);
-    return;
-  }
-  // Types outside the fixed row (media, HyperFrames, …) are reached the way
-  // the workspace tabs-bar hands one off: the apply-template window event,
-  // which HomeHero applies exactly as a row click.
-  fireEvent.keyDown(document, { key: 'Escape' });
-  await act(async () => {
-    window.dispatchEvent(
-      new CustomEvent(HOME_APPLY_TEMPLATE_EVENT, { detail: { chipId: id } }),
-    );
-  });
-}
+
 
 
 // The hero no longer renders a second-level scene row; a Prototype scene is

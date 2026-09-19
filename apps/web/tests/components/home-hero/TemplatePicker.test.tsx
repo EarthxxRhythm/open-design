@@ -45,7 +45,7 @@ describe('TemplatePicker', () => {
     fireEvent.click(screen.getByTestId('home-hero-template-trigger').querySelector('button')!);
     expect(screen.getAllByRole('option')).toHaveLength(templates.length);
     expect(screen.getByRole('option', { name: labelFor('deck') }).getAttribute('aria-selected')).toBe('true');
-    fireEvent.click(screen.getByRole('option', { name: labelFor('prototype'), exact: true }));
+    fireEvent.click(screen.getByRole('option', { name: labelFor('prototype') }));
     expect(onPick).toHaveBeenCalledWith(chipById('prototype'));
     expect(screen.queryByRole('listbox')).toBeNull();
     expect(onClearTemplate).not.toHaveBeenCalled();

@@ -73,7 +73,7 @@ export function TemplatePicker({
       </div>
       {open ? <div id={menuId} role="listbox" aria-label={t('homeHero.templatePicker.label')}
         className="home-hero__footer-select-menu" data-testid="home-hero-template-menu">
-        {templates.map((chip) => <button key={chip.id} type="button" role="option"
+        {templates.map((chip) => <button key={chip.id} type="button" role="option" data-chip={chip.id}
           aria-selected={chip.id === activeChipId}
           className={`home-hero__footer-select-item${chip.id === activeChipId ? ' is-selected' : ''}`}
           onClick={() => { setOpen(false); if (chip.id !== activeChipId) onPick?.(chip); triggerRef.current?.focus(); }}>
