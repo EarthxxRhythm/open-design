@@ -1053,6 +1053,40 @@ describe("Production campaign live refresh", () => {
 		expect(screen.queryByRole("dialog")).toBeNull();
 	});
 
+	// OPEND-3375 through the whole chain: real loader, real lifecycle, real host.
+	// A withdrawn deployment answers 410 with no receipt, and the campaign has to
+	// come off the screen at once rather than ride the failure out on its lease.
+	it("closes at once when a withdrawn deployment answers 410 without a receipt", async () => {
+		let withdrawn = false;
+		const staged = vi.fn(async () => {
+			const now = Date.now();
+			return withdrawn
+				? new Response(JSON.stringify({ error: "production_runtime_withdrawn" }), { status: 410 })
+				: new Response(
+						JSON.stringify(
+							decision({
+								authorizationExpiresAt: new Date(now + 30 * 60_000).toISOString(),
+								endsAt: new Date(now + 40 * 60_000).toISOString(),
+							}),
+						),
+						{ status: 200 },
+					);
+		});
+		vi.stubGlobal("fetch", staged);
+		await open();
+		await tick(16);
+		expect(screen.getByRole("dialog")).toBeTruthy();
+		withdrawn = true;
+		await tick(30_000);
+		await tick(16);
+		expect(screen.queryByRole("dialog")).toBeNull();
+		// Not merely gone: gone and not coming back on a later poll.
+		withdrawn = false;
+		await tick(30_000);
+		await tick(16);
+		expect(screen.queryByRole("dialog")).toBeNull();
+	});
+
 	it("does not poll signed-out users and removes timers and wake listeners on cleanup", async () => {
 		const view = await open(false);
 		await tick(30_000);
