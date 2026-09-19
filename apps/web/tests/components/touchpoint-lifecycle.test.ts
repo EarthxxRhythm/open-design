@@ -742,6 +742,53 @@ describe("shared display lifecycle", () => {
 		expect(result.current.status).toBe("error");
 	});
 
+	// OPEND-3376. The P1 permanent-loss shape, stated as an invariant rather than
+	// as the absence of one path to it: no single failure may discard display
+	// authority that is still recoverable.
+	//
+	// `abandonAttempt` used to decide that by asking whether there was an ACTIVE
+	// lease, treating "none" as "expired". `wake` withdraws the active lease and
+	// sets it aside first, so the very next failure met that branch, dropped the
+	// set-aside lease too, and the retry that finally succeeded came back
+	// `{kind:"retain"}` with nothing left to restore — gone for the session.
+	//
+	// A1 removed the call site that reached this every day; the wall clock can
+	// still reach it. `elapsed` is `max(monotonic, wall)`, so a clock that jumps
+	// FORWARD makes a live lease read as expired — `resume` then takes the `wake`
+	// branch — and a correction BACK makes it read as live again. That is a real
+	// NTP step, a VM resume, a dual-boot clock. The lease set aside here is
+	// inside its own window when the failure lands, and must survive it.
+	it("no single failure can discard display authority that is still recoverable", async () => {
+		const failed = deferred<TouchpointLifecycleLoad<Content>>();
+		const load = vi.fn<Load>()
+			.mockResolvedValueOnce({ kind: "decision", value: first, key: "same", validForMs: 60_000 })
+			.mockReturnValueOnce(failed.promise)
+			.mockResolvedValue({ kind: "retain" });
+		const onError = vi.fn();
+		const { result } = renderHook(() => useTouchpointLifecycle({ enabled: true, identity: "production", load, onError }));
+		await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+		expect(result.current.current).toBe(first);
+		await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+
+		// The wall clock steps an hour forward: the live lease reads as expired.
+		vi.setSystemTime(new Date("2030-01-01T01:00:10Z"));
+		act(() => { window.dispatchEvent(new Event("online")); });
+		expect(result.current.current).toBeNull();
+		expect(load).toHaveBeenCalledTimes(2);
+
+		// Corrected before the revalidation answers. The set-aside lease is once
+		// again inside the window the server granted.
+		vi.setSystemTime(new Date("2030-01-01T00:00:11Z"));
+		await act(async () => { failed.resolve(Promise.reject(new Error("touchpoint_test_load_failed")) as never); });
+		await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+		expect(onError).toHaveBeenCalledTimes(1);
+
+		// One failure must not have spent it. The next answer restores display.
+		await act(async () => { await vi.advanceTimersByTimeAsync(RETRY_BACKOFF_MS[0] ?? 0); });
+		expect(result.current.current).toBe(first);
+		expect(result.current.status).toBe("active");
+	});
+
 	it("cannot restore an original lease that expires while a wake request is pending", async () => {
 		const pending = deferred<TouchpointLifecycleLoad<Content>>();
 		const load = vi.fn<Load>().mockResolvedValueOnce({ kind: "decision", value: first, key: "same", validForMs: 3000 }).mockReturnValue(pending.promise);

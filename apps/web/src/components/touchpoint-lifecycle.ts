@@ -173,12 +173,20 @@ export function useTouchpointLifecycle<T>({ enabled, identity, load, onError }: 
 		 * and keep display authority the server already granted; `armExpiry`
 		 * still retires it at its own deadline, so one poll may be missed and a
 		 * second consecutive failure lets the lease lapse on its own. A lease
-		 * already withdrawn by `wake` stays withdrawn: the client knew its
-		 * authority was gone before it asked, and a failure cannot bring it back.
+		 * `wake` set aside is judged the same way — by its own window, not by the
+		 * fact that nothing is on screen while it is being revalidated.
 		 */
 		const abandonAttempt = (error: unknown) => {
 			cancelRequest();
-			if (touchpointWithdrawsDisplay(error) || !lease.current || elapsed(lease.current.start) >= lease.current.validForMs) {
+			// Judge the lease that is still recoverable — the active one, or the
+			// one `wake` set aside — by its OWN window. Asking whether there is an
+			// ACTIVE lease and calling "none" expired is what made a single
+			// failure permanent: `wake` empties `lease.current` before it
+			// revalidates, so the next failure met that branch, spent the
+			// set-aside lease too, and the retry that succeeded came back
+			// `{kind:"retain"}` with nothing left to restore.
+			const recoverable = lease.current ?? revalidationLease;
+			if (touchpointWithdrawsDisplay(error) || !recoverable || elapsed(recoverable.start) >= recoverable.validForMs) {
 				revalidationLease = null;
 				status = "error";
 				revoke();
