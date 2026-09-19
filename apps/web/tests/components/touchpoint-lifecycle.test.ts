@@ -509,6 +509,47 @@ describe("shared display lifecycle", () => {
 		expect(stableHook.result.current.current).toBe(stableValue);
 	});
 
+	// OPEND-3378. `elapsed()` is `max(monotonic, wall)` and is therefore not
+	// monotonic: a wall clock that steps FORWARD and is corrected BACK makes it
+	// rise and then fall. Every point that consumes it was audited; this is the
+	// one whose answer was not acceptable.
+	//
+	// `same` asks whether the previous lease is still within its window, and a
+	// forward step makes a perfectly live lease answer no. The response that
+	// arrives during the step then counts as a new presentation: `++generation`,
+	// a rebuilt host, a replayed entry animation — the exact flicker OPEND-3374
+	// was written to remove, now triggered by an NTP step instead of a credential
+	// rotation. A3 made leases run for the whole activity, so the window in which
+	// a clock step can land grew from a minute to days.
+	//
+	// The display is still on screen when this happens: a step alone tears
+	// nothing down, because nothing evaluates `elapsed` until something asks.
+	// So there is no teardown for the re-mount to be consistent with.
+	it("a clock step forward does not re-mount a campaign that is still on screen", async () => {
+		const mounted = { text: "campaign" };
+		const renewed = { text: "campaign" };
+		const load = vi.fn<Load>()
+			.mockResolvedValueOnce({ kind: "decision", value: mounted, key: "same", validForMs: 30 * 60_000 })
+			.mockResolvedValue({ kind: "decision", value: renewed, key: "same", validForMs: 30 * 60_000 });
+		const { result } = renderHook(() => useTouchpointLifecycle({ enabled: true, identity: "production", load }));
+		await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+		const generation = result.current.generation;
+		expect(result.current.current).toBe(mounted);
+		await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+
+		// The clock steps an hour forward. Nothing has asked `elapsed` anything
+		// yet, so the campaign is still mounted and still authorized.
+		vi.setSystemTime(new Date("2030-01-01T01:00:10Z"));
+		expect(result.current.current).toBe(mounted);
+
+		// The next poll renews the same decision. It must renew the lease, not
+		// replace the presentation.
+		await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+		expect(load).toHaveBeenCalledTimes(2);
+		expect(result.current.generation).toBe(generation);
+		expect(result.current.current).toBe(mounted);
+	});
+
 	it("refetches at the start boundary but cannot activate until the server grants authority", async () => {
 		const grant = deferred<TouchpointLifecycleLoad<Content>>();
 		const load = vi.fn<Load>().mockResolvedValueOnce({ kind: "waiting", retryAfterMs: 500 }).mockReturnValue(grant.promise);

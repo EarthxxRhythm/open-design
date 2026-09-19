@@ -110,7 +110,24 @@ export type TouchpointLifecycleOptions<T> = Readonly<{
 
 type Clock = { monotonic: number; wall: number };
 const clock = (): Clock => ({ monotonic: performance.now(), wall: Date.now() });
-// A backwards wall-clock adjustment cannot grant time; a forward jump can only shorten it.
+/**
+ * How long a lease has been alive, measured against both clocks so that neither
+ * can be used to overstay.
+ *
+ * The monotonic term stops a wall clock that is set BACK from granting time.
+ * The wall term stops a sleeping device from freezing the lease, because
+ * `performance.now()` pauses across sleep on some platforms and a lease would
+ * otherwise survive the night un-aged. Both are load-bearing; dropping either
+ * one re-opens the cheat it closes.
+ *
+ * What `max` does NOT give is monotonicity. A wall clock that steps FORWARD and
+ * is then corrected BACK — an NTP step, a resumed VM, a dual-boot machine —
+ * makes this rise and then fall again. Callers must not assume that "expired"
+ * is a property which, once true, stays true; OPEND-3376 and OPEND-3378 are
+ * both defects that came from assuming it. Each consumer is audited, and the
+ * ones whose answer depends on the direction of the error say so at the call
+ * site.
+ */
 const elapsed = (start: Clock) => Math.max(0, performance.now() - start.monotonic, Date.now() - start.wall);
 const POLL_MS = 30_000;
 /**
@@ -331,7 +348,22 @@ export function useTouchpointLifecycle<T>({ enabled, identity, load, onError }: 
 					return;
 				}
 				const previous = lease.current ?? revalidationLease;
-				const same = previous?.key === result.key && previous.identity === identity && elapsed(previous.start) < previous.validForMs;
+				// A lease that is STILL MOUNTED renews; only one that has to be
+				// resumed from the side has to prove it is still inside its window.
+				//
+				// Asking `elapsed` in both cases made a clock step forward count a
+				// renewal as a new presentation — a rebuilt host and a replayed
+				// entry animation for a campaign that never left the screen
+				// (OPEND-3378). It also cannot be right: nothing evaluates `elapsed`
+				// until something asks, so a step alone tears nothing down, and
+				// there is no withdrawal for that re-mount to correspond to. A
+				// mounted lease that has genuinely lapsed is not reachable here
+				// either — `armExpiry` retires it, which empties `lease.current`.
+				const resumed = previous !== null && previous !== lease.current;
+				const same =
+					previous?.key === result.key &&
+					previous.identity === identity &&
+					(!resumed || elapsed(previous.start) < previous.validForMs);
 				if (!same) ++generation.current;
 				lease.current = { identity, key: result.key, value: same ? previous.value : result.value, generation: generation.current, start: started, validForMs: result.validForMs };
 				revalidationLease = null;
