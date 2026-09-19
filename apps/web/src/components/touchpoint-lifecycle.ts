@@ -58,6 +58,42 @@ export const touchpointContentIdentity = (decision: {
 	content: { id: string };
 }) => `${decision.activityId}:${decision.deploymentId}:${decision.content.id}`;
 
+/**
+ * A lease carries two things, and they age in opposite directions.
+ *
+ * Its content identity is STABLE: that is what {@link touchpointContentIdentity}
+ * compares, and while it matches, the previous decision object is retained so
+ * the host keeps its mount. Its authorization window is FRESH: `validForMs` is
+ * taken from the newest response every time, so an activity an operator cuts
+ * short still ends on time.
+ *
+ * `serverTime`, `endsAt` and `authorizationExpiresAt` describe the second thing
+ * while living in the object that is retained for the first. A retained value's
+ * copies of them are simply the numbers some earlier response happened to
+ * carry. Nothing reads them today — but that is a fact about who has written
+ * the consumers so far, not about the code, and the day someone adds
+ * `decision.endsAt` to a countdown they will read an end time the operator has
+ * already moved, with nothing failing to tell them.
+ *
+ * So they do not survive into the lease. The type says so, and the value really
+ * does not carry them, which keeps the guarantee true for a consumer that casts
+ * its way around the type.
+ */
+export type TouchpointAuthorizationTimingField =
+	| "serverTime"
+	| "endsAt"
+	| "authorizationExpiresAt";
+export type TouchpointLeaseValue<T> = Omit<T, TouchpointAuthorizationTimingField>;
+const AUTHORIZATION_TIMING_FIELDS: readonly string[] = [
+	"serverTime",
+	"endsAt",
+	"authorizationExpiresAt",
+];
+export const touchpointLeaseValue = <T extends object>(decision: T): TouchpointLeaseValue<T> =>
+	Object.fromEntries(
+		Object.entries(decision).filter(([field]) => !AUTHORIZATION_TIMING_FIELDS.includes(field)),
+	) as TouchpointLeaseValue<T>;
+
 export type TouchpointLifecycleLoad<T> =
 	| Readonly<{ kind: "decision"; value: T; key: string; validForMs: number }>
 	| Readonly<{ kind: "waiting"; retryAfterMs: number }>

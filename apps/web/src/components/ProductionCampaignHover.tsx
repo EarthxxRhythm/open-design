@@ -25,6 +25,8 @@ import {
 	PRODUCTION_MAX_LEASE_MS,
 	resolveAuthorizationDeadline,
 	touchpointContentIdentity,
+	touchpointLeaseValue,
+	type TouchpointLeaseValue,
 	type TouchpointLifecycleLoad,
 	useTouchpointLifecycle,
 } from "./touchpoint-lifecycle";
@@ -47,7 +49,7 @@ type RuntimeDecision = Readonly<{
 	staticActions: TouchpointStaticAction[];
 }>;
 type ValidDecision = Readonly<{
-	decision: RuntimeDecision;
+	decision: TouchpointLeaseValue<RuntimeDecision>;
 	actionIds: ReadonlySet<string>;
 }>;
 type ActiveHover = Readonly<{
@@ -87,9 +89,11 @@ function validDecision(
 		!touchpointStaticActionsMatch(decision.staticActions, placement.staticActions)
 	)
 		return null;
+	// `validForMs` is computed from the response's own timing, and only then is
+	// the timing dropped: what the lease keeps is content identity.
 	return {
 		valid: {
-			decision,
+			decision: touchpointLeaseValue(decision),
 			actionIds: new Set(placement.staticActions.map((action) => action.id)),
 		},
 		validForMs: deadline - Date.parse(decision.serverTime),
@@ -163,7 +167,7 @@ export function ProductionCampaignHover({
 			]);
 			const matches = (
 				loaded: typeof entryLoaded,
-				decision: RuntimeDecision | undefined,
+				decision: TouchpointLeaseValue<RuntimeDecision> | undefined,
 			) =>
 				loaded.kind === "revoked" &&
 				decision &&

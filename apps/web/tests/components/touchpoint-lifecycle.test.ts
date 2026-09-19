@@ -3,7 +3,7 @@ import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { mountTouchpoint, PRODUCTION_MAX_LEASE_MS, REQUEST_TIMEOUT_MS, resolveAuthorizationDeadline, RETRY_BACKOFF_MS, useTouchpointLifecycle, type TouchpointLifecycleLoad, type TouchpointLifecycleOptions } from "../../src/components/touchpoint-lifecycle";
+import { mountTouchpoint, PRODUCTION_MAX_LEASE_MS, REQUEST_TIMEOUT_MS, touchpointLeaseValue, resolveAuthorizationDeadline, RETRY_BACKOFF_MS, useTouchpointLifecycle, type TouchpointLifecycleLoad, type TouchpointLifecycleOptions } from "../../src/components/touchpoint-lifecycle";
 import * as host from "../../src/components/touchpoint-component";
 
 const content: host.WebTouchpointContent = {
@@ -279,6 +279,92 @@ beforeEach(() => {
 	vi.setSystemTime(new Date("2030-01-01T00:00:00Z"));
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
+
+// OPEND-3377. A lease carries two different things: a STABLE content identity,
+// which decides whether to re-mount, and a FRESH authorization window, which
+// decides how long display may last. Since OPEND-3374 a matching key retains the
+// previous decision object, so anything time-shaped inside it is the value from
+// an older response — `endsAt` that an operator may since have brought forward.
+//
+// Nothing reads those fields today, which is exactly the problem: that is a
+// property of who happens to have written the consumers, not of the code. These
+// assertions make it a property of the types. Each `@ts-expect-error` below is
+// itself checked — if the field came back, TypeScript would report the directive
+// as unused and `pnpm typecheck` would fail on this file.
+describe("the lease value carries content identity, never authorization timing", () => {
+	type ServerDecision = Readonly<{
+		activityId: string;
+		deploymentId: string;
+		placementKey: string;
+		touchpointDecisionId: string;
+		content: { id: string };
+		serverTime: string;
+		endsAt: string;
+		authorizationExpiresAt: string;
+	}>;
+	const response: ServerDecision = {
+		activityId: "activity-1",
+		deploymentId: "deployment-1",
+		placementKey: "opend.home.campaign-modal",
+		touchpointDecisionId: "decision-1",
+		content: { id: "version-1" },
+		serverTime: "2030-01-01T00:00:00.000Z",
+		endsAt: "2030-01-01T00:05:00.000Z",
+		authorizationExpiresAt: "2030-01-01T00:01:00.000Z",
+	};
+
+	it("keeps content identity and the credential", () => {
+		const retained = touchpointLeaseValue(response);
+		expect(retained.activityId).toBe("activity-1");
+		expect(retained.deploymentId).toBe("deployment-1");
+		expect(retained.placementKey).toBe("opend.home.campaign-modal");
+		expect(retained.content.id).toBe("version-1");
+		// Deliberately stale and safe: OPEND-3372 answers for aged ids and
+		// OPEND-3364 binds settlement to the deployment window.
+		expect(retained.touchpointDecisionId).toBe("decision-1");
+	});
+
+	it("does not carry authorization timing, at the type level or at runtime", () => {
+		const retained = touchpointLeaseValue(response);
+		// @ts-expect-error a retained lease value has no `serverTime`
+		void retained.serverTime;
+		// @ts-expect-error a retained lease value has no `endsAt`
+		void retained.endsAt;
+		// @ts-expect-error a retained lease value has no `authorizationExpiresAt`
+		void retained.authorizationExpiresAt;
+		// The stripping is real, not just a type assertion, so a consumer reaching
+		// around the types with a cast still finds nothing to read.
+		expect(Object.keys(retained).sort()).toEqual([
+			"activityId",
+			"content",
+			"deploymentId",
+			"placementKey",
+			"touchpointDecisionId",
+		]);
+	});
+
+	it("leaves how long display may last to the lease's own window", async () => {
+		// `validForMs` always comes from the newest response; the retained value
+		// is not where that answer lives. Pinned here next to the type assertions
+		// so the two halves of the split are stated in one place.
+		const load = vi.fn<Load>()
+			.mockResolvedValueOnce({ kind: "decision", value: first, key: "same", validForMs: 60_000 })
+			.mockResolvedValueOnce({ kind: "decision", value: { ...first }, key: "same", validForMs: 45_000 })
+			.mockRejectedValue(new Error("touchpoint_test_load_failed"));
+		const { result } = renderHook(() => useTouchpointLifecycle({ enabled: true, identity: "production", load }));
+		await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+		const generation = result.current.generation;
+		await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+		// Same key: the previous value object is retained, so no re-mount...
+		expect(result.current.current).toBe(first);
+		expect(result.current.generation).toBe(generation);
+		// ...and the shortened window still governs, 45s from the second response.
+		await act(async () => { await vi.advanceTimersByTimeAsync(44_999); });
+		expect(result.current.current).toBe(first);
+		await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+		expect(result.current.current).toBeNull();
+	});
+});
 
 describe("shared display lifecycle", () => {
 	it("keeps an unexpired visible decision mounted while focus revalidation is pending", async () => {

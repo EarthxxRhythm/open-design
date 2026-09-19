@@ -26,8 +26,10 @@ import {
 	PRODUCTION_MAX_LEASE_MS,
 	resolveAuthorizationDeadline,
 	touchpointContentIdentity,
+	touchpointLeaseValue,
 	touchpointWithdrawsDisplay,
 	useTouchpointLifecycle,
+	type TouchpointLeaseValue,
 	type TouchpointLifecycleLoad,
 } from "./touchpoint-lifecycle";
 import {
@@ -92,9 +94,15 @@ export function internalActionNavigationUrl(
 	}
 }
 
-/** Performs a server-validated click before the host consumes a static target. */
+/**
+ * Performs a server-validated click before the host consumes a static target.
+ *
+ * Takes the lease value, not the response DTO: how long authority lasts arrives
+ * as `expiresAt`, from the lease's own window, so the decision's own (possibly
+ * superseded) timing has no business being in scope here.
+ */
 export async function dispatchProductionCampaignAction(
-	decision: Decision,
+	decision: TouchpointLeaseValue<Decision>,
 	actionId: string,
 	generation: number,
 	currentGeneration: () => number,
@@ -202,7 +210,7 @@ function testSelectionKeyOf(
 	]);
 }
 /** Production v2 modal shares the Test adapter; it does not fall back to a frame when bytes or runtime identity fail. */
-type AuthorizedDecision = Decision & { sessionSubject: string };
+type AuthorizedDecision = TouchpointLeaseValue<Decision> & { sessionSubject: string };
 type OpenPresentation = Readonly<{
 	sessionSubject: string;
 	activityId: string;
@@ -326,7 +334,7 @@ export function ProductionCampaignModal({
 			// suppressed offer has to clear instead.
 			if (!continuesOpenPresentation && wasDisplayed(sessionSubject, next.activityId))
 				return openPresentation.current ? { kind: "retain" } : { kind: "clear" };
-			return { kind: "decision", value: { ...next, sessionSubject }, key: touchpointContentIdentity(next), validForMs: deadline - serverTime };
+			return { kind: "decision", value: { ...touchpointLeaseValue(next), sessionSubject }, key: touchpointContentIdentity(next), validForMs: deadline - serverTime };
 		},
 		[clearOpenPresentation, locale, sessionSubject],
 	);
