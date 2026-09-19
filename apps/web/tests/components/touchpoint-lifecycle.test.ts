@@ -368,6 +368,61 @@ describe("shared display lifecycle", () => {
 		expect(timer.mock.calls.every(([, delay]) => (delay ?? 0) <= MAX_TIMER_MS)).toBe(true);
 	});
 
+	// OPEND-3369, the client half. The server-side measurement (a rotating
+	// `touchpointDecisionId` — 120 distinct ids in an hour of polling) can only
+	// show that the ids differ. Whether that COSTS anything is decided here, in
+	// the lease key: `refresh` bumps `generation` whenever the key changes, and
+	// the mount effects are keyed on `generation`, so a rotating decision id is a
+	// full remount per poll. Every other case in this file uses `key: "same"`, so
+	// this path has never been observed.
+	it("remounts once per poll when the decision id rotates, and not at all when it is stable", async () => {
+		const POLLS = 120; // one hour at the 30s interval
+		let issued = 0;
+		const rotating = vi.fn<Load>().mockImplementation(async () => ({
+			kind: "decision",
+			value: { text: "campaign" },
+			key: `decision-${++issued}:deployment-1:activity-1:version-1`,
+			validForMs: 60_000,
+		}));
+		const rotatingHook = renderHook(() => useTouchpointLifecycle({ enabled: true, identity: "production", load: rotating }));
+		await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+		const firstGeneration = rotatingHook.result.current.generation;
+		const firstValue = rotatingHook.result.current.current;
+		let remounts = 0;
+		let previousGeneration = firstGeneration;
+		let previousValue = firstValue;
+		for (let poll = 1; poll <= POLLS; poll += 1) {
+			await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+			const { generation, current } = rotatingHook.result.current;
+			if (generation !== previousGeneration) remounts += 1;
+			// A new generation carries a new decision object, so the host is rebuilt
+			// rather than merely re-rendered.
+			expect(generation === previousGeneration || current !== previousValue).toBe(true);
+			previousGeneration = generation;
+			previousValue = current;
+		}
+		expect(rotating).toHaveBeenCalledTimes(POLLS + 1);
+		expect(remounts).toBe(POLLS);
+		expect(rotatingHook.result.current.generation).toBe(firstGeneration + POLLS);
+		rotatingHook.unmount();
+
+		// The control: the same hour, the same responses, one stable decision id.
+		const stable = vi.fn<Load>().mockImplementation(async () => ({
+			kind: "decision",
+			value: { text: "campaign" },
+			key: "decision-1:deployment-1:activity-1:version-1",
+			validForMs: 60_000,
+		}));
+		const stableHook = renderHook(() => useTouchpointLifecycle({ enabled: true, identity: "production", load: stable }));
+		await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+		const stableGeneration = stableHook.result.current.generation;
+		const stableValue = stableHook.result.current.current;
+		await act(async () => { await vi.advanceTimersByTimeAsync(POLLS * 30_000); });
+		expect(stable).toHaveBeenCalledTimes(POLLS + 1);
+		expect(stableHook.result.current.generation).toBe(stableGeneration);
+		expect(stableHook.result.current.current).toBe(stableValue);
+	});
+
 	it("refetches at the start boundary but cannot activate until the server grants authority", async () => {
 		const grant = deferred<TouchpointLifecycleLoad<Content>>();
 		const load = vi.fn<Load>().mockResolvedValueOnce({ kind: "waiting", retryAfterMs: 500 }).mockReturnValue(grant.promise);

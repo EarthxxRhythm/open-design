@@ -763,6 +763,52 @@ describe("Production campaign live refresh", () => {
 		expect(OpenDesignTouchpointElement.prototype.mount).toHaveBeenCalledTimes(1);
 	});
 
+	// OPEND-3369 at the seam that decides whether a rotating decision id costs
+	// anything. The lease key the Modal builds is
+	// `touchpointDecisionId:deploymentId:activityId:content.id`, so an id that
+	// changes every poll changes the key, bumps `generation`, and rebuilds the
+	// host — the same activity, torn down and re-mounted 120 times an hour.
+	it("rebuilds the mounted host on every poll when only the decision id changes", async () => {
+		const POLLS = 120; // one hour at the 30s interval
+		let issued = 0;
+		const rotating = vi.fn(async () => {
+			issued += 1;
+			return new Response(
+				JSON.stringify(decision({ touchpointDecisionId: `decision-${issued}` })),
+				{ status: 200 },
+			);
+		});
+		vi.stubGlobal("fetch", rotating);
+		await open();
+		await tick(16);
+		expect(screen.getByRole("dialog")).toBeTruthy();
+		const hosts = new Set<Element>();
+		hosts.add(document.querySelector("opend-touchpoint") as Element);
+		for (let poll = 1; poll <= POLLS; poll += 1) {
+			await tick(30_000);
+			hosts.add(document.querySelector("opend-touchpoint") as Element);
+		}
+		expect(rotating).toHaveBeenCalledTimes(POLLS + 1);
+		// A distinct host element per poll, and one mount call for each of them.
+		expect(hosts.size).toBe(POLLS + 1);
+		expect(OpenDesignTouchpointElement.prototype.mount).toHaveBeenCalledTimes(POLLS + 1);
+	});
+
+	// The control, and the shape a stable id gives: the same hour of polling
+	// keeps one host and mounts it once.
+	it("keeps one mounted host for a whole hour when the decision id is stable", async () => {
+		const POLLS = 120;
+		available = true;
+		await open();
+		await tick(16);
+		const host = document.querySelector("opend-touchpoint");
+		expect(host).not.toBeNull();
+		await tick(POLLS * 30_000);
+		expect(fetchMock).toHaveBeenCalledTimes(POLLS + 1);
+		expect(document.querySelector("opend-touchpoint")).toBe(host);
+		expect(OpenDesignTouchpointElement.prototype.mount).toHaveBeenCalledTimes(1);
+	});
+
 	it("does not poll signed-out users and removes timers and wake listeners on cleanup", async () => {
 		const view = await open(false);
 		await tick(30_000);
