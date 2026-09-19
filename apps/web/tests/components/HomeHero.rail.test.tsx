@@ -223,7 +223,6 @@ describe('HomeHero intent rail', () => {
       error: null,
     } as React.ComponentProps<typeof HomeHero>;
 
-    // Nothing picked → no pill at all; the type row below still offers them.
     const { rerender } = render(<HomeHero {...baseProps} activeChipId={null} />);
     expect(homeTemplateTrigger().textContent).toContain('Creation type');
     expect(typePill('deck')).toBeTruthy();
@@ -232,8 +231,6 @@ describe('HomeHero intent rail', () => {
     rerender(<HomeHero {...baseProps} activeChipId="deck" />);
     expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Slide deck');
 
-    // Clear nulls the active chip — the pill goes away again rather than
-    // falling back to an empty placeholder.
     rerender(<HomeHero {...baseProps} activeChipId={null} />);
     expect(homeTemplateTrigger().textContent).toContain('Creation type');
   });

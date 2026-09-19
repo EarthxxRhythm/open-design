@@ -94,9 +94,6 @@ describe('HomeView media composer options', () => {
 
     await pickHomeTemplate('image');
 
-    // Picking retires the row; the composer pill names the type and its clear
-    // stays live while the media apply is still pending, so the choice is
-    // reversible at every moment.
     await waitFor(() => {
       expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Image');
     });

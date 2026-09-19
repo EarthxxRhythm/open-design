@@ -144,12 +144,6 @@ function stubAnimationFrame() {
   });
 }
 
-// Mirrors HomeView.prefill.test.tsx's local helper: the inline template rail
-// was replaced by the composer footer's radial Template picker (#5517).
-// Home starts with no creation type: the type row under the composer is the
-// empty state's only control, and it retires once something is picked.
-
-
 function fetchMockFor(plugins: unknown[]) {
   return vi.fn<typeof fetch>(async (url) => {
     if (typeof url === 'string' && url === '/api/plugins') {

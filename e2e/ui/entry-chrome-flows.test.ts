@@ -109,8 +109,6 @@ test('[P0] @critical entry chrome exposes the primary home creation surface and 
   await expect(page.getByTestId('home-hero-template-picker')).toBeVisible();
   await expect(page.getByTestId('home-hero-design-system-picker')).toBeVisible();
   await expect(page.getByTestId('working-dir-picker')).toBeVisible();
-  // The type row under the composer is a curated entry set (product,
-  // 2026-09-16 / OPEND-3146): three inline pills, the rest behind 更多.
   await expect(page.getByTestId('home-hero-template-picker')).toHaveAttribute('data-type', 'prototype');
   await testInfo.attach('home-default-prototype', { body: await page.screenshot(), contentType: 'image/png' });
   const menu = await openHomeTemplates(page);
@@ -1168,7 +1166,6 @@ test('[P0] @critical home composer delegates the picked prototype scenario to da
   // still what this request routes as, it just is not stated on a control any
   // more. The routing itself is asserted from the request body below.
   await expect(page.getByTestId('composer-mode-trigger')).toHaveCount(0);
-  // Home starts typeless (#7635), so the Prototype type is picked from the row.
   await pickHomeTemplate(page, 'prototype');
 
   const input = page.getByTestId('home-hero-input');
@@ -1402,9 +1399,6 @@ test('[P0] @critical home hero attachment input stages files, enables submit, an
 
   const input = page.getByTestId('home-hero-file-input');
   const submit = page.getByTestId('home-hero-submit');
-  // A fresh Home starts typeless (#7635): the type row under the composer is
-  // the settled state to wait on before checking the attachment lifecycle,
-  // and an empty composer already submits its carousel suggestion.
   await expect(homeTemplateTrigger(page)).toBeVisible({ timeout: T.long });
   await expect(submit).toBeEnabled({ timeout: T.long });
 

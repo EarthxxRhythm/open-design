@@ -42,7 +42,7 @@ export function TemplatePicker({
       document.removeEventListener('keydown', escape);
     };
   }, [open]);
-  useEffect(() => { setOpen(false); }, [activeChipId]);
+  useEffect(() => { setOpen(false); }, [activeChipId, disabled]);
   const active = templates.find((chip) => chip.id === activeChipId) ?? null;
 
   const valueLabel = active ? labelFor(active.id) : t('homeHero.templatePicker.label');

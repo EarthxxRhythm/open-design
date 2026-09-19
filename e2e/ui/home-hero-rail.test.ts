@@ -594,10 +594,6 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('[P1] cold-start Home keeps the type row as its only surface while plugins settle at every breakpoint', async ({ page }) => {
-  // #7635 dropped the examples loading shell: a cold Home starts typeless, so
-  // there is nothing to reserve under the composer while the catalogue loads.
-  // The type row is the only surface, its pills stay out of service until the
-  // plugins land, and the examples only appear once a type is picked.
   for (const viewport of [
     { width: 1280, height: 900 },
     { width: 800, height: 900 },
@@ -1373,8 +1369,6 @@ test('[P0] empty home composer submits the active prototype suggestion without e
   await routeRunsAccepted(page);
   await gotoEntryHome(page);
 
-  // Home starts typeless (#7635); picking Prototype is what narrows the
-  // placeholder carousel to that type's lines.
   await pickHomeTemplate(page, 'prototype');
   await expect(page.getByTestId('home-hero-submit')).toBeEnabled();
   const createRequestPromise = page.waitForRequest((request) =>
@@ -1530,13 +1524,6 @@ test('[P1] brand-backed design system previews as a Brand Kit and carries into p
   expect(body.designSystemId).toBe(BRAND_DESIGN_SYSTEM.id);
 });
 
-// The horizontally-scrolling scenario-card rail this used to drive
-// (`.home-hero__scenario-cards` + `.home-hero__rail-edge`) was deleted with the
-// rest of the inline template rail in #5517; the radial picker is a fixed-size
-// ring with no scroll axis, so there is no overflow behaviour left to pin.
-//
-// The first-run "scroll up to reveal community templates" affordance went with
-// it, so its two specs are gone too.
 
 test('[P2] home template dropdown switches types and dismisses with Escape', async ({ page }) => {
   await gotoEntryHome(page);
@@ -1581,8 +1568,6 @@ test('[P2] zh-CN home smoke exposes the localized creation type, design system, 
     'title',
     '上传文件、关联设计系统，或描述你想创作的内容',
   );
-  // Nothing picked yet, so the type row under the composer is the type control
-  // (the composer's own pill only exists once one is chosen).
   await expect(page.getByTestId('home-hero-template-picker')).toBeVisible();
   // The design-system control is permanent at the head of the foot row (设计
   // 系统常驻在添加附件后面), so it is there before any type is chosen.
@@ -1597,8 +1582,6 @@ test('[P2] zh-CN home smoke exposes the localized creation type, design system, 
 
 test('[P1] home dropdown switches between types', async ({ page }) => {
   await gotoEntryHome(page);
-  // Home starts empty now (no fresh-home default binding), so the type row is
-  // the entry point and both kinds are on it.
   const typeRow = homeTemplateTrigger(page);
   await expect(typeRow).toBeVisible();
   await expect(typeRow).toBeVisible();
@@ -1606,8 +1589,6 @@ test('[P1] home dropdown switches between types', async ({ page }) => {
   await pickHomeTemplate(page, 'deck');
   await expect(page.getByTestId('home-hero-template-trigger')).toContainText(/Slide deck|幻灯片|投影片/i);
 
-  // Switching goes clear → row → new type; the pill follows the new one and
-  // deck-only footer chrome drops away.
   await pickHomeTemplate(page, 'prototype');
   await expect(page.getByTestId('home-hero-footer-option-speakerNotes')).toHaveCount(0);
   await expect(page.getByTestId('home-hero-template-trigger')).toContainText(/Prototype|原型/i);
@@ -1932,9 +1913,6 @@ test('[P2] switching the selected hero template swaps preset chrome and keeps th
   await expect(page.getByTestId('home-hero-footer-option-designSystem')).toHaveCount(0);
   await expect(page.getByTestId('home-hero-footer-option-ratio')).toHaveCount(0);
   await expect(page.getByTestId('home-hero-footer-option-duration')).toHaveCount(0);
-  // Every type is still reachable from any selection: clearing gives the row
-  // back, and a type outside the row (Live artifact) still lands through the
-  // hand-off path the helper drives.
 
   await expect(homeTemplateTrigger(page)).toBeVisible();
   await pickHomeTemplate(page, 'live-artifact');
