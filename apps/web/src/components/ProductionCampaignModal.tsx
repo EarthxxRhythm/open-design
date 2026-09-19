@@ -358,19 +358,27 @@ export function ProductionCampaignModal({
 		if (!authenticated || !sessionSubject || openPresentation.current?.sessionSubject !== sessionSubject)
 			clearOpenPresentation();
 	}, [authenticated, clearOpenPresentation, sessionSubject]);
-	/**
-	 * A hidden page (screen sleep, an occluded window) withdraws the lease and
-	 * takes this modal down with it. That presentation is over, so it may not
-	 * continue into the refresh that follows on wake: the device impression
-	 * decides that new offer like any other.
+	/*
+	 * There is deliberately no visibility fence here.
+	 *
+	 * One existed, to release the open presentation whenever the page went
+	 * hidden. Its premise was that "a hidden page withdraws the lease and takes
+	 * this modal down with it", so the presentation was genuinely over and the
+	 * offer arriving on wake was a new one. OPEND-3363 removed that premise:
+	 * hiding now cancels only the request in flight and leaves both the lease
+	 * and this modal exactly as they were.
+	 *
+	 * Releasing the presentation anyway left the campaign on screen with nothing
+	 * recorded as presenting it, and the poll that follows on return read the
+	 * device impression, found no open presentation, and cleared the host — the
+	 * campaign vanished on a tab switch, which is the symptom both fixes were
+	 * written to remove.
+	 *
+	 * What the fence was protecting is still protected, by the presentation's own
+	 * deadline: it is anchored to the authorization that opened it, so a sleep
+	 * long enough to lapse the lease also lapses the presentation, and the offer
+	 * that arrives on wake is correctly read as a new one.
 	 */
-	useEffect(() => {
-		const fence = () => {
-			if (document.hidden) clearOpenPresentation();
-		};
-		document.addEventListener("visibilitychange", fence);
-		return () => document.removeEventListener("visibilitychange", fence);
-	}, [clearOpenPresentation]);
 	useEffect(() => {
 		ensureWebTouchpointElement();
 	}, []);

@@ -1809,26 +1809,82 @@ describe("ProductionCampaignModal device impressions", () => {
 		await screen.findByRole("dialog");
 		await waitFor(() => expect(localStorage.getItem(marker())).toBe("1"));
 	});
-	it("does not re-present a displayed campaign after the page is hidden and shown again", async () => {
-		// Screen sleep hides the page, which withdraws the lease and takes the
-		// modal down. Waking is a NEW presentation, not a renewal: the recorded
-		// impression has to close it even though the server still offers the
-		// same activity.
+	// The interaction between OPEND-3363 and the wake fence from #8269.
+	//
+	// The fence exists to compensate for a premise the fence's own comment
+	// states: "A hidden page ... withdraws the lease and takes this modal down
+	// with it". OPEND-3363 removed that premise — hiding now cancels only the
+	// request in flight, and both the lease and the modal stay. The fence still
+	// releases the presentation, so the campaign is on screen with nothing
+	// recorded as presenting it; the poll that follows on return then reads the
+	// device impression, finds no open presentation, and clears the host.
+	//
+	// Two correct fixes producing the P1 symptom between them.
+	it("keeps a displayed campaign through a tab switch now that hiding no longer withdraws it", async () => {
 		let hidden = false;
 		vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
 		render(<ProductionCampaignModal authenticated sessionSubject="user-a" />);
-		await screen.findByRole("dialog");
+		const dialog = await screen.findByRole("dialog");
 		await waitFor(() => expect(localStorage.getItem(marker())).toBe("1"));
+		const host = document.querySelector("opend-touchpoint");
+
+		// Away. OPEND-3363: the lease is untouched, so the modal is still mounted.
 		hidden = true;
 		await act(async () => {
 			fireEvent(document, new Event("visibilitychange"));
 		});
-		expect(screen.queryByRole("dialog")).toBeNull();
+		expect(screen.getByRole("dialog")).toBe(dialog);
+
+		// Back, and the revalidation that follows lands.
 		hidden = false;
 		await act(async () => {
 			fireEvent(document, new Event("visibilitychange"));
 		});
 		await act(async () => {});
+		expect(screen.getByRole("dialog")).toBe(dialog);
+		expect(document.querySelector("opend-touchpoint")).toBe(host);
+	});
+
+	// Deliberate contract change (OPEND-3363). This case used to assert that
+	// hiding the page took the modal down, and then that waking did not bring it
+	// back. The first half is no longer true: hiding cancels the request in
+	// flight and leaves the lease alone, which is what stopped a tab switch from
+	// tearing a campaign off the screen.
+	//
+	// The second half is what the case was really protecting, and it still holds
+	// — it just needs a sleep long enough to be a real one. The presentation is
+	// anchored to the authorization that opened it, so once that lapses, the
+	// offer arriving on wake is a new presentation and the device impression
+	// closes it.
+	it("does not re-present a displayed campaign after a sleep outlasts its authorization", async () => {
+		vi.useFakeTimers({
+			toFake: ["Date", "performance", "setTimeout", "clearTimeout", "setInterval", "clearInterval"],
+		});
+		vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+		let hidden = false;
+		vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => new Response(JSON.stringify(decision()), { status: 200 })),
+		);
+		render(<ProductionCampaignModal authenticated sessionSubject="user-a" />);
+		await act(async () => { await vi.advanceTimersByTimeAsync(16); });
+		expect(screen.getByRole("dialog")).toBeTruthy();
+		await act(async () => { await vi.advanceTimersByTimeAsync(16); });
+		expect(localStorage.getItem(marker())).toBe("1");
+
+		// Asleep past the sixty-second authorization this decision carries. The
+		// lease retires on its own deadline while the page is hidden.
+		hidden = true;
+		await act(async () => { fireEvent(document, new Event("visibilitychange")); });
+		await act(async () => { await vi.advanceTimersByTimeAsync(90_000); });
+		expect(screen.queryByRole("dialog")).toBeNull();
+
+		// Awake. The server still offers the same activity; the device impression
+		// has to close it, because this would be a second presentation.
+		hidden = false;
+		await act(async () => { fireEvent(document, new Event("visibilitychange")); });
+		await act(async () => { await vi.advanceTimersByTimeAsync(16); });
 		expect(screen.queryByRole("dialog")).toBeNull();
 	});
 	it("keeps the displayed campaign on screen when a poll fails and its retry recovers", async () => {
