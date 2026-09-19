@@ -593,7 +593,10 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('[P1] cold-start Home keeps the type row as its only surface while plugins settle at every breakpoint', async ({ page }) => {
+test('[P0] cold-start Home keeps the type capsule transparent and disabled while plugins settle', async ({ page }, testInfo) => {
+  await page.addInitScript(() => {
+    window.localStorage.removeItem('open-design:home-composer:chip');
+  });
   for (const viewport of [
     { width: 1280, height: 900 },
     { width: 800, height: 900 },
@@ -618,7 +621,14 @@ test('[P1] cold-start Home keeps the type row as its only surface while plugins 
       await expect(page.getByTestId('home-hero-examples-loading')).toHaveCount(0);
       await expect(page.getByTestId('home-hero-plugin-presets')).toHaveCount(0);
       await expect(typeRow).toBeDisabled();
-      await expect(homeTemplateTrigger(page)).toBeDisabled();
+      await expect(typeRow).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+      await expect(typeRow).toHaveCSS('border-top-width', '0px');
+      await expect(typeRow).toHaveCSS('box-shadow', 'none');
+      await expect(page.getByTestId('home-hero-template-picker')).not.toHaveAttribute('data-type');
+      await expect(page.getByTestId('home-hero-submit')).toBeDisabled();
+      await testInfo.attach(`home-type-loading-${viewport.width}`, {
+        body: await page.screenshot(), contentType: 'image/png',
+      });
     } finally {
       releasePlugins();
     }
@@ -632,6 +642,26 @@ test('[P1] cold-start Home keeps the type row as its only surface while plugins 
     await expect(typeRow).toBeVisible();
     await pickHomeTemplate(page, 'deck');
   }
+});
+
+test('[P0] failed initial catalog releases the type picker without claiming a default selection', async ({ page }) => {
+  let failCatalog = true;
+  await page.route('**/api/plugins', async (route) => {
+    await route.fulfill(failCatalog
+      ? { status: 503, json: { error: 'Catalog temporarily unavailable' } }
+      : { json: { plugins: HOME_PLUGINS } });
+  });
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  await expect(homeTemplateTrigger(page)).toBeEnabled();
+  await expect(page.getByTestId('home-hero-template-picker')).not.toHaveAttribute('data-type');
+  const menu = await openHomeTemplates(page);
+  await expect(menu.locator('[aria-selected="true"]')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+
+  failCatalog = false;
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await expect(homeTemplateTrigger(page)).toBeEnabled();
+  await expect(page.getByTestId('home-hero-template-picker')).toHaveAttribute('data-type', 'prototype');
 });
 
 test('[P1] last project list row keeps its overflow menu inside the viewport', async ({ page }) => {
