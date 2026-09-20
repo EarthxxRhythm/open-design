@@ -85,9 +85,9 @@ function task(
     inputStage: 'production',
     outcome,
     executionMode: 'simple',
-    // This historical production fixture predates the intent-resolution policy.
-    executionIntent: 'produce',
-    intentResolution: null,
+    settlementReason: outcome === 'completed' ? 'deliverable_changed' : null,
+    autoRoundCount: 1,
+    deliverableWritten: outcome === 'completed',
     planContractHash: 'sha256:plan',
     clarificationCount: 1,
     planContractRepairAttempts: 1,

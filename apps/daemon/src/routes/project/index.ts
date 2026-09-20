@@ -5753,7 +5753,7 @@ export function registerProjectArtifactRoutes(app: Express, ctx: RegisterProject
 
 }
 
-export interface RegisterProjectFileRoutesDeps extends RouteDeps<'db' | 'http' | 'paths' | 'uploads' | 'node' | 'projectStore' | 'projectFiles' | 'documents' | 'artifacts' | 'projectPreviewScopes'> {
+export interface RegisterProjectFileRoutesDeps extends RouteDeps<'db' | 'design' | 'http' | 'paths' | 'uploads' | 'node' | 'projectStore' | 'projectFiles' | 'documents' | 'artifacts' | 'projectPreviewScopes'> {
   verifyWorkspaceRequestAuthority?: VerifyWorkspaceRequestAuthority;
   authorizeProjectRequest?: AuthorizeProjectRequest;
   /** Startup-hydrated O(1) quarantine lookup for stale Team mirrors. */
@@ -5765,6 +5765,7 @@ export interface RegisterProjectFileRoutesDeps extends RouteDeps<'db' | 'http' |
 export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFileRoutesDeps) {
   const { db } = ctx;
   const { sendApiError, sendMulterError } = ctx.http;
+  const { design } = ctx;
   // The design-token suggestion route reads the design-system roots to resolve
   // a project's tokens, so this scope needs them alongside PROJECTS_DIR.
   const { PROJECTS_DIR, DESIGN_SYSTEMS_DIR, USER_DESIGN_SYSTEMS_DIR } = ctx.paths;
@@ -7306,6 +7307,14 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         ? req.body.prompt.trim()
         : null;
       const requestedSource = requestProjectFileVersionSource(req.body?.source);
+      if (requestedSource === 'manual') {
+        // A version the user saved by hand while an agent round is running is
+        // not the agent's write. The round's settlement subtracts these paths
+        // from the filesystem diff so a manual edit never reads as delivery.
+        for (const activeRun of design.runs.list({ projectId: project.id, status: 'running' })) {
+          (activeRun.userWrittenPaths ??= new Set<string>()).add(requestedFile.name);
+        }
+      }
       const fallbackPromptInfo = requestedSource === 'ai' && !manualPrompt ? latestProjectPrompt(project) : null;
       const versionOptions: {
         prompt: string | null;

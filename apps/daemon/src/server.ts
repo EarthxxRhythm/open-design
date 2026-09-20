@@ -37,6 +37,11 @@ import {
   isTodoWriteToolName,
   stopReasonIsTruncation,
   todoItemsFromTodoWriteInput,
+  todoSnapshotHasUnfinishedWork,
+} from '@open-design/contracts';
+import {
+  OD_NEXT_PROMPT_BUNDLE_SCHEMA_V2,
+  omitOdNextPromptBundlePriorTranscriptV2,
 } from '@open-design/contracts';
 import {
   renderUnfinishedTodoRecall,
@@ -512,16 +517,6 @@ import {
   getDetectedRuntimeVersions,
   ensureDetectedRuntimeCapabilities,
 } from './runtimes/detection.js';
-import { resolveBundledOdNextRuntimeCapability } from './runtimes/od-next-capability-gate.js';
-import {
-  createOdNextNativeBuildPackageBindings,
-  nativeBuildPackageBindingMap,
-} from './strategies/od-next/native-build-package.js';
-import {
-  resolveAutomaticContinuationEvidence,
-  type OdNextComplexProductionResolver,
-  type OdNextExecutionPreflightResolver,
-} from './strategies/od-next/automatic-continuation-service.js';
 import {
   antigravityAuthGuidance,
   antigravityQuotaGuidance,
@@ -562,17 +557,15 @@ import {
 } from './strategies/od-next/initial-prompt-bundle-service.js';
 import { createOdNextRunProtocol } from './strategies/od-next/protocol.js';
 import {
-  blockAutomaticContinuation,
-  prepareAutomaticStrategyContinuation,
+  OdNextAutomaticProductionError,
+  prepareAutomaticBuildRound,
   projectStrategyTask,
-  odNextTurnMayInferDirectEditCompletion,
-  odNextTurnMayInferProductionCompletion,
-} from './strategies/od-next/automatic-simple-production.js';
-import { readOdNextRolloutPolicy } from './strategies/od-next/rollout.js';
-import { createStrategyRunWriteEvidenceRecorder, strategyRunWriteEvidence } from './strategies/od-next/run-write-evidence.js';
-import { recoverPlanningIntentResolution } from './strategies/od-next/intent-resolution-recovery.js';
-import { isStrategyIntentResolutionRun, requiresStrategyIntentResolution, validateStrategyIntentResolutionReply } from './strategies/od-next/intent-resolution.js';
-import { startIntentResolution } from './strategies/od-next/intent-resolution-store.js';
+} from './strategies/od-next/build-round.js';
+import {
+  decideStrategyRunSettlement,
+  settleStrategyTask,
+} from './strategies/od-next/coordinator.js';
+import { strategyRunWriteEvidence } from './strategies/od-next/write-evidence.js';
 import {
   getStrategyTaskExecutionByRunId,
   reconcileStrategyTaskRunTerminal,
@@ -3093,14 +3086,6 @@ export interface StartServerOptions {
   staticDir?: string;
   /** Opaque child-process environment supplied by the runtime integration seam. */
   inheritedEnvironment?: (baseEnv?: NodeJS.ProcessEnv) => Record<string, string>;
-  /** Daemon-owned host capability facts. HTTP/model output cannot populate it. */
-  odNextExecutionPreflightResolver?: OdNextExecutionPreflightResolver | null;
-  /**
-   * Daemon-owned, runtime-neutral capability/Child facts for complex OD Next
-   * Production. Runtime adapters normalize their native events before this
-   * boundary; HTTP bodies, assistant prose, and raw stdout are never inputs.
-   */
-  odNextComplexProductionResolver?: OdNextComplexProductionResolver | null;
 }
 
 export function startAmrTerminalReportDeliveryAfterBind(
@@ -3130,8 +3115,6 @@ export async function startServer({
   runtime = null,
   staticDir = STATIC_DIR,
   inheritedEnvironment = () => ({}),
-  odNextExecutionPreflightResolver = null,
-  odNextComplexProductionResolver = null,
 }: StartServerOptions = {}) {
   host = normalizeDaemonBindHost(host);
   let resolvedPort = port;
@@ -7809,7 +7792,6 @@ export async function startServer({
     ),
   );
   const stopEvidenceDelivery = startEvidenceDelivery(RUNTIME_DATA_DIR);
-  const strategyWriteEvidence = createStrategyRunWriteEvidenceRecorder(db);
   const codexThreadCleanupOwner = createCodexThreadCleanupOwner();
   const design = {
     runs: createChatRunService({
@@ -7824,7 +7806,6 @@ export async function startServer({
       onEventEmitted: (run, record) => {
         if (!run.sideEffectLedger) run.sideEffectLedger = createRunSideEffectLedger();
         foldEventIntoRunSideEffectLedger(run.sideEffectLedger, record);
-        strategyWriteEvidence.observeToolStream(run);
         if (!run.perRequestUsageLedger) run.perRequestUsageLedger = createRunPerRequestUsageLedger();
         foldEventIntoPerRequestUsageLedger(run.perRequestUsageLedger, record);
         const data = record.data && typeof record.data === 'object' && !Array.isArray(record.data)
@@ -7847,7 +7828,6 @@ export async function startServer({
           };
         }
         if (status !== 'failed' && status !== 'canceled') return;
-        strategyWriteEvidence.finish(run);
         try {
           reconcileStrategyTaskRunTerminal(db, { runId: run.id, status });
           const latestTask = getStrategyTaskExecutionByRunId(db, run.id);
@@ -7988,7 +7968,6 @@ export async function startServer({
     appVersion: currentAppVersion(),
     appVersionInfo: currentAppVersionInfo(),
     db,
-    recoverBeforeInterrupt: (state, states, now) => recoverPlanningIntentResolution(db, state, states, now),
     reportLangfuse: reportRunCompletedFromDaemon,
     finalizeTerminalLocally: createAmrTerminalReportFinalizer(amrTerminalReportOutbox),
     taskObservationModeForRun: (runId) => taskObservationRollout.modeForRun(runId),
@@ -9130,6 +9109,7 @@ export async function startServer({
   });
   registerProjectFileRoutes(app, {
     db,
+    design,
     http: httpDeps,
     paths: pathDeps,
     uploads: uploadDeps,
@@ -10829,13 +10809,12 @@ export async function startServer({
     }
     const persistedStrategyFinalText = strategyRunMapping?.finalText.text ?? null;
     const isOdNextInitialRun = Boolean(strategyTaskAtStart && isInitialStrategyTaskRun(strategyTaskAtStart, run.id));
-    const isIntentResolution = Boolean(strategyTaskAtStart && isStrategyIntentResolutionRun(strategyTaskAtStart, run.id));
     const hasExplicitCurrentPrompt = Object.prototype.hasOwnProperty.call(
       chatBody,
       'currentPrompt',
     );
     const strategyProtocol = strategyTaskAtStart
-      ? createOdNextRunProtocol(strategyRunMapping)
+      ? createOdNextRunProtocol()
       : null;
     let strategyProtocolResult = null;
     let strategyToolUseCount = 0;
@@ -11566,7 +11545,6 @@ export async function startServer({
       }
       run.artifactCount = outcome.artifactCount;
       run.artifactOutcome = outcome;
-      strategyWriteEvidence.finish(run);
       return outcome;
     };
     const resolveRunArtifactOutcomeBeforeFinishAsync = async () => {
@@ -11925,15 +11903,22 @@ export async function startServer({
           invalidationReason: null,
         }
       : resolvedAgentResumeCtx;
+    // A build round the daemon claimed as a delta into the planning round's
+    // native session can only go out into that session: the request turn it
+    // carries makes no sense to a fresh process. The decision to continue was
+    // taken seconds ago when the round was claimed, so losing the session in
+    // between is rare; when it happens the Run fails with a named cause and
+    // the failure card offers the retry, which opens a new round with the
+    // conversation in hand. A round claimed as a full Bundle runs anywhere.
     if (
       strategyTaskAtStart
       && !isOdNextInitialRun
+      && strategyRunMapping?.finalText.kind === 'turn'
       && !agentResumeCtx.isResuming
     ) {
-      const blocked = blockAutomaticContinuation(db, { runId: run.id });
-      if (blocked) run.strategyTask = projectStrategyTask(blocked, run.id);
-      throw new Error(
-        'OD Next continuation requires the locked native session; cold re-seeding is forbidden.',
+      return failRun(
+        'OD_NEXT_SESSION_UNAVAILABLE',
+        'The agent session this build round continues is no longer available.',
       );
     }
     const publishNativeSessionRecoveryMetadata = () => {
@@ -12218,9 +12203,21 @@ export async function startServer({
           odNextTaskInputSnapshot?.requestInputText ?? '',
         ].filter(Boolean).join('\n\n---\n\n')
       : '';
+    // The first round of a task continuing an agent session that already holds
+    // the conversation goes out without its transcript slot, exactly as the
+    // ordinary chat path skips the transcript on a resumed turn. The frozen
+    // Bundle keeps the transcript for the rounds the daemon starts later.
+    const odNextExactSendDerivation = strategyTaskAtStart
+      && isOdNextInitialRun
+      && agentResumePromptPolicy.skipTranscript
+      && strategyRunMapping?.finalText.schema === OD_NEXT_PROMPT_BUNDLE_SCHEMA_V2
+      ? 'prior_transcript_omitted'
+      : null;
     const composedResult = strategyTaskAtStart
       ? {
-          composedPrompt: persistedStrategyFinalText!,
+          composedPrompt: odNextExactSendDerivation === 'prior_transcript_omitted'
+            ? omitOdNextPromptBundlePriorTranscriptV2(persistedStrategyFinalText!)
+            : persistedStrategyFinalText!,
           clientInstructionPrompt: '',
           instructionPrompt: '',
         }
@@ -12340,7 +12337,8 @@ export async function startServer({
             finalText: composed,
             persisted: strategyRunMapping.finalText,
             stage: strategyRunMapping.inputStage,
-            ...(strategyRunMapping.purpose ? { purpose: strategyRunMapping.purpose } : {}),
+            taskRunIndex: strategyRunMapping.taskRunIndex,
+            ...(odNextExactSendDerivation ? { derivation: odNextExactSendDerivation } : {}),
           })
         : promptTelemetry;
     } catch (error) {
@@ -12829,23 +12827,6 @@ export async function startServer({
       { allowRetry = true } = {},
     ) => {
       lifecycle.mark('finalize_start');
-      // A clean child exit does not complete a task rejected by the strategy
-      // gate. Reconcile before persisting the message or publishing the Run
-      // terminal event, while retaining the actual process exit code.
-      if (
-        status === 'succeeded'
-        && run.strategyTask?.outcome === 'blocked'
-        && run.strategyTask.activeRunId === run.id
-      ) {
-        status = 'failed';
-        allowRetry = false;
-        const reasonCodes = run.strategyTask.blockedContext?.reasonCodes ?? [];
-        send('error', createSseErrorPayload(
-          'OD_NEXT_TASK_BLOCKED',
-          `The task could not complete${reasonCodes.length ? `: ${reasonCodes.join(', ')}` : '.'}`,
-          { retryable: false, details: { reasonCodes } },
-        ));
-      }
       flushRunMessageEvents(run);
       // Persist the transport-level close mechanism before classifying this
       // attempt. Runtime fatal/stream signals are only known in the close
@@ -12926,7 +12907,7 @@ export async function startServer({
         hasNativeSession: !!run.conversationId && !!liveSessionId,
       });
       if (
-        allowRetry && !isIntentResolution &&
+        allowRetry &&
         postToolResumeDecision?.shouldRetry &&
         !design.runs.isTerminal(run.status) &&
         run.conversationId &&
@@ -12986,7 +12967,7 @@ export async function startServer({
         attemptCount: run.retryAttemptCount ?? 0,
         sideEffects,
       });
-      if (allowRetry && !isIntentResolution && decision.shouldRetry && !design.runs.isTerminal(run.status)) {
+      if (allowRetry && decision.shouldRetry && !design.runs.isTerminal(run.status)) {
         run.retryOriginalFailure ??= failure ?? undefined;
         if ((run.retryAttemptCount ?? 0) === 0) {
           run.retryOriginFailure = failure ? { ...failure } : null;
@@ -13035,7 +13016,7 @@ export async function startServer({
         sideEffects.liveArtifactSeen
       );
       const resumableFailure =
-        !isIntentResolution && result === 'failed' &&
+        result === 'failed' &&
         runtimeResumesSessionById(def) &&
         !!run.conversationId &&
         !!liveSessionId &&
@@ -13570,33 +13551,6 @@ export async function startServer({
     let args;
     const observeClaudeNativeChildBehavior =
       def.id === 'claude' && strategyTaskAtStart !== null;
-    const nativeBuildPackageBindings =
-      def.id === 'claude'
-      && strategyTaskAtStart?.executionMode === 'complex'
-      && strategyTaskAtStart.inputStage === 'production'
-      && strategyTaskAtStart.planContract
-      && strategyTaskAtStart.planContractHash
-      && strategyRunMapping
-        ? (() => {
-            const version = run.preflightAgentCliVersion
-              ?? getDetectedRuntimeVersions(def.id)?.agentCliVersion;
-            const capability = resolveBundledOdNextRuntimeCapability({
-              agentId: def.id,
-              agentCliVersion: version,
-            });
-            if (capability.reason !== 'capability_resolved') {
-              throw new TypeError(
-                'Claude native Build Package bindings require the exact verified CLI tuple.',
-              );
-            }
-            return createOdNextNativeBuildPackageBindings({
-              taskExecutionId: strategyTaskAtStart.taskExecutionId,
-              taskRunIndex: strategyRunMapping.taskRunIndex,
-              planContractHash: strategyTaskAtStart.planContractHash,
-              plan: strategyTaskAtStart.planContract,
-            });
-          })()
-        : [];
     try {
       // Optional argv flags are gated on the `--help` capability map, which used
       // to be filled only by `GET /api/agents`. Probe it here so a daemon that
@@ -13618,9 +13572,6 @@ export async function startServer({
             def.id === 'codex'
             && run.externalPluginAnalytics?.externalPluginId
               === OPEN_DESIGN_PLUGIN_ID,
-          ...(nativeBuildPackageBindings.length > 0
-            ? { nativeBuildPackageBindings }
-            : {}),
           ...(observeClaudeNativeChildBehavior
             ? { observeNativeChildBehavior: true }
             : {}),
@@ -14357,16 +14308,6 @@ export async function startServer({
       }
       lifecycle.mark('launch_preflight_end');
       lifecycle.mark('process_spawn_start');
-      if (isIntentResolution) {
-        if (run.cancelRequested || design.runs.isTerminal(run.status)) {
-          cleanupPromptFile();
-          revokeToolToken('child_exit');
-          unregisterChatAgentEventSink();
-          cleanupOdNextRunInputProjection();
-          return;
-        }
-        startIntentResolution(db, strategyTaskAtStart.taskExecutionId, run.id);
-      }
       // A plain-text stdin prompt is handed over as a complete file at spawn;
       // framed stdin protocols (stream-json, JSON-RPC) keep the pipe. The
       // agent stays on record until its process group is gone, so a daemon
@@ -15475,13 +15416,6 @@ export async function startServer({
               }),
             }
           : {}),
-        ...(nativeBuildPackageBindings.length > 0
-          ? {
-              nativeBuildPackageBindings: nativeBuildPackageBindingMap(
-                nativeBuildPackageBindings,
-              ),
-            }
-          : {}),
       });
       child.stdout.on('data', (chunk) => claude.feed(chunk));
       child.on('close', (code, signal) => {
@@ -16152,15 +16086,19 @@ export async function startServer({
           resumeSessionId: agentResumePromptPolicy.resumeSessionId,
         }).autoReseedFullTranscript
       ) {
-        if (strategyTaskAtStart && !isOdNextInitialRun) {
-          const blocked = blockAutomaticContinuation(db, { runId: run.id });
-          if (blocked) run.strategyTask = projectStrategyTask(blocked, run.id);
+        if (strategyTaskAtStart && !isOdNextInitialRun && strategyRunMapping?.finalText.kind === 'turn') {
+          // The build round was claimed as a delta into the planning round's
+          // session, and that session turned out to be gone. Re-running the
+          // same turn in a fresh process would hand a "continue" delta to an
+          // agent that never saw the plan, so the Run fails with a named cause;
+          // the failure card's retry opens a new round with the conversation.
+          clearAgentSession(db, run.conversationId, def.id);
           send('error', createSseErrorPayload(
-            'AGENT_SESSION_RESUME_FAILED',
-            'The locked OD Next native session is unavailable; the task was blocked without cold re-seeding.',
-            { retryable: false },
+            'OD_NEXT_SESSION_UNAVAILABLE',
+            'The agent session this build round continues is no longer available.',
+            { retryable: true },
           ));
-          return finishWithRetryDecision('failed', code ?? 1, signal ?? null);
+          return finishWithRetryDecision('failed', code ?? 1, signal ?? null, { allowRetry: false });
         }
         // The resumed upstream session is gone (expired / pruned). Clear the dead
         // handle and TRANSPARENTLY re-run this same turn with a fresh session +
@@ -16698,34 +16636,6 @@ export async function startServer({
             run.authenticatedDoneConclusion = doneCapture.authenticatedConclusion;
           }
         }
-        let deliverableValid = false;
-        // A turn that emitted no Runtime State can still have delivered. The
-        // coordinator may only infer that Direct Edit completion from verified
-        // physical delivery, so resolve the evidence here too — otherwise the
-        // inference has nothing to accept and correct work is discarded.
-        const mayInferDirectEditCompletion = Boolean(
-          strategyTaskAtStart
-          && (
-            odNextTurnMayInferDirectEditCompletion(
-              strategyTaskAtStart,
-              strategyProtocolResult,
-            )
-            || odNextTurnMayInferProductionCompletion(
-              strategyTaskAtStart,
-              strategyProtocolResult,
-            )
-          ),
-        );
-        const strategyPlanningOnly = isIntentResolution || strategyTaskAtStart?.executionIntent === 'plan_only'
-          || strategyProtocolResult?.runtimeState?.executionIntent === 'plan_only';
-        const strategyCompletionCandidate = Boolean(
-          strategyTaskAtStart
-          && !strategyPlanningOnly
-          && (
-            strategyProtocolResult?.runtimeState?.outcome === 'completed'
-            || mayInferDirectEditCompletion
-          ),
-        );
         let processTreeQuiescentForFinalization = true;
         // Every successful physical Run can produce a final Web deliverable,
         // even when OD Next Runtime State is absent. Resolve the settled
@@ -16778,17 +16688,10 @@ export async function startServer({
             console.warn('[deliverable] could not retain verified prototype entry');
           }
         }
-        if (strategyCompletionCandidate) {
+        // Recorded as a fact on the Run status for every strategy round; the
+        // task's verdict no longer reads it.
+        if (strategyTaskAtStart) {
           design.runs.setDeliverableValidation?.(run, deliverable);
-          deliverableValid = deliverable.valid;
-          if (!deliverable.valid && strategyTaskAtStart) {
-            console.info('[od-next-task] completion evidence rejected', {
-              taskExecutionId: strategyTaskAtStart.taskExecutionId,
-              runId: run.id,
-              inputStage: strategyTaskAtStart.inputStage,
-              validation: deliverable.validation,
-            });
-          }
         }
         // Host-owned syntax finalization is based on physical delivery, not on
         // OD Next strategy identity. It never resumes or prompts the Agent.
@@ -16829,7 +16732,7 @@ export async function startServer({
           // A syntax warning is durable quality evidence, not an execution
           // failure. Continue the normal artifact/ref/version delivery path.
         }
-        if (strategyCompletionCandidate) {
+        if (strategyTaskAtStart) {
           // Observation only (this branch has no repair loop): did a phone-app
           // prototype actually ship inside the staged handset shell? Feeds
           // run_finished analytics so the rollout can measure shell adoption.
@@ -16914,131 +16817,157 @@ export async function startServer({
           console.warn('[sessions] delivered session persistence failed', err);
         }
         if (strategyTaskAtStart && strategyProtocolResult) {
+          // Settle the round on what the host saw. Nothing the agent wrote can
+          // fail the round here: the physical Run succeeded, and the only
+          // question left is whether the task is done, waiting on the user,
+          // or owed its one automatic build round.
           let automaticContinuationChatBody = null;
-          let executionPreflight;
-          let complexRuntimeEvidence;
+          const settlementFacts = {
+            visibleText: strategyProtocolResult.visibleText,
+            declarations: strategyProtocolResult.declarations,
+            writeEvidence: strategyRunWriteEvidence(run, {
+              projectKind: projectRecord?.metadata?.kind ?? null,
+            }),
+            truncated: Boolean(run.truncatedMidTurn),
+            todoUnfinished: todoSnapshotHasUnfinishedWork(run.lastTodoSnapshot),
+          };
+          const decision = decideStrategyRunSettlement(strategyTaskAtStart, settlementFacts);
+          design.runs.emit(run, 'diagnostic', {
+            type: 'strategy_round_settlement',
+            taskExecutionId: strategyTaskAtStart.taskExecutionId,
+            runId: run.id,
+            inputStage: strategyTaskAtStart.inputStage,
+            action: decision.action,
+            reason: decision.reason,
+            deliverableWritten: settlementFacts.writeEvidence.deliverableWritten,
+            writeEvidenceSources: settlementFacts.writeEvidence.sources,
+            filesWritten: settlementFacts.writeEvidence.filesWritten,
+            declarationBlockSeen: strategyProtocolResult.declarationBlockSeen,
+          });
+          // Cancellation can win while the artifact outcome was being
+          // resolved. Never let a stale settlement mutate the terminal task.
+          if (run.cancelRequested || design.runs.isTerminal(run.status)) return;
+          const settle = (reason, deliverableWritten) => {
+            const settled = settleStrategyTask(db, {
+              taskExecutionId: strategyTaskAtStart.taskExecutionId,
+              runId: run.id,
+              reason,
+              deliverableWritten,
+            });
+            run.strategyTask = projectStrategyTask(settled, run.id);
+          };
           try {
-            let resolution: ReturnType<typeof validateStrategyIntentResolutionReply> | null = null;
-            if (isIntentResolution) {
+            if (decision.action === 'settle') {
+              settle(decision.reason, decision.deliverableWritten);
+            } else {
+              // The build round continues the planning round's native session
+              // when the agent can, and otherwise starts a fresh process with
+              // the conversation so far in its Bundle. The same judgement the
+              // Run start makes, taken now so the claimed text matches the
+              // transport it will use.
+              const buildRoundResume = Boolean(
+                agentSupportsSessionResume
+                && run.conversationId
+                && resolveAgentResumeContext(db, {
+                  conversationId: run.conversationId,
+                  agentId: def.id,
+                  currentModel: safeModel ?? null,
+                  currentCwd: effectiveCwd,
+                  currentAssistantMessageId: null,
+                }).isResuming,
+              );
+              let prepared;
               try {
-                resolution = validateStrategyIntentResolutionReply(strategyTaskAtStart, {
-                  runId: run.id, parsed: strategyProtocolResult, toolUseCount: strategyToolUseCount,
-                  completionEvidence: { physicalStatus: 'succeeded', deliverableValid, ...strategyRunWriteEvidence(run) },
+                prepared = prepareAutomaticBuildRound({
+                  db,
+                  service: internalRunCreation,
+                  task: strategyTaskAtStart,
+                  reason: decision.reason,
+                  resume: buildRoundResume,
+                  planningRoundVisibleText: strategyProtocolResult.visibleText,
+                  ...(typeof chatBody.locale === 'string' && chatBody.locale
+                    ? { locale: chatBody.locale }
+                    : {}),
+                  createMeta: (instruction, taskRunIndex) => {
+                    const identity = createHash('sha256')
+                      .update(`${strategyTaskAtStart.taskExecutionId}:production:${taskRunIndex}`)
+                      .digest('hex');
+                    const meta = {
+                      ...chatBody,
+                      // One logical task, several physical Runs. The chain is
+                      // only reassemblable downstream if each Run reports the
+                      // lineage of the Run that caused it.
+                      analyticsHints: {
+                        ...(chatBody.analyticsHints ?? {}),
+                        ...inheritedRunLineageHints(run, chatBody, taskRunIndex),
+                      },
+                      projectId: strategyTaskAtStart.projectId,
+                      conversationId: strategyTaskAtStart.conversationId,
+                      agentId: strategyTaskAtStart.selectedAgentId,
+                      appliedPluginSnapshotId: strategyTaskAtStart.snapshotId,
+                      pluginId: strategyTaskAtStart.strategyId,
+                      assistantMessageId: `odnext_assistant_${identity.slice(0, 32)}`,
+                      clientRequestId: `odnext_run_${identity.slice(0, 40)}`,
+                      message: instruction,
+                      currentPrompt: instruction,
+                      titleGeneration: undefined,
+                      userMessageId: undefined,
+                      odNextTaskInputSnapshot:
+                        run.odNextTaskInputSnapshot ?? chatBody.odNextTaskInputSnapshot ?? null,
+                    };
+                    automaticContinuationChatBody = {
+                      ...meta,
+                      requestFingerprint: createHash('sha256')
+                        .update(JSON.stringify({
+                          taskExecutionId: strategyTaskAtStart.taskExecutionId,
+                          sourceRunId: run.id,
+                          stage: 'production',
+                          taskRunIndex,
+                          instruction,
+                          projectId: meta.projectId,
+                          conversationId: meta.conversationId,
+                          agentId: meta.agentId,
+                          snapshotId: meta.appliedPluginSnapshotId,
+                        }))
+                        .digest('hex'),
+                    };
+                    return automaticContinuationChatBody;
+                  },
                 });
-              } catch {
-                // The coordinator below persists and rejects the actual reply.
-                // Invalid supplemental output must never prepare production facts.
+              } catch (error) {
+                if (
+                  error instanceof OdNextAutomaticProductionError
+                  && error.reasonCodes.includes('od_next_cold_start_unavailable')
+                ) {
+                  // A task frozen on the first Bundle version cannot start its
+                  // build round cold. It settles with the round's reason and
+                  // the chat offers to continue the remaining work.
+                  settle(decision.reason, false);
+                  prepared = null;
+                } else {
+                  throw error;
+                }
+              }
+              if (prepared) {
+                run.strategyTask = projectStrategyTask(prepared.task, run.id);
+                design.runs.emit(run, 'diagnostic', {
+                  type: 'strategy_build_round_claimed',
+                  taskExecutionId: strategyTaskAtStart.taskExecutionId,
+                  sourceRunId: run.id,
+                  nextRunId: prepared.prepared.run.id,
+                  transport: prepared.transport,
+                  reason: decision.reason,
+                });
+                if (prepared.prepared.kind === 'ready') {
+                  const nextRun = prepared.prepared.run;
+                  nextRun.strategyTask = projectStrategyTask(prepared.task, nextRun.id);
+                  pendingStrategyContinuation = {
+                    run: nextRun,
+                    chatBody: automaticContinuationChatBody,
+                  };
+                }
               }
             }
-            const effectiveParsed = resolution?.parsed ?? strategyProtocolResult;
-            const planningOnly = resolution ? resolution.executionIntent === 'plan_only' : strategyPlanningOnly;
-            const intentPending = requiresStrategyIntentResolution(strategyTaskAtStart, effectiveParsed);
-            if (!planningOnly && !intentPending) {
-              const lockedPlan = effectiveParsed.planContract ?? effectiveParsed.repairPlanContract ?? strategyTaskAtStart.planContract;
-              const evidence = await resolveAutomaticContinuationEvidence({
-                plan: lockedPlan,
-                phase: effectiveParsed.runtimeState?.outcome === 'completed'
-                  ? 'completion'
-                  : 'eligibility',
-                task: strategyTaskAtStart,
-                run,
-                localSyntheticCanary: readOdNextRolloutPolicy().localSyntheticCanary
-                  && process.env.NODE_ENV !== 'production',
-                executionPreflightResolver: odNextExecutionPreflightResolver,
-                complexProductionResolver: odNextComplexProductionResolver,
-                runtimeCapabilitySnapshot: chatBody.runtimeCapabilitySnapshot,
-              });
-              executionPreflight = evidence.executionPreflight;
-              complexRuntimeEvidence = evidence.complexRuntimeEvidence;
-            }
-          } catch (error) {
-            if (run.cancelRequested || design.runs.isTerminal(run.status)) return;
-            send('error', createSseErrorPayload(
-              'OD_NEXT_EXECUTION_PREFLIGHT_FAILED',
-              error instanceof Error ? error.message : String(error),
-              { retryable: false },
-            ));
-            finishStrategyAwarePhysicalRun('failed', 1, signal);
-            return;
-          }
-          // Cancellation can win while the daemon-owned resolver is awaiting
-          // host facts. Never let the stale continuation allocate a new Run or
-          // mutate the already-terminal task after that boundary.
-          if (run.cancelRequested || design.runs.isTerminal(run.status)) return;
-          let transition;
-          try {
-            transition = prepareAutomaticStrategyContinuation({
-              db,
-              service: internalRunCreation,
-              task: strategyTaskAtStart,
-              parsed: strategyProtocolResult,
-              toolUseCount: strategyToolUseCount,
-              // OPEND-2765: the production stage closes with the keyed host
-              // protocols, whose follow-up suggestions are user-visible prose.
-              ...(typeof chatBody.locale === 'string' && chatBody.locale
-                ? { locale: chatBody.locale }
-                : {}),
-              ...(executionPreflight ? { executionPreflight } : {}),
-              ...(complexRuntimeEvidence ? { complexRuntimeEvidence } : {}),
-              ...(
-                strategyTaskAtStart.intentResolution
-                || strategyProtocolResult.runtimeState?.outcome === 'completed'
-                || strategyPlanningOnly
-                || mayInferDirectEditCompletion
-                  ? {
-                      completionEvidence: {
-                        physicalStatus: 'succeeded',
-                        deliverableValid,
-                        ...strategyRunWriteEvidence(run),
-                      },
-                    }
-                  : {}),
-              createMeta: (stage, instruction, taskRunIndex) => {
-                const identity = createHash('sha256')
-                  .update(`${strategyTaskAtStart.taskExecutionId}:${stage}:${taskRunIndex}`)
-                  .digest('hex');
-                const meta = {
-                  ...chatBody,
-                  // One logical task, several physical Runs. The chain is only
-                  // reassemblable downstream if each Run reports the lineage of
-                  // the Run that caused it.
-                  analyticsHints: {
-                    ...(chatBody.analyticsHints ?? {}),
-                    ...inheritedRunLineageHints(run, chatBody, taskRunIndex),
-                  },
-                  projectId: strategyTaskAtStart.projectId,
-                  conversationId: strategyTaskAtStart.conversationId,
-                  agentId: strategyTaskAtStart.selectedAgentId,
-                  appliedPluginSnapshotId: strategyTaskAtStart.snapshotId,
-                  pluginId: strategyTaskAtStart.strategyId,
-                  assistantMessageId: `odnext_assistant_${identity.slice(0, 32)}`,
-                  clientRequestId: `odnext_run_${identity.slice(0, 40)}`,
-                  message: instruction,
-                  currentPrompt: instruction,
-                  titleGeneration: undefined,
-                  userMessageId: undefined,
-                  odNextTaskInputSnapshot:
-                    run.odNextTaskInputSnapshot ?? chatBody.odNextTaskInputSnapshot ?? null,
-                };
-                automaticContinuationChatBody = {
-                  ...meta,
-                  requestFingerprint: createHash('sha256')
-                    .update(JSON.stringify({
-                      taskExecutionId: strategyTaskAtStart.taskExecutionId,
-                      sourceRunId: run.id,
-                      stage,
-                      taskRunIndex,
-                      instruction,
-                      projectId: meta.projectId,
-                      conversationId: meta.conversationId,
-                      agentId: meta.agentId,
-                      snapshotId: meta.appliedPluginSnapshotId,
-                    }))
-                    .digest('hex'),
-                };
-                return automaticContinuationChatBody;
-              },
-            });
           } catch (error) {
             if (run.cancelRequested || design.runs.isTerminal(run.status)) return;
             send('error', createSseErrorPayload(
@@ -17048,15 +16977,6 @@ export async function startServer({
             ));
             finishStrategyAwarePhysicalRun('failed', 1, signal);
             return;
-          }
-          run.strategyTask = projectStrategyTask(transition.result.task, run.id);
-          if (transition.start && transition.prepared?.kind === 'ready') {
-            const nextRun = transition.prepared.run;
-            nextRun.strategyTask = projectStrategyTask(transition.result.task, nextRun.id);
-            pendingStrategyContinuation = {
-              run: nextRun,
-              chatBody: automaticContinuationChatBody,
-            };
           }
         }
       }

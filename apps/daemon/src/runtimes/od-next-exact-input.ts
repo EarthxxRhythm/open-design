@@ -65,6 +65,12 @@ export type OdNextExactInputClassification =
   | 'out_of_band'
   | 'excluded';
 
+/**
+ * `request` is the first round; `production` is the build round. The
+ * clarification and contract-repair stages are no longer composed — a question
+ * is answered by the user's next message, which opens a new task — but rows
+ * written by earlier daemons still carry them.
+ */
 export type OdNextExactInputStage =
   | 'request'
   | 'clarification'
@@ -77,7 +83,7 @@ export type OdNextExactInputEntry = Readonly<{
   source: string;
   owner: string;
   textTarget?: OdNextBundleNodePathV2;
-  stage?: 'clarification' | 'contract_repair' | 'production';
+  stage?: 'production';
   note: string;
 }>;
 
@@ -315,10 +321,10 @@ export const OD_NEXT_EXACT_INPUT_MAP_V1 = [
   {
     id: 'prior_transcript',
     classification: 'initial_bundle',
-    source: 'buildDaemonPriorTranscript(history, agentId) -> ChatRequest.priorTranscript',
+    source: 'buildDaemonPriorTranscript(history, agentId) -> ChatRequest.priorTranscript; appendDaemonTranscript(frozen prior_transcript, [user_first_prompt, planning round visible text]) for a cold-started build round',
     owner: 'bundle context serializer',
     textTarget: 'context/prior_transcript',
-    note: 'Agent-scoped transcript ending before the canonical current user turn.',
+    note: 'Two producers, one builder: the web client renders the agent-scoped history before the current user turn for the first round; the daemon extends that frozen slot with the user turn and the planning round it just streamed for a build round that starts a fresh process. Omitted on the wire when the first round continues a session that already holds it.',
   },
   {
     id: 'request_text',
@@ -343,28 +349,20 @@ export const OD_NEXT_EXACT_INPUT_MAP_V1 = [
     note: 'Live linked-directory paths are excluded; stable linked-dir:N aliases are emitted while access stays out of band.',
   },
   {
-    id: 'clarification_turn',
-    classification: 'stage_turn',
-    source: 'composeOdNextStrategyContinuationV2(stage=clarification)',
-    owner: 'turn serializer',
-    stage: 'clarification',
-    note: 'Existing strategy state-machine continuation; never re-seeds the first Bundle.',
-  },
-  {
-    id: 'contract_repair_turn',
-    classification: 'stage_turn',
-    source: 'composeOdNextStrategyContinuationV2(stage=contract_repair)',
-    owner: 'turn serializer',
-    stage: 'contract_repair',
-    note: 'Existing strategy state-machine continuation; never re-seeds the first Bundle.',
-  },
-  {
     id: 'production_turn',
     classification: 'stage_turn',
     source: 'composeOdNextStrategyContinuationV2(stage=production)',
     owner: 'turn serializer',
     stage: 'production',
-    note: 'Existing strategy state-machine continuation; never re-seeds the first Bundle.',
+    note: 'The build round as a delta into the planning round\'s continued native session.',
+  },
+  {
+    id: 'production_bundle',
+    classification: 'stage_turn',
+    source: 'composeOdNextColdBuildRoundBundle(frozen Bundle, planning round visible text)',
+    owner: 'build-round bundle deriver',
+    stage: 'production',
+    note: 'The build round for an agent that cannot continue its session: the frozen first-round Bundle with the transcript extended and the build instruction as its user turn.',
   },
   {
     id: 'project_attachment_references',
@@ -491,10 +489,10 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
     id: 'prior_transcript',
     classification: 'initial_bundle',
     producer: 'request',
-    source: 'buildDaemonPriorTranscript(history, agentId) -> ChatRequest.priorTranscript',
+    source: 'buildDaemonPriorTranscript(history, agentId) -> ChatRequest.priorTranscript; daemon-extended for a cold-started build round',
     owner: 'Task 02 transcript/context serializer',
     textTarget: 'context/prior_transcript',
-    note: 'Contains only agent-scoped history before the latest user turn; ChatRequest.message remains a legacy transport compatibility field.',
+    note: 'Contains only agent-scoped history before the latest user turn; ChatRequest.message remains a legacy transport compatibility field. The daemon extends the frozen slot itself for a build round that starts a fresh process.',
   },
   {
     id: 'current_user_turn',
