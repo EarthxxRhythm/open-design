@@ -9,19 +9,6 @@ export const OD_NEXT_PLAN_CONTRACT_BLOCK = 'open-design-plan-contract' as const;
 export const OD_NEXT_RUNTIME_STATE_BLOCK = 'open-design-runtime-state' as const;
 export const OD_NEXT_BUNDLED_STRATEGY_SCHEMA = 'open-design.bundled-strategy/v2' as const;
 
-/**
- * The reason a task carries when the agent itself declared the turn blocked and
- * raised no machine code of its own.
- *
- * Shared because it is the one blocked verdict whose visible text can be taken
- * as the explanation. Every other block is a gate the agent did not ask for —
- * a missing Runtime State, an unresolvable deliverable, an unproven session —
- * and the prose sitting next to it is the agent's ordinary reply, not an
- * account of the stop. Reading the code, rather than the presence of text,
- * keeps those two apart.
- */
-export const OD_NEXT_AGENT_DECLARED_BLOCK_REASON = 'od_next_agent_declared_block' as const;
-
 export const StrategyTaskTypeV2Schema = z.enum([
   'prototype',
   'ppt',
@@ -253,11 +240,13 @@ const StrategyTaskProjectionIdentityV2Schema = z.object({
 }).strict();
 
 /**
- * Client-facing attribution for a blocked task projection: the protocol gate's
- * reason codes plus the agent-visible text of the rejected turn (null when the
- * turn had no visible text). Mirrors the daemon task store's persisted
+ * Client-facing attribution for a blocked task projection: the reason codes
+ * the daemon recorded when the task's Run failed before the round settled
+ * (`od_next_physical_run_interrupted`), plus the agent-visible text of that
+ * turn (null when it had none). Mirrors the daemon task store's persisted
  * `blockedContext`; present only when the projected outcome is `blocked`, so
- * the UI can terminate the turn's form interaction and explain why.
+ * the failure card can name the reason when the Run's own error frame was
+ * lost.
  */
 const StrategyTaskBlockedContextV2Schema = z.object({
   reasonCodes: z.array(z.string().min(1)).min(1),
