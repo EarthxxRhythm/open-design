@@ -6993,8 +6993,10 @@ function printProjectShareHelp() {
                     Publish a project file using the same endpoint as the UI.
   od project share get <id> --path <file> [--json]
                     Read the current publication (null when not published).
+  od project share status <id> --path <file> [--json]
+                    Alias for get.
 
-Only publish and get are supported by this command.
+Only publish, get, and status (an alias for get) are supported by this command.
 
 Common options:
   --daemon-url <url>   OpenDesign daemon HTTP base.
@@ -7009,13 +7011,14 @@ async function runProjectShare(args) {
     printProjectShareHelp();
     process.exit(args.length === 0 ? 2 : 0);
   }
-  const [action, ...rest] = args;
+  const [requestedAction, ...rest] = args;
+  const action = requestedAction === 'status' ? 'get' : requestedAction;
   const stringFlags = new Set(['path', 'daemon-url', 'workspace', 'workspace-member']);
   let flags;
   try {
     flags = parseFlags(rest, { string: stringFlags, boolean: new Set(['json']) });
   } catch {
-    console.error('Usage: od project share <publish|get> <id> --path <file> [--json]. See --help for accepted flags.');
+    console.error('Usage: od project share <publish|get|status> <id> --path <file> [--json]. See --help for accepted flags.');
     process.exit(2);
   }
   const positional = positionalArgs(rest, stringFlags);
@@ -7024,7 +7027,7 @@ async function runProjectShare(args) {
   const missingFlagValue = [...stringFlags].some((key) =>
     typeof flags[key] === 'string' && (!flags[key].trim() || flags[key].startsWith('--')));
   if (!['publish', 'get'].includes(action) || positional.length !== 1 || !id?.trim() || !filePath || missingFlagValue) {
-    console.error('Usage: od project share <publish|get> <id> --path <file> [--json]');
+    console.error('Usage: od project share <publish|get|status> <id> --path <file> [--json]');
     process.exit(2);
   }
   // Validate before discovery; malformed invocations must not contact a daemon.
@@ -7073,6 +7076,8 @@ async function runProject(args) {
                     Publish a project file.
   od project share get <id> --path <file> [--json]
                     Read the current publication.
+  od project share status <id> --path <file> [--json]
+                    Alias for get.
   od project revoke-public-link <id> --path <file> --url <public-url>
                     Revoke a public file link whose local publication record
                     was lost during an older daemon restart or upgrade.
