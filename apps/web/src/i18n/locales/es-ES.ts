@@ -3495,6 +3495,8 @@ export const esES: Dict = {
   'assistant.doneLabel': 'Listo',
   'assistant.awaitingReplyLabel': 'Esperando respuesta',
   'assistant.canceledLabel': 'Detenido manualmente',
+  'assistant.canceledByRestartLabel': 'Detenido por un reinicio de la aplicación',
+  'assistant.canceledNeutralLabel': 'Detenido',
   'assistant.copyMarkdown': 'Copiar',
   'assistant.forkConversation': 'Nueva conversación',
   'assistant.forkingConversation': 'Iniciando nueva conversación…',

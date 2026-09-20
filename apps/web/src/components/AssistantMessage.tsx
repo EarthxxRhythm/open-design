@@ -115,7 +115,7 @@ import type {
   ProjectMetadata,
   SkillSummary,
 } from "../types";
-import type { ProjectMediaTask } from '@open-design/contracts';
+import type { ProjectMediaTask, RunCancelOrigin } from '@open-design/contracts';
 
 type TranslateFn = (
   key: keyof Dict,
@@ -1407,6 +1407,7 @@ function AssistantMessageImpl({
                   hasUnfinishedTodos: unfinishedTodos.length > 0,
                   hasEmptyResponse,
                   canceled: message.runStatus === "canceled",
+                  cancelOrigin: message.cancelOrigin,
                   preparing,
                   preparingStatus,
                   copyMarkdown,
@@ -1426,6 +1427,7 @@ function AssistantMessageImpl({
                 hasUnfinishedTodos={unfinishedTodos.length > 0}
                 hasEmptyResponse={hasEmptyResponse}
                 canceled={message.runStatus === "canceled"}
+                cancelOrigin={message.cancelOrigin}
                 preparing={preparing}
                 preparingStatus={preparingStatus}
                 copyMarkdown={copyMarkdown}
@@ -2085,11 +2087,30 @@ function appendRoleModel(label: string, model: string | null): string {
   return `${label} · ${model}`;
 }
 
+/**
+ * The status word for a canceled turn says who stopped it, so it must not say
+ * "manually" for a turn the daemon cut short while shutting down or
+ * restarting. A missing origin (a row persisted before the daemon reported
+ * one, or the stop response still in flight) keeps the manual wording: the
+ * user pressing Stop is the only cancel a live page produces itself.
+ */
+export function canceledLabelKey(
+  cancelOrigin: RunCancelOrigin | null | undefined,
+): "assistant.canceledLabel" | "assistant.canceledByRestartLabel" | "assistant.canceledNeutralLabel" {
+  if (cancelOrigin === "daemon_shutdown") return "assistant.canceledByRestartLabel";
+  if (cancelOrigin === "project_cleanup" || cancelOrigin === "unknown") {
+    return "assistant.canceledNeutralLabel";
+  }
+  return "assistant.canceledLabel";
+}
+
 interface AssistantFooterProps {
   streaming: boolean;
   hasUnfinishedTodos: boolean;
   hasEmptyResponse: boolean;
   canceled?: boolean;
+  /** Who canceled the turn, when the daemon said. Decides the wording only. */
+  cancelOrigin?: RunCancelOrigin | null;
   // Pre-output phase: streaming but nothing rendered yet. The label shimmers
   // "Preparing…"; once content lands it flips to "Working".
   preparing?: boolean;
@@ -2121,6 +2142,7 @@ export function AssistantFooter({
   hasUnfinishedTodos,
   hasEmptyResponse,
   canceled = false,
+  cancelOrigin,
   preparing = false,
   preparingStatus = "preparing",
   copyMarkdown,
@@ -2181,7 +2203,7 @@ export function AssistantFooter({
               : hasEmptyResponse
               ? t("assistant.emptyResponseLabel")
               : canceled
-              ? t("assistant.canceledLabel")
+              ? t(canceledLabelKey(cancelOrigin))
               : hasUnfinishedTodos
               ? t("assistant.unfinishedLabel")
               : t("assistant.doneLabel")}

@@ -3495,6 +3495,8 @@ export const hu: Dict = {
   'assistant.doneLabel': 'Kész',
   'assistant.awaitingReplyLabel': 'Válaszra vár',
   'assistant.canceledLabel': 'Kézzel leállítva',
+  'assistant.canceledByRestartLabel': 'Az alkalmazás újraindítása miatt leállt',
+  'assistant.canceledNeutralLabel': 'Leállítva',
   'assistant.copyMarkdown': 'Másolás',
   'assistant.forkConversation': 'Új beszélgetés',
   'assistant.forkingConversation': 'Új beszélgetés indítása…',

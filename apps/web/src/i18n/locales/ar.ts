@@ -3495,6 +3495,8 @@ export const ar: Dict = {
   'assistant.doneLabel': 'تم',
   'assistant.awaitingReplyLabel': 'في انتظار ردك',
   'assistant.canceledLabel': 'تم الإيقاف يدويًا',
+  'assistant.canceledByRestartLabel': 'توقف بسبب إعادة تشغيل التطبيق',
+  'assistant.canceledNeutralLabel': 'تم الإيقاف',
   'assistant.copyMarkdown': 'نسخ',
   'assistant.forkConversation': 'محادثة جديدة',
   'assistant.forkingConversation': 'جارٍ بدء محادثة جديدة…',

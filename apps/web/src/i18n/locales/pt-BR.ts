@@ -3495,6 +3495,8 @@ export const ptBR: Dict = {
   'assistant.doneLabel': 'Concluído',
   'assistant.awaitingReplyLabel': 'Aguardando resposta',
   'assistant.canceledLabel': 'Interrompido manualmente',
+  'assistant.canceledByRestartLabel': 'Interrompido por uma reinicialização do app',
+  'assistant.canceledNeutralLabel': 'Interrompido',
   'assistant.copyMarkdown': 'Copiar',
   'assistant.forkConversation': 'Nova conversa',
   'assistant.forkingConversation': 'Iniciando nova conversa…',

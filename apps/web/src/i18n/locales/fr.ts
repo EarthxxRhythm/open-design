@@ -3495,6 +3495,8 @@ export const fr: Dict = {
   'assistant.doneLabel': 'Terminé',
   'assistant.awaitingReplyLabel': 'En attente de réponse',
   'assistant.canceledLabel': 'Arrêté manuellement',
+  'assistant.canceledByRestartLabel': 'Arrêté par un redémarrage de l’application',
+  'assistant.canceledNeutralLabel': 'Arrêté',
   'assistant.copyMarkdown': 'Copier',
   'assistant.forkConversation': 'Nouvelle conversation',
   'assistant.forkingConversation': 'Démarrage d’une nouvelle conversation…',

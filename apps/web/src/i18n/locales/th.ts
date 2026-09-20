@@ -3495,6 +3495,8 @@ export const th: Dict = {
   'assistant.doneLabel': 'บรรลุสู่ระดับพร้อมแล้ว',
   'assistant.awaitingReplyLabel': 'รอการตอบกลับ',
   'assistant.canceledLabel': 'หยุดด้วยตนเองแล้ว',
+  'assistant.canceledByRestartLabel': 'หยุดเนื่องจากแอปรีสตาร์ท',
+  'assistant.canceledNeutralLabel': 'หยุดแล้ว',
   'assistant.copyMarkdown': 'คัดลอก',
   'assistant.forkConversation': 'สนทนาใหม่',
   'assistant.forkingConversation': 'กำลังเริ่มสนทนาใหม่…',

@@ -3495,6 +3495,8 @@ export const tr: Dict = {
   'assistant.doneLabel': 'Bitti',
   'assistant.awaitingReplyLabel': 'Yanıt bekleniyor',
   'assistant.canceledLabel': 'Elle durduruldu',
+  'assistant.canceledByRestartLabel': 'Uygulama yeniden başlatıldığı için durduruldu',
+  'assistant.canceledNeutralLabel': 'Durduruldu',
   'assistant.copyMarkdown': 'Kopyala',
   'assistant.forkConversation': 'Yeni konuşma',
   'assistant.forkingConversation': 'Yeni konuşma başlatılıyor…',

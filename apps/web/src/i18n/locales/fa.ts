@@ -3495,6 +3495,8 @@ export const fa: Dict = {
   'assistant.doneLabel': 'انجام شد',
   'assistant.awaitingReplyLabel': 'در انتظار پاسخ',
   'assistant.canceledLabel': 'به‌صورت دستی متوقف شد',
+  'assistant.canceledByRestartLabel': 'به دلیل راه‌اندازی مجدد برنامه متوقف شد',
+  'assistant.canceledNeutralLabel': 'متوقف شد',
   'assistant.copyMarkdown': 'کپی',
   'assistant.forkConversation': 'مکالمه جدید',
   'assistant.forkingConversation': 'در حال شروع مکالمه جدید…',

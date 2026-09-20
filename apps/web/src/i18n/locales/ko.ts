@@ -3495,6 +3495,8 @@ export const ko: Dict = {
   'assistant.doneLabel': '완료됨',
   'assistant.awaitingReplyLabel': '답변 대기 중',
   'assistant.canceledLabel': '수동으로 중지됨',
+  'assistant.canceledByRestartLabel': '앱 재시작으로 중지됨',
+  'assistant.canceledNeutralLabel': '중지됨',
   'assistant.copyMarkdown': '복사',
   'assistant.forkConversation': '새 대화 시작',
   'assistant.forkingConversation': '새 대화 시작 중…',

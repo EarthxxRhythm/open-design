@@ -3495,6 +3495,8 @@ export const id: Dict = {
   'assistant.doneLabel': 'Selesai',
   'assistant.awaitingReplyLabel': 'Menunggu balasan',
   'assistant.canceledLabel': 'Dihentikan manual',
+  'assistant.canceledByRestartLabel': 'Dihentikan karena aplikasi dimulai ulang',
+  'assistant.canceledNeutralLabel': 'Dihentikan',
   'assistant.copyMarkdown': 'Salin',
   'assistant.forkConversation': 'Percakapan baru',
   'assistant.forkingConversation': 'Memulai percakapan baru…',

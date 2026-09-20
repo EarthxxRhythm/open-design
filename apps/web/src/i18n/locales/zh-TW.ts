@@ -3699,6 +3699,8 @@ export const zhTW: Dict = {
   "assistant.doneLabel": "已完成",
   "assistant.awaitingReplyLabel": "等待回覆",
   "assistant.canceledLabel": "已手動停止",
+  "assistant.canceledByRestartLabel": "應用重啟時已停止",
+  "assistant.canceledNeutralLabel": "已停止",
   "assistant.copyMarkdown": "複製",
   "assistant.forkConversation": "新會話",
   "assistant.forkingConversation": "正在開始新會話…",

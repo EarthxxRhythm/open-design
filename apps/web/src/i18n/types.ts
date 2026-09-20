@@ -4426,6 +4426,10 @@ export interface Dict {
   /** Run title while the last turn's question form is still unanswered (OPEND-2744). */
   'assistant.awaitingReplyLabel': string;
   'assistant.canceledLabel': string;
+  /** The turn was cut short because the daemon shut down or restarted, not by the user. */
+  'assistant.canceledByRestartLabel': string;
+  /** The turn was canceled and the daemon could not say by whom. */
+  'assistant.canceledNeutralLabel': string;
   'assistant.copyMarkdown': string;
   /**
    * 回合动作行那颗按钮的名字。**必须和 `chat.newSession` 同字** —— 聊天面板内
