@@ -26,15 +26,15 @@ export interface PublicFilePublicationStore {
 
 /** Full store capability for consumers that enumerate project publications. */
 export interface ProjectPublicFilePublicationStore extends PublicFilePublicationStore {
-  /** Lists only this principal's project; shareId is the persisted snapshot slug. */
+  /** Lists this principal's project with the most recent successful publish time in epoch ms. */
   listByProject(scope: {
     resourceTeamId: string;
     ownerMemberId: string;
     projectId: string;
-  }): ReadonlyArray<PublicFilePublication & {
+  }): ReadonlyArray<{
     filePath: string;
-    shareId: string;
-    updatedAt: string;
+    slug: string;
+    publishedAt: number;
   }>;
 }
 
@@ -74,7 +74,7 @@ export function createInMemoryPublicFilePublicationStore(): ProjectPublicFilePub
   const publications = new Map<string, {
     scope: PublicFilePublicationScope;
     publication: PublicFilePublication;
-    updatedAt: string;
+    publishedAt: number;
   }>();
   return {
     get: (scope) => publications.get(scopeKey(scope))?.publication ?? null,
@@ -83,17 +83,16 @@ export function createInMemoryPublicFilePublicationStore(): ProjectPublicFilePub
         && entry.scope.ownerMemberId === scope.ownerMemberId
         && entry.scope.projectId === scope.projectId)
       .map((entry) => ({
-        ...entry.publication,
         filePath: entry.scope.filePath,
-        shareId: entry.publication.slug,
-        updatedAt: entry.updatedAt,
+        slug: entry.publication.slug,
+        publishedAt: entry.publishedAt,
       }))
       .sort(comparePublicationFilePaths),
     set: (scope, publication) => {
       publications.set(scopeKey(scope), {
         scope: { ...scope },
         publication,
-        updatedAt: new Date(Date.now()).toISOString(),
+        publishedAt: Date.now(),
       });
     },
     delete: (scope) => {
@@ -121,8 +120,7 @@ export function createSqlitePublicFilePublicationStore(
        AND file_path = ?
   `);
   const selectProjectRows = db.prepare(`
-    SELECT url, slug, file_name AS fileName, file_path AS filePath,
-           updated_at AS updatedAt
+    SELECT file_path AS filePath, slug, updated_at AS publishedAt
       FROM public_file_publications
      WHERE resource_team_id = ?
        AND owner_member_id = ?
@@ -171,11 +169,11 @@ export function createSqlitePublicFilePublicationStore(
         scope.resourceTeamId,
         scope.ownerMemberId,
         scope.projectId,
-      ) as Array<PublicFilePublication & { filePath: string; updatedAt: number }>;
+      ) as Array<{ filePath: string; slug: string; publishedAt: number }>;
       return rows.map((row) => ({
-        ...row,
-        shareId: row.slug,
-        updatedAt: new Date(row.updatedAt).toISOString(),
+        filePath: row.filePath,
+        slug: row.slug,
+        publishedAt: row.publishedAt,
       })).sort(comparePublicationFilePaths);
     },
     set(scope, publication) {
