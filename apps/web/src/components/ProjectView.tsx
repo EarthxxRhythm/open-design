@@ -8563,6 +8563,9 @@ export function ProjectView({
       const nextVisibleMessages = retryTarget
         ? [...nextHistory, ...retryTarget.preservedAttempts, assistantMsg]
         : [...nextHistory, assistantMsg];
+      const runHistory = retryTarget
+        ? retryRunHistory(retryTarget, userMsg)
+        : nextHistory;
       /*
        * 画出去 —— 同时把画之前的样子记下来。预检拒绝时要**原样**放回去,而
        * 「原样」只有这一刻知道:`messages` 是一份快照,不是能从这一轮反算出来的量
@@ -10108,7 +10111,7 @@ export function ProjectView({
         };
         void streamViaDaemon({
           agentId: config.agentId,
-          history: nextHistory,
+          history: runHistory,
           signal: controller.signal,
           cancelSignal: cancelController.signal,
           handlers,
@@ -10326,7 +10329,7 @@ export function ProjectView({
         pushEvent({ kind: 'status', label: 'requesting', detail: config.model });
         const byokOpenCodeHistory = await historyWithApiAttachmentContext(
           historyWithCommentAttachmentContext(
-            historyWithWorkspaceContext(nextHistory, userMsg.id, runContext),
+            historyWithWorkspaceContext(runHistory, userMsg.id, runContext),
             userMsg.id,
           ),
           userMsg.id,
@@ -14606,6 +14609,40 @@ export interface RetryTarget {
   userMsg: ChatMessage;
   priorMessages: ChatMessage[];
   preservedAttempts: ChatMessage[];
+}
+
+/**
+ * The history a retry sends to the run.
+ *
+ * A retry replays the user's turn, so the chat shows the retried attempt
+ * only as history and the new run gets the user's message again as its
+ * current prompt. When the failed attempt was a strategy task, the rounds of
+ * that task which did finish — the planning round's prose, typically — go
+ * into the transcript ahead of the replayed message: a build round that
+ * failed is retried with the plan in hand rather than planned again from
+ * scratch, and the files the finished rounds wrote are still in the project.
+ * Rounds that failed are left out, as before. An agent whose session is
+ * continued gets none of this: the daemon skips the transcript for a resumed
+ * session, which already holds those turns.
+ */
+export function retryRunHistory(
+  retryTarget: RetryTarget,
+  userMsg: ChatMessage,
+): ChatMessage[] {
+  const taskId = retryTarget.failedAssistant.strategyTaskExecutionId;
+  const finishedRounds = taskId
+    ? retryTarget.preservedAttempts.filter((attempt) =>
+      attempt.role === 'assistant'
+      && attempt.strategyTaskExecutionId === taskId
+      && attempt.runStatus === 'succeeded'
+      && attempt.content.trim().length > 0)
+    : [];
+  if (finishedRounds.length === 0) return [...retryTarget.priorMessages, userMsg];
+  // The earlier copy is transcript only. It gets its own id so the per-turn
+  // decorations keyed on the user message id (workspace context, attachment
+  // context) land on the current prompt alone.
+  const retriedTurn: ChatMessage = { ...userMsg, id: `${userMsg.id}:retried` };
+  return [...retryTarget.priorMessages, retriedTurn, ...finishedRounds, userMsg];
 }
 
 export function resolveRetryTarget(
