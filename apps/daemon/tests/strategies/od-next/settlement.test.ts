@@ -159,6 +159,17 @@ describe('planning round settlement decision', () => {
       .toEqual({ action: 'settle', reason: 'non_design', deliverableWritten: false });
     expect(decideStrategyRunSettlement(PLANNING, facts({ declarations: { nonDesignRequest: false, noFileWrites: true }, writeEvidence: evidence({ noteOnly: true, filesWritten: 1 }) })))
       .toEqual({ action: 'settle', reason: 'no_file_writes', deliverableWritten: false });
+    // The non-design declaration alone is enough; the no-write one is not
+    // required alongside it, and it outranks an unfinished todo list.
+    expect(decideStrategyRunSettlement(PLANNING, facts({ declarations: { nonDesignRequest: true, noFileWrites: false }, todoUnfinished: true })))
+      .toEqual({ action: 'settle', reason: 'non_design', deliverableWritten: false });
+  });
+
+  it('lets a question outrank the non-design declaration, and records the declaration even in the build round', () => {
+    expect(decideStrategyRunSettlement(PLANNING, facts({ visibleText: `Which one?\n${FORM}`, declarations: { nonDesignRequest: true, noFileWrites: true } })))
+      .toEqual({ action: 'settle', reason: 'question', deliverableWritten: false });
+    expect(decideStrategyRunSettlement(AFTER_BUILD, facts({ declarations: { nonDesignRequest: true, noFileWrites: false } })))
+      .toEqual({ action: 'settle', reason: 'non_design', deliverableWritten: false });
   });
 
   it('starts one build round otherwise and names why the planning round did not deliver', () => {

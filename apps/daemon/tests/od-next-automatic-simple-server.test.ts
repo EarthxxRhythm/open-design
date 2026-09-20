@@ -85,6 +85,7 @@ vi.mock('node:crypto', async (importOriginal) => {
 });
 
 import { closeDatabase, openDatabase } from '../src/db.js';
+import { startCaptureSink, type CaptureSink } from './first-visible-output-harness.js';
 import { AGENT_DEFS } from '../src/runtimes/registry.js';
 import { agentBinEnvKey } from '../src/runtimes/executables.js';
 import { createSnapshot, linkSnapshotToProject } from '../src/plugins/snapshots.js';
@@ -195,17 +196,27 @@ describe('OD Next automatic production through the real server', () => {
   let binDir: string | null = null;
   let sequence = 0;
   let previousCodexTransport: string | undefined;
+  let analyticsSink: CaptureSink | null = null;
+  let previousPosthogEnv: { key: string | undefined; host: string | undefined } | null = null;
 
   beforeEach(() => {
     previousDetectionEnv = Object.fromEntries(['PATH', 'OD_AGENT_HOME', ...fixtureAgentBinEnvKeys]
       .map(key => [key, process.env[key]]));
     previousCodexTransport = process.env.OD_CODEX_TRANSPORT;
     process.env.OD_CODEX_TRANSPORT = 'exec-json';
+    previousPosthogEnv = { key: process.env.POSTHOG_KEY, host: process.env.POSTHOG_HOST };
   });
 
   afterEach(async () => {
     if (previousCodexTransport == null) delete process.env.OD_CODEX_TRANSPORT;
     else process.env.OD_CODEX_TRANSPORT = previousCodexTransport;
+    if (previousPosthogEnv) {
+      if (previousPosthogEnv.key === undefined) delete process.env.POSTHOG_KEY;
+      else process.env.POSTHOG_KEY = previousPosthogEnv.key;
+      if (previousPosthogEnv.host === undefined) delete process.env.POSTHOG_HOST;
+      else process.env.POSTHOG_HOST = previousPosthogEnv.host;
+      previousPosthogEnv = null;
+    }
     delete process.env.OD_NEXT_STRATEGY_ROLLOUT;
     delete process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY;
     uuidControl.forced.length = 0;
@@ -216,6 +227,8 @@ describe('OD Next automatic production through the real server', () => {
       closeDatabase();
       if (binDir) await rm(binDir, { recursive: true, force: true });
       binDir = null;
+      await analyticsSink?.close();
+      analyticsSink = null;
     } finally {
       try {
         const isolation = await fixtureDetectionIsolation;
@@ -2362,6 +2375,108 @@ process.exit(127);
     expect(await readProjectInvocations(fixture.logPath, fixture.projectId)).toHaveLength(2);
   }, 90_000);
 
+  /**
+   * The `run_finished` capture for one Run. posthog-node batches, so when the
+   * event has not arrived after a beat the daemon's own shutdown drains it;
+   * the caller must not use `started` afterwards.
+   */
+  async function capturedRunFinished(runId: string) {
+    const find = () => analyticsSink!.captured().find((record) => (
+      record.event === 'run_finished' && record.properties.run_id === runId
+    ));
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline && !find()) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (!find()) {
+      await stopServer(started);
+      started = null;
+    }
+    return find();
+  }
+
+  it('ends a greeting the agent declared non-design as its own completed ending, with no build round', async () => {
+    const fixture = await createFixture('repair', { captureAnalytics: true });
+    await writeFile(`${fixture.logPath}.non-design`, '1');
+    queueFixtureIds(fixture);
+    await postRun(started!.url, createRunRequest(fixture, 'hi'), {
+      'x-od-analytics-device-id': 'device-non-design',
+      'x-od-analytics-session-id': 'session-non-design',
+      'x-od-analytics-client-type': 'desktop',
+    });
+    const task = await waitForTask(fixture.taskExecutionId, 'completed');
+    // The declaration ends the task on its own reason: no build round, no
+    // blocked verdict, nothing delivered.
+    expect(task).toMatchObject({
+      autoRoundCount: 0,
+      settlementReason: 'non_design',
+      deliverableWritten: false,
+    });
+    expect(task.blockedContext ?? null).toBeNull();
+    expect(task.runs.map((run) => run.inputStage)).toEqual(['request']);
+    const terminal = await waitForRunTerminal(started!.url, task.latestRunId);
+    expect(terminal).toMatchObject({
+      status: 'succeeded',
+      exitCode: 0,
+      strategyTask: { outcome: 'completed', terminal: true, settlementReason: 'non_design', deliverableWritten: false },
+    });
+    expect(terminal.errorCode ?? null).toBeNull();
+    expect(terminal.endedWithUnfinishedWork ?? false).toBe(false);
+    // The chat receives an ordinary succeeded turn: no failure, no blocked
+    // stamp, no delivered stamp, and the declaration block stripped from
+    // the text the user reads.
+    const records = (await readFile(terminal.eventsLogPath, 'utf8')).trim().split('\n')
+      .map((line) => JSON.parse(line));
+    expect(records.filter((event) => event.event === 'error')).toEqual([]);
+    expect(records.find((event) => event.data?.type === 'strategy_round_settlement')?.data)
+      .toMatchObject({ action: 'settle', reason: 'non_design', deliverableWritten: false });
+    const visible = records
+      .filter((event) => event.event === 'agent' && event.data?.type === 'text_delta')
+      .map((event) => event.data.delta as string)
+      .join('');
+    expect(visible).toContain('Tell me what you would like to design');
+    expect(visible).not.toContain('open-design-runtime-state');
+    expect(visible).not.toContain('nonDesignRequest');
+    const response = await fetch(
+      `${started!.url}/api/projects/${fixture.projectId}/conversations/${fixture.conversationId}/messages`,
+    );
+    const { messages } = await response.json() as {
+      messages: Array<{ runId?: string; runStatus?: string; strategyTaskDelivered?: boolean; strategyTaskBlocked?: boolean }>;
+    };
+    const reply = messages.find((message) => message.runId === task.latestRunId);
+    expect(reply?.runStatus).toBe('succeeded');
+    expect(reply?.strategyTaskBlocked).toBeUndefined();
+    expect(reply?.strategyTaskDelivered).toBeUndefined();
+    expect(await readProjectInvocations(fixture.logPath, fixture.projectId)).toHaveLength(1);
+    // Reported in its own bucket, never as blocked.
+    const finished = await capturedRunFinished(task.latestRunId);
+    expect(finished?.properties).toMatchObject({
+      result: 'success',
+      od_next_task_outcome: 'completed',
+      od_next_settlement_reason: 'non_design',
+      od_next_auto_round_count: 0,
+      od_next_deliverable_written: false,
+    });
+    expect(finished?.properties.od_next_blocked_reason_code ?? null).toBeNull();
+  }, 90_000);
+
+  it('keeps a written deliverable ahead of a non-design declaration', async () => {
+    const fixture = await createFixture('repair');
+    await writeFile(`${fixture.logPath}.non-design-with-file`, '1');
+    queueFixtureIds(fixture);
+    await postRun(started!.url, createRunRequest(fixture, 'hi'));
+    const task = await waitForTask(fixture.taskExecutionId, 'completed');
+    // Facts first: the host watched a file being written, so the round
+    // delivered whatever the agent declared about it.
+    expect(task).toMatchObject({
+      autoRoundCount: 0,
+      settlementReason: 'deliverable_changed',
+      deliverableWritten: true,
+    });
+    expect(task.runs.map((run) => run.inputStage)).toEqual(['request']);
+    expect(await readProjectInvocations(fixture.logPath, fixture.projectId)).toHaveLength(1);
+  }, 90_000);
+
   it('blocks the durable task when the selected agent exits before publishing a session', async () => {
     const fixture = await createFixture('repair');
     await writeFile(`${fixture.logPath}.fail-start`, '1');
@@ -2652,14 +2767,22 @@ process.exit(127);
       selectedAgentId = 'codex',
       capability,
       probeLogPath,
+      captureAnalytics = false,
     }: {
       selectedAgentId?: string;
       capability?: OdNextRuntimeCapabilitySnapshotV1;
       probeLogPath?: string;
+      /** Stand in for PostHog ingestion so the test can read what the daemon reported. */
+      captureAnalytics?: boolean;
     } = {},
   ) {
     const suffix = `${mode}-${Date.now()}-${++sequence}`;
     if (mode !== 'direct') {
+      if (captureAnalytics) {
+        analyticsSink = await startCaptureSink();
+        process.env.POSTHOG_KEY = 'phc_od_next_server_test';
+        process.env.POSTHOG_HOST = analyticsSink.url;
+      }
       const publicFixture = await createPublicRolloutFixture(`chain-${suffix}`, 'design', undefined, 'codex-cli 0.147.0');
       started = publicFixture.started;
       binDir = publicFixture.binDir;
@@ -2685,7 +2808,7 @@ process.exit(127);
           agentCliEnv: selectedAgentId === 'claude'
             ? { claude: { CLAUDE_BIN: bin } }
             : { codex: { CODEX_BIN: bin, CODEX_HOME: binDir } },
-          telemetry: { metrics: false, content: false, artifactManifest: false },
+          telemetry: { metrics: captureAnalytics, content: false, artifactManifest: false },
           privacyDecisionAt: Date.now(),
         }),
       });
@@ -3393,7 +3516,15 @@ function finish() {
   // older continuation wording a frozen package might still see.
   const buildRound = stdin.includes('# OD Next build round') || stdin.includes('native continuation — production');
   let text;
-  if (fs.existsSync(logPath + '.linked-page')) {
+  if (!buildRound && (fs.existsSync(logPath + '.non-design') || fs.existsSync(logPath + '.non-design-with-file'))) {
+    // A greeting answered in prose with the light declaration the status
+    // block carries. The second marker also writes a file, so the host's own
+    // write evidence outranks the declaration.
+    if (fs.existsSync(logPath + '.non-design-with-file')) {
+      fs.writeFileSync(path.join(process.cwd(), 'index.html'), '<!doctype html><title>Wrote it anyway</title>');
+    }
+    text = 'Hi! Tell me what you would like to design and I will plan it.\\n' + ${JSON.stringify(machineBlock('open-design-runtime-state', { nonDesignRequest: true, noFileWrites: true }))};
+  } else if (fs.existsSync(logPath + '.linked-page')) {
     const childFile = fs.readFileSync(logPath + '.linked-page', 'utf8');
     const edited = fs.existsSync(logPath + '.linked-page-edit');
     if (edited || !fs.existsSync(path.join(process.cwd(), childFile))) {
