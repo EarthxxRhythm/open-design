@@ -1,0 +1,168 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+  AUTHOR_DISPLAY_NAME_MAX_LENGTH,
+  AUTHOR_KEY_HEX_LENGTH,
+  IDEMPOTENCY_KEY_MAX_LENGTH,
+  SHARE_AUTHOR_KINDS,
+  SHARE_COMMENT_ERROR_CODES,
+  SHARE_COMMENT_EVENT_TYPES,
+  SHARE_COMMENT_MAX_LENGTH,
+  SHARE_COMMENT_PAGE_LIMIT,
+  SHARE_COMMENT_VALIDATION_ORDER,
+  SHARE_MAX_TOTAL_BYTES,
+  SHARE_STATUSES,
+  SHARE_URL_PATH_SEGMENT,
+  buildSharePath,
+  hasActiveShare,
+  isValidAuthorKey,
+  isValidIdempotencyKey,
+  parseSharePath,
+  resolveAuthorDisplayName,
+} from '../src/api/share';
+import type { ProjectShareState } from '../src/api/share';
+
+/**
+ * Stage 0, Z3 — the frozen half of the share contract.
+ *
+ * Every assertion here exists because FOUR lanes that cannot see each other's
+ * code depend on the value being what it is. A test failing in this file is
+ * not "a test needs updating": it means a cross-repo seam moved, and the vela
+ * mirror plus the three other lanes move with it or they silently disagree.
+ */
+describe('share contract · addressing', () => {
+  it('builds the frozen /artifact/{projectId}/{slug} path', () => {
+    expect(buildSharePath({ projectId: 'proj_123', slug: 'abc-def' })).toBe(
+      '/artifact/proj_123/abc-def',
+    );
+    expect(SHARE_URL_PATH_SEGMENT).toBe('artifact');
+  });
+
+  it('round-trips a path through parse', () => {
+    const parts = { projectId: 'proj_123', slug: 'abc-def' };
+    expect(parseSharePath(buildSharePath(parts))).toEqual(parts);
+  });
+
+  it('percent-encodes segments so an id containing a slash cannot forge a path', () => {
+    const path = buildSharePath({ projectId: 'a/b', slug: 'c' });
+    expect(path).toBe('/artifact/a%2Fb/c');
+    expect(parseSharePath(path)).toEqual({ projectId: 'a/b', slug: 'c' });
+  });
+
+  it('rejects anything that is not exactly three segments', () => {
+    expect(parseSharePath('/artifact/proj')).toBeNull();
+    expect(parseSharePath('/artifact/proj/slug/extra')).toBeNull();
+    expect(parseSharePath('/other/proj/slug')).toBeNull();
+    expect(parseSharePath('/')).toBeNull();
+  });
+
+  it('rejects a malformed percent-escape instead of throwing', () => {
+    expect(parseSharePath('/artifact/%E0%A4%A/slug')).toBeNull();
+  });
+});
+
+describe('share contract · author identity', () => {
+  it('freezes the author-kind union to the two database check-constraint arms', () => {
+    expect([...SHARE_AUTHOR_KINDS]).toEqual(['member', 'user']);
+  });
+
+  it('accepts a 64-char lowercase hex author key and nothing else', () => {
+    const key = 'a'.repeat(AUTHOR_KEY_HEX_LENGTH);
+    expect(AUTHOR_KEY_HEX_LENGTH).toBe(64);
+    expect(isValidAuthorKey(key)).toBe(true);
+    expect(isValidAuthorKey(key.toUpperCase())).toBe(false);
+    expect(isValidAuthorKey('a'.repeat(63))).toBe(false);
+    expect(isValidAuthorKey('a'.repeat(65))).toBe(false);
+    expect(isValidAuthorKey('')).toBe(false);
+    expect(isValidAuthorKey(`${'a'.repeat(63)}z`)).toBe(false);
+  });
+
+  it('resolves display name stamped-first, then directory, then null', () => {
+    expect(resolveAuthorDisplayName({ stamped: 'Ada', directory: 'Grace' })).toBe('Ada');
+    expect(resolveAuthorDisplayName({ stamped: '  ', directory: 'Grace' })).toBe('Grace');
+    expect(resolveAuthorDisplayName({})).toBeNull();
+    expect(resolveAuthorDisplayName({ stamped: null, directory: null })).toBeNull();
+  });
+
+  it('truncates a display name at the frozen ceiling on BOTH ladder rungs', () => {
+    const long = 'x'.repeat(AUTHOR_DISPLAY_NAME_MAX_LENGTH + 10);
+    expect(resolveAuthorDisplayName({ stamped: long })).toHaveLength(
+      AUTHOR_DISPLAY_NAME_MAX_LENGTH,
+    );
+    expect(resolveAuthorDisplayName({ directory: long })).toHaveLength(
+      AUTHOR_DISPLAY_NAME_MAX_LENGTH,
+    );
+  });
+});
+
+describe('share contract · idempotency (D131)', () => {
+  it('bounds the key and rejects an empty one', () => {
+    expect(isValidIdempotencyKey(crypto.randomUUID())).toBe(true);
+    expect(isValidIdempotencyKey('')).toBe(false);
+    expect(isValidIdempotencyKey('k'.repeat(IDEMPOTENCY_KEY_MAX_LENGTH))).toBe(true);
+    expect(isValidIdempotencyKey('k'.repeat(IDEMPOTENCY_KEY_MAX_LENGTH + 1))).toBe(false);
+  });
+
+  it('fits a v4 UUID, which is what both ends generate', () => {
+    expect(crypto.randomUUID().length).toBeLessThanOrEqual(IDEMPOTENCY_KEY_MAX_LENGTH);
+  });
+});
+
+describe('share contract · share state', () => {
+  it('freezes the status union', () => {
+    expect([...SHARE_STATUSES]).toEqual(['none', 'preparing', 'active', 'stopped']);
+  });
+
+  it('treats only `active` as a live share', () => {
+    const state = (status: ProjectShareState['status']): ProjectShareState => ({
+      projectId: 'p',
+      status,
+    });
+    expect(hasActiveShare(state('active'))).toBe(true);
+    expect(hasActiveShare(state('preparing'))).toBe(false);
+    expect(hasActiveShare(state('stopped'))).toBe(false);
+    expect(hasActiveShare(state('none'))).toBe(false);
+    expect(hasActiveShare(null)).toBe(false);
+    expect(hasActiveShare(undefined)).toBe(false);
+  });
+
+  it('keeps the S15 ceiling at 20 MB', () => {
+    expect(SHARE_MAX_TOTAL_BYTES).toBe(20 * 1024 * 1024);
+  });
+});
+
+describe('share contract · comment API (I4)', () => {
+  it('freezes the event-type union at four shapes', () => {
+    expect([...SHARE_COMMENT_EVENT_TYPES]).toEqual(['create', 'update', 'delete', 'status']);
+  });
+
+  it('freezes the four-step validation order (D58 as narrowed by D97)', () => {
+    expect([...SHARE_COMMENT_VALIDATION_ORDER]).toEqual([
+      'UNAUTHENTICATED',
+      'SHARE_STOPPED',
+      'INVALID_COMMENT',
+      'RATE_LIMITED',
+    ]);
+  });
+
+  it('keeps every ordered step inside the declared code table', () => {
+    for (const code of SHARE_COMMENT_VALIDATION_ORDER) {
+      expect(SHARE_COMMENT_ERROR_CODES).toContain(code);
+    }
+  });
+
+  it('checks the session before revealing whether a share exists', () => {
+    const order = SHARE_COMMENT_VALIDATION_ORDER;
+    expect(order.indexOf('UNAUTHENTICATED')).toBeLessThan(order.indexOf('SHARE_STOPPED'));
+  });
+
+  it('throttles only after the body has been judged valid', () => {
+    const order = SHARE_COMMENT_VALIDATION_ORDER;
+    expect(order.indexOf('INVALID_COMMENT')).toBeLessThan(order.indexOf('RATE_LIMITED'));
+  });
+
+  it('caps the page and the body at the frozen figures', () => {
+    expect(SHARE_COMMENT_PAGE_LIMIT).toBe(500);
+    expect(SHARE_COMMENT_MAX_LENGTH).toBe(4000);
+  });
+});

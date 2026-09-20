@@ -1,0 +1,429 @@
+/**
+ * Share + external-comment contract (P0).
+ *
+ * This module is the ONE place the share feature's cross-surface shapes are
+ * frozen. Four independent lanes consume it — the OD daemon publish path, the
+ * vela share page, the vela cloud comment API, and the OD client comment
+ * sidebar — and none of them can see each other's code. A field renamed here
+ * is a four-way break, so prefer adding over changing.
+ *
+ * `vela` is a SEPARATE pnpm workspace and cannot import this package. Its
+ * server-side mirror of these shapes is hand-maintained; the cross-repo
+ * agreement is the field NAMES and the literal string unions below, which is
+ * why they are spelled out as `const` arrays rather than left implicit in a
+ * type alias. Any change here needs the mirror changed in the same change set.
+ *
+ * Pure TypeScript, dependency-free — safe to import from daemon, web, and CLI.
+ */
+
+/* ------------------------------------------------------------------ *
+ * Share addressing
+ * ------------------------------------------------------------------ */
+
+/**
+ * Public share URL shape, frozen 2026-09-21:
+ *
+ *     https://open-design.ai/artifact/{projectId}/{slug}
+ *
+ * Both segments are load-bearing and neither is decorative:
+ *
+ * - `projectId` is the OD-side project id. It is what `collab.comment_events`
+ *   is keyed by (`(team_id, project_id, seq)`), so carrying it in the path
+ *   lets the share page ask for a project's comments without first resolving
+ *   the snapshot back to a project.
+ * - `slug` is the opaque, immutable public snapshot key
+ *   (`resource_hub.snapshots.slug`). It identifies WHICH published version is
+ *   being viewed; re-publishing mints a new slug.
+ *
+ * `team_id` is deliberately NOT in the URL. The snapshot table already carries
+ * that rule for its own public read — team_id is resolved server-side and
+ * never exposed publicly — and the share binding follows it.
+ */
+export const SHARE_URL_PATH_SEGMENT = 'artifact';
+
+/** Parsed form of a share URL path. */
+export interface ShareUrlParts {
+  projectId: string;
+  slug: string;
+}
+
+/**
+ * Build the public path (no origin) for a share. Callers that need an absolute
+ * URL join this onto the configured cloud origin themselves — the origin
+ * differs per environment and must not be baked into a shared contract.
+ */
+export function buildSharePath(parts: ShareUrlParts): string {
+  return `/${SHARE_URL_PATH_SEGMENT}/${encodeURIComponent(parts.projectId)}/${encodeURIComponent(parts.slug)}`;
+}
+
+/**
+ * Parse a share URL path back into its parts. Returns `null` for anything that
+ * is not exactly `/artifact/{projectId}/{slug}` — including a trailing extra
+ * segment, which is a different route, not a share with a suffix.
+ */
+export function parseSharePath(pathname: string): ShareUrlParts | null {
+  const segments = pathname.split('/').filter(Boolean);
+  if (segments.length !== 3) return null;
+  if (segments[0] !== SHARE_URL_PATH_SEGMENT) return null;
+  let projectId: string;
+  let slug: string;
+  try {
+    projectId = decodeURIComponent(segments[1]);
+    slug = decodeURIComponent(segments[2]);
+  } catch {
+    return null;
+  }
+  if (!projectId || !slug) return null;
+  return { projectId, slug };
+}
+
+/* ------------------------------------------------------------------ *
+ * Comment authorship
+ * ------------------------------------------------------------------ */
+
+/**
+ * Which identity union arm an external comment's author came from.
+ *
+ * - `member` — a workspace member of the owning team. Carries a
+ *   `workspaceMemberId`; this is every comment written inside the OD client.
+ * - `user` — a site-account holder with NO workspace membership: someone who
+ *   opened a share link, logged in, and commented from the share page.
+ *
+ * This is the discriminator persisted as `collab.comment_events.author_kind`,
+ * enforced there by `comment_events_author_shape_check`. Legacy rows default
+ * to `member`, which is why no backfill was needed.
+ */
+export const SHARE_AUTHOR_KINDS = ['member', 'user'] as const;
+export type ShareAuthorKind = (typeof SHARE_AUTHOR_KINDS)[number];
+
+/**
+ * Stable per-account key used as the AVATAR COLOR SEED on both ends.
+ *
+ * `authorKey = HMAC(server secret, app_user_id)`, lowercase hex, exactly
+ * {@link AUTHOR_KEY_HEX_LENGTH} characters (HMAC-SHA256). Keyed on the ACCOUNT,
+ * not the membership, so the same person is the same color whether they
+ * commented from the OD client (as a member) or from the share page (as a
+ * user).
+ *
+ * It is a display seed and nothing else. It is NOT a capability, NOT an
+ * identity assertion, and must never be used to decide whether a comment
+ * belongs to the viewer — `isMine` is computed server-side against the live
+ * session, because a client can only compare keys and would get that wrong.
+ *
+ * The length is frozen because both ends hash it into a fixed palette index;
+ * a shorter or differently-cased key silently produces a different color on
+ * one side, which reads as a rendering bug rather than a contract break.
+ */
+export const AUTHOR_KEY_HEX_LENGTH = 64;
+
+/** True when `value` has the frozen `authorKey` shape (lowercase hex, 64 chars). */
+export function isValidAuthorKey(value: string): boolean {
+  return value.length === AUTHOR_KEY_HEX_LENGTH && /^[0-9a-f]+$/.test(value);
+}
+
+/**
+ * Display-name snapshot rules, shared by the OD client sidebar and the vela
+ * share page (D104 ②: the share page matches the client, and the client is
+ * the baseline because it is already shipped).
+ *
+ * The name is stamped by the SERVER at write time and stored on the event.
+ * It is never read back out of the team member directory at render time —
+ * that directory is a privacy boundary (real names + roles) that the share
+ * page must not be able to reach. A renamed author therefore keeps the name
+ * that was current when they wrote, which is intentional: a comment reads as
+ * the record of who said it then.
+ */
+export const AUTHOR_DISPLAY_NAME_MAX_LENGTH = 64;
+
+/**
+ * Resolve the name to render for a comment author, with the client's existing
+ * fallback ladder. Both ends must call THIS function rather than each
+ * re-implementing the ladder — the two-implementation version is exactly how
+ * the same author ends up labelled differently on the two surfaces.
+ *
+ * Ladder: stamped display name → caller-supplied directory name → `null`.
+ * A `null` result means "render the existing id-only anonymous form", which
+ * is what the client does today; it is not an error.
+ */
+export function resolveAuthorDisplayName(input: {
+  /** Server-stamped snapshot from the comment event. */
+  stamped?: string | null;
+  /** Locally resolved member-directory name, when the viewer can see one. */
+  directory?: string | null;
+}): string | null {
+  const stamped = input.stamped?.trim();
+  if (stamped) return stamped.slice(0, AUTHOR_DISPLAY_NAME_MAX_LENGTH);
+  const directory = input.directory?.trim();
+  if (directory) return directory.slice(0, AUTHOR_DISPLAY_NAME_MAX_LENGTH);
+  return null;
+}
+
+/** Author identity as it travels with an external comment. */
+export interface ShareCommentAuthor {
+  kind: ShareAuthorKind;
+  /** Avatar color seed — see {@link AUTHOR_KEY_HEX_LENGTH}. */
+  authorKey: string;
+  /** Server-stamped name snapshot; absent means render the id-only form. */
+  displayName?: string;
+  /** Present only when `kind === 'member'`. */
+  memberId?: string;
+}
+
+/* ------------------------------------------------------------------ *
+ * Idempotency
+ * ------------------------------------------------------------------ */
+
+/**
+ * Client-generated key for one SEND ATTEMPT (D131, frozen 2026-09-21).
+ *
+ * Per attempt, not per comment: `collab.comment_events` is an append-only
+ * event log, so one `comment_id` legitimately produces many events (create,
+ * edit, status change) and keying on it would reject the second legitimate
+ * event. The uniqueness constraint in the database is therefore
+ * `(team_id, project_id, idempotency_key) WHERE idempotency_key IS NOT NULL`,
+ * which leaves every legacy row — all NULL — unaffected.
+ *
+ * The share page generates this BEFORE navigating away to log in, so the
+ * replay that happens on return carries the same key and cannot produce a
+ * second comment. That is the red-line case: same key POSTed twice yields
+ * exactly one comment.
+ *
+ * Format frozen as a v4 UUID string so both ends can generate it with a
+ * platform primitive (`crypto.randomUUID()`) and neither needs a dependency.
+ */
+export const IDEMPOTENCY_KEY_MAX_LENGTH = 64;
+
+/** True when `value` is an acceptable idempotency key (non-empty, within bounds). */
+export function isValidIdempotencyKey(value: string): boolean {
+  return value.length > 0 && value.length <= IDEMPOTENCY_KEY_MAX_LENGTH;
+}
+
+/* ------------------------------------------------------------------ *
+ * Share state (the DTO the OD client reads)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Lifecycle of one project's share, as the OD client sees it.
+ *
+ * - `none` — never shared, or the last share was stopped and forgotten.
+ * - `preparing` — an upload is in flight. Transient; the client polls.
+ * - `active` — a live share link exists.
+ * - `stopped` — the owner stopped sharing. The link now answers 410 Gone;
+ *   existing comments are retained, not deleted.
+ */
+export const SHARE_STATUSES = ['none', 'preparing', 'active', 'stopped'] as const;
+export type ShareStatus = (typeof SHARE_STATUSES)[number];
+
+/**
+ * One file the publish plan could not include, surfaced to the share panel.
+ *
+ * `missing` — referenced by the document but not present on disk.
+ * `invalid` — present but unreadable or of a type the plan refuses.
+ *
+ * S16: these render as a yellow, expandable list and MUST NOT disable the
+ * share button. A partially-complete share is the normal case for a
+ * work-in-progress document; blocking on it was explicitly rejected.
+ */
+export interface SharePlanExclusion {
+  path: string;
+  reason: 'missing' | 'invalid';
+}
+
+/**
+ * Total-bytes ceiling for one share (S15). Checked BEFORE the upload starts,
+ * so the user is refused immediately rather than after a long transfer.
+ *
+ * NOTE: the 20 MB figure is carried over from the product spec and has no
+ * source in code or in the decision ledger — it is an inherited constant, not
+ * a measured limit. It is frozen here so the two ends agree, not because it
+ * has been justified.
+ */
+export const SHARE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
+
+/**
+ * Summary of what a share WOULD contain, computed by the daemon's
+ * `buildSharePlan` before any bytes move. Drives S2/S3/S7/S15/S16.
+ */
+export interface SharePlanSummary {
+  fileCount: number;
+  totalBytes: number;
+  /** `totalBytes > SHARE_MAX_TOTAL_BYTES` — the S15 pre-upload refusal. */
+  exceedsSizeLimit: boolean;
+  /** S16. Empty array, never absent, so callers need no `?? []`. */
+  exclusions: SharePlanExclusion[];
+}
+
+/**
+ * The per-project share DTO. This is the single signal the client uses to
+ * decide which share-panel state to open (G1 vs G2) and whether a project
+ * has a live share at all (A22, replacing two `collab.enabled` reads).
+ *
+ * There is deliberately no third branch: the panel state is a total function
+ * of `status`, so a future state must be added to {@link SHARE_STATUSES}
+ * rather than inferred from some other field being present.
+ */
+export interface ProjectShareState {
+  projectId: string;
+  status: ShareStatus;
+  /** Present when `status` is `active` or `stopped`. */
+  slug?: string;
+  /** Public path for the share; present exactly when `slug` is. */
+  path?: string;
+  /** Monotonic publish counter; bumped on each re-publish. */
+  version?: number;
+  /** Epoch ms of the most recent successful publish. */
+  publishedAt?: number;
+  /** Last computed plan summary, when one has been computed. */
+  plan?: SharePlanSummary;
+  /**
+   * Count of comments on this project that have not been dealt with, as the
+   * SERVER counts them.
+   *
+   * D116 ②/③, frozen: this is the number of UNRESOLVED comments — the same
+   * figure the client already shows — NOT an unread count computed against
+   * `lastReadAt`. The design draft asked for an unread count; we keep the
+   * shipped meaning and only adopt the draft's red-dot appear/clear behavior.
+   *
+   * It must come from the server because the share page's list is capped at
+   * {@link SHARE_COMMENT_PAGE_LIMIT}; computing it from `list.length` is a
+   * negative assertion in the acceptance tests.
+   */
+  unresolvedTotal?: number;
+}
+
+/**
+ * True when this project has a share the client should treat as live. A22
+ * replaces two `collab.enabled` reads with this predicate — note it is a
+ * predicate over the DTO, not over the transport, so a project with cloud
+ * collaboration disabled can still have a live share and vice versa.
+ */
+export function hasActiveShare(state: ProjectShareState | null | undefined): boolean {
+  return state?.status === 'active';
+}
+
+/* ------------------------------------------------------------------ *
+ * Share-page comment API (I4)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Server-side page cap on the share page's comment list. The list is
+ * truncated at this many items; {@link ProjectShareState.unresolvedTotal}
+ * carries the real count.
+ */
+export const SHARE_COMMENT_PAGE_LIMIT = 500;
+
+/** Comment body length ceiling, applied identically on both ends (D104). */
+export const SHARE_COMMENT_MAX_LENGTH = 4000;
+
+/**
+ * The four event shapes the comment stream carries. `delete` remains in the
+ * union because the OD CLIENT can delete; the SHARE PAGE cannot (D97 — the
+ * share page has no edit and no delete entry point at all, and one appearing
+ * is a bug).
+ */
+export const SHARE_COMMENT_EVENT_TYPES = ['create', 'update', 'delete', 'status'] as const;
+export type ShareCommentEventType = (typeof SHARE_COMMENT_EVENT_TYPES)[number];
+
+/**
+ * Frozen error codes for the share-page comment API (I4).
+ *
+ * The validation ORDER is part of the contract, not an implementation detail,
+ * because each step leaks strictly less than the next: checking the session
+ * before the share's liveness avoids telling an unauthenticated caller whether
+ * a share exists. D58, narrowed to four steps by D97 (the author-identity step
+ * disappeared with edit/delete):
+ *
+ *     401 UNAUTHENTICATED → 410 SHARE_STOPPED → 400 INVALID_COMMENT → 429 RATE_LIMITED
+ *
+ * An implementation that reorders these passes its own unit tests and fails
+ * the contract, so the order is asserted directly.
+ */
+export const SHARE_COMMENT_ERROR_CODES = [
+  /** 401 — no session, or the session expired mid-compose. */
+  'UNAUTHENTICATED',
+  /** 410 — the owner stopped this share. Both GET and POST answer this. */
+  'SHARE_STOPPED',
+  /** 404 — no share binding for this `(projectId, slug)` pair. */
+  'SHARE_NOT_FOUND',
+  /** 400 — body empty, over {@link SHARE_COMMENT_MAX_LENGTH}, or anchor malformed. */
+  'INVALID_COMMENT',
+  /** 429 — per-viewer write throttle tripped; carries `retryAfterSeconds`. */
+  'RATE_LIMITED',
+  /** 413 — request body exceeded the transport limit. */
+  'PAYLOAD_TOO_LARGE',
+] as const;
+export type ShareCommentErrorCode = (typeof SHARE_COMMENT_ERROR_CODES)[number];
+
+/** The order the checks must run in. Asserted, not merely documented. */
+export const SHARE_COMMENT_VALIDATION_ORDER: readonly ShareCommentErrorCode[] = [
+  'UNAUTHENTICATED',
+  'SHARE_STOPPED',
+  'INVALID_COMMENT',
+  'RATE_LIMITED',
+] as const;
+
+/**
+ * Error body for the share comment API.
+ *
+ * vela today answers errors in TWO different shapes depending on the route
+ * family (`{ error: string }` and `{ code, retryAfterSeconds }`). This
+ * interface is the one shape the share routes use; existing routes are not
+ * being migrated as part of P0.
+ */
+export interface ShareCommentErrorResponse {
+  code: ShareCommentErrorCode;
+  /** Present only with `RATE_LIMITED`. */
+  retryAfterSeconds?: number;
+}
+
+/**
+ * One comment as the share page receives it.
+ *
+ * Invariant: this is exactly the POST response body as well. A create returns
+ * the same shape a list returns, so the page appends the response directly
+ * instead of refetching or synthesizing an optimistic row that can drift from
+ * what the server actually stored.
+ */
+export interface ShareComment {
+  id: string;
+  seq: number;
+  author: ShareCommentAuthor;
+  /**
+   * Computed SERVER-side against the live session (D87). The client cannot
+   * derive this from `author.authorKey` and must not try.
+   */
+  isMine: boolean;
+  note: string;
+  filePath: string;
+  elementId: string;
+  selector: string;
+  htmlHint: string;
+  status: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** `GET` the share page's comment list. `since` is the `seq` cursor. */
+export interface ShareCommentListResponse {
+  comments: ShareComment[];
+  /** Highest `seq` in this page; pass back as `since` to poll forward. */
+  latestSeq: number;
+  /** Unresolved count, independent of the page cap. See `unresolvedTotal`. */
+  unresolvedTotal: number;
+}
+
+/** `POST` a comment from the share page. */
+export interface ShareCommentCreateRequest {
+  /** See {@link IDEMPOTENCY_KEY_MAX_LENGTH}. Required — replay safety. */
+  idempotencyKey: string;
+  note: string;
+  filePath: string;
+  elementId: string;
+  selector: string;
+  htmlHint: string;
+}
+
+/** Same shape as one list item — see {@link ShareComment}. */
+export interface ShareCommentCreateResponse {
+  comment: ShareComment;
+}
