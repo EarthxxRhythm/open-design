@@ -1011,6 +1011,46 @@ jobs:
           --url "$SOURCE_RUNTIME_URL" --sha256 "$SOURCE_RUNTIME_SHA256"
           --output "$RUNNER_TEMP/mac-runtime-product"
           --json
+      - name: "[diagnostic] Restore pre-change mac_x64 runtime"
+        if: ${{ !inputs.publish }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          old_key=workload-products/v1/repos/1223170290/workflows/release-beta/policies/beta-isolated-v1/workloads/source_mac_x64_runtime/digests/15f43154e20d1f6a5b1bb3fbd43531cacd0719b3a389b2e4493baa029f4a1cc5/products/bundle.zip
+          old_sha=241fadad7e9a7cb57a9d94282fb7981b348514c003346c388e7090ae2f38a198
+          base="${SOURCE_RUNTIME_URL%%/workload-products/*}"
+          node "$RELEASE_EXECUTOR_ROOT/pack/dist/index.mjs" mac runtime-restore \
+            --url "$base/$old_key" --sha256 "$old_sha" \
+            --output "$RUNNER_TEMP/mac-runtime-product-old" --json
+      - name: "[diagnostic] Compare restored runtime trees"
+        if: ${{ !inputs.publish }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          def measure(root):
+              files = linked = logical = allocated = 0
+              inodes = set()
+              for parent, _, names in os.walk(root):
+                  for name in names:
+                      stat = (Path(parent) / name).lstat()
+                      if not (stat.st_mode & 0o170000) == 0o100000:
+                          continue
+                      files += 1
+                      linked += stat.st_nlink > 1
+                      logical += stat.st_size
+                      key = (stat.st_dev, stat.st_ino)
+                      if key not in inodes:
+                          inodes.add(key)
+                          allocated += stat.st_blocks * 512
+              return dict(files=files, linked_files=linked, unique_inodes=len(inodes), logical_bytes=logical, allocated_bytes=allocated)
+
+          temp = Path(os.environ['RUNNER_TEMP'])
+          for label, root in [('new', temp / 'mac-runtime-product'), ('old', temp / 'mac-runtime-product-old')]:
+              print('runtime-tree', label, json.dumps(measure(root), sort_keys=True))
+          PY
       - name: Setup Node.js
         uses: actions/setup-node@v6.4.0
         with:
@@ -1074,6 +1114,53 @@ jobs:
             *) echo "unsupported mac_x64_sign_mode: ${{ inputs.mac_x64_sign_mode }}" >&2; exit 1 ;;
           esac
           node "${build_args[@]}" 2> >(tee -a "$RUNNER_TEMP/release-build/mac_x64/build.log" >&2)
+      - name: "[diagnostic] Build pre-change runtime on same runner"
+        if: ${{ !inputs.publish && steps.mac_x64_tools_pack_build.outcome == 'success' }}
+        env:
+          ELECTRON_BUILDER_COMPRESSION_LEVEL: "1"
+          OD_WEB_SOURCEMAP_UPLOAD: ${{ !inputs.enable_mac_arm64 }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/release-build/mac_x64-old"
+          node "$RELEASE_EXECUTOR_ROOT/pack/dist/index.mjs" mac package \
+            --dir "$RUNNER_TEMP/tools-pack-old" \
+            --cache-dir "$RUNNER_TEMP/tools-pack-cache-old" \
+            --namespace release-beta-x64 \
+            --portable \
+            --app-version "${{ needs.release_prepare.outputs.beta_version }}" \
+            --build-json "$RUNNER_TEMP/release-build/mac_x64-old/build.json" \
+            --mac-runtime-product "$RUNNER_TEMP/mac-runtime-product-old" \
+            --mac-compression "${{ inputs.mac_compression }}" \
+            --to "${{ inputs.mac_x64_target }}" \
+            --json --require-vela-cli --signed \
+            2> >(tee "$RUNNER_TEMP/release-build/mac_x64-old/build.log" >&2)
+      - name: "[diagnostic] Compare packaged app trees"
+        if: ${{ !inputs.publish }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          temp = Path(os.environ['RUNNER_TEMP'])
+          for label, directory in [('new', 'tools-pack'), ('old', 'tools-pack-old')]:
+              root = temp / directory / 'out/mac/namespaces/release-beta-x64/builder/mac/Open Design Beta.app'
+              files = linked = logical = allocated = 0
+              inodes = set()
+              for parent, _, names in os.walk(root):
+                  for name in names:
+                      stat = (Path(parent) / name).lstat()
+                      if (stat.st_mode & 0o170000) != 0o100000:
+                          continue
+                      files += 1
+                      linked += stat.st_nlink > 1
+                      logical += stat.st_size
+                      key = (stat.st_dev, stat.st_ino)
+                      if key not in inodes:
+                          inodes.add(key)
+                          allocated += stat.st_blocks * 512
+              print('packaged-app', label, json.dumps(dict(files=files, linked_files=linked, unique_inodes=len(inodes), logical_bytes=logical, allocated_bytes=allocated), sort_keys=True))
+          PY
       - name: "[prepare] Full smoke dependencies"
         if: ${{ (inputs.mac_x64_smoke_mode == 'full') }}
         uses: ./.github/actions/setup-workspace
