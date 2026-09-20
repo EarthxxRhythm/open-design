@@ -3761,6 +3761,14 @@ export interface Dict {
   'designFiles.rowMenu': string;
   'designFiles.openInTab': string;
   'designFiles.download': string;
+  'designFiles.entryMissingTitle': string;
+  'designFiles.entryMissingBody': string;
+  'designFiles.entryMissingMore': string;
+  'designFiles.entryMissingAsk': string;
+  'designFiles.entryMissingHint': string;
+  'designFiles.setAsEntry': string;
+  'designFiles.entryBadge': string;
+  'designFiles.entryRequestMessage': string;
   'designFiles.downloadSelected': string;
   'designFiles.deleteSelected': string;
   'designFiles.clearSelection': string;

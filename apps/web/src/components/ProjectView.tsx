@@ -24,6 +24,7 @@ import {
   type DaemonAgentReconnectState,
   type DaemonAgentRetryState,
   type DaemonReconnectState,
+  type RunDeliverableFacts,
   createStrategyTaskBlockedError,
   fetchChatRunStatus,
   GENERIC_DAEMON_DISCONNECT_CODE,
@@ -230,6 +231,7 @@ import {
   summarizeDesignSystemPackageAudit,
 } from '../runtime/design-system-package-audit';
 import { isLiveArtifactTabId, liveArtifactTabId } from '../types';
+import type { EntryMissingNoticeState } from './design-files/EntryMissingNotice';
 import { isDesignSystemWorkspacePrompt } from '../design-system-auto-prompt';
 import {
   createConversation,
@@ -243,6 +245,7 @@ import {
   loadTabs,
   patchConversation,
   patchProject,
+  setProjectEntryFile,
   ProjectConversationsHttpError,
   saveMessage,
   startGeneratedPluginShareTask,
@@ -7219,6 +7222,7 @@ export function ProjectView({
           onArtifactPaths: (paths) => {
             authoritativeReattachArtifactPaths = paths;
           },
+          onDeliverableFacts: noteDeliverableFacts,
           onStrategyTaskSettled: (strategyTask) => {
             const settledFields = strategySettledMessageFields(strategyTask);
             if (!settledFields) return;
@@ -10333,6 +10337,7 @@ export function ProjectView({
           onArtifactPaths: (paths) => {
             authoritativeArtifactPaths = paths;
           },
+          onDeliverableFacts: noteDeliverableFacts,
           onRunStatus: (runStatus) => {
             // streamViaDaemon reports `failed` before onError when POST
             // /api/runs itself fails. Until onRunCreated supplies an id there is
@@ -12802,6 +12807,41 @@ export function ProjectView({
   const [brandCreateDesignStarting, setBrandCreateDesignStarting] = useState(false);
   const [projectDesignSystemCreateStarting, setProjectDesignSystemCreateStarting] = useState(false);
   const [projectDuplicateStarting, setProjectDuplicateStarting] = useState(false);
+  /**
+   * The last round of this project wrote files but left it without an entry
+   * the preview can open. Set from the terminal frame's deliverable facts,
+   * cleared when an entry is recorded, when the user dismisses it, or when
+   * the project changes.
+   */
+  const [entryMissingNotice, setEntryMissingNotice] = useState<EntryMissingNoticeState | null>(null);
+  useEffect(() => {
+    setEntryMissingNotice(null);
+  }, [currentProject.id]);
+  const noteDeliverableFacts = useCallback((facts: RunDeliverableFacts) => {
+    if (facts.projectId !== currentProject.id) return;
+    if (facts.validation === 'entry_missing' && facts.artifactPaths.length > 0) {
+      setEntryMissingNotice({ files: facts.artifactPaths });
+      return;
+    }
+    if (facts.valid) setEntryMissingNotice(null);
+  }, [currentProject.id]);
+  const handleSetEntryFile = useCallback(async (name: string) => {
+    const updated = await setProjectEntryFile(currentProject.id, name, projectRunWorkspaceContext);
+    if (!updated) {
+      setProjectActionsToast({
+        message: t('designFiles.setAsEntry'),
+        details: name,
+        tone: 'error',
+      });
+      return;
+    }
+    onProjectChange(updated);
+    setEntryMissingNotice(null);
+  }, [currentProject.id, onProjectChange, projectRunWorkspaceContext, t]);
+  const handleRequestEntry = useCallback(() => {
+    setEntryMissingNotice(null);
+    void handleSend(t('designFiles.entryRequestMessage'), [], [], { entryFrom: 'next_step' });
+  }, [handleSend, t]);
   useEffect(() => {
     if (brandEnrichmentPromptSeed) {
       setBrandEnrichmentPromptSeedCache(brandEnrichmentPromptSeed);
@@ -14054,6 +14094,11 @@ export function ProjectView({
           createDesignSystemFromProjectBusy={projectDesignSystemCreateStarting}
           onDuplicateProject={onDuplicateProject ? handleDuplicateProject : undefined}
           duplicateProjectBusy={projectDuplicateStarting}
+          entryFile={currentProject.metadata?.entryFile ?? null}
+          onSetEntryFile={handleSetEntryFile}
+          entryMissingNotice={entryMissingNotice}
+          onRequestEntry={handleRequestEntry}
+          onDismissEntryMissingNotice={() => setEntryMissingNotice(null)}
           onDeleteDesignSystemProject={onDeleteProject}
           onDesignSystemNeedsWork={sendDesignSystemFeedback}
           designSystemReview={currentProject.metadata?.designSystemReview}

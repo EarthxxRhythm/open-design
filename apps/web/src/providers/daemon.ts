@@ -382,6 +382,8 @@ export interface DaemonStreamOptions {
   onRunStatus?: (status: ChatRunStatus) => void;
   /** Authoritative project-relative artifacts created or modified by the run. */
   onArtifactPaths?: (paths: string[]) => void;
+  /** The daemon's verdict on the project's entry after a succeeded run; see RunDeliverableFacts. */
+  onDeliverableFacts?: (facts: RunDeliverableFacts) => void;
   onRunEventId?: (eventId: string) => void;
   /**
    * 这一轮**被谁取消了**,由 `POST /api/runs/:id/cancel` 的应答如实带回。
@@ -408,6 +410,22 @@ export interface DaemonStreamOptions {
   onStrategyTaskSettled?: (strategyTask: StrategyTaskProjectionV2) => void;
 }
 
+/**
+ * What a succeeded run left the project with, read off the terminal frame (or
+ * the status fallback that replaced it): whether one canonical entry now
+ * resolves, which file it is, and the files this run wrote. The files panel
+ * turns `validation === 'entry_missing'` with a non-empty `artifactPaths`
+ * into its missing-entry notice; nothing else is derived from it.
+ */
+export interface RunDeliverableFacts {
+  runId: string;
+  projectId: string | null;
+  valid: boolean | undefined;
+  validation: ChatRunStatusResponse['deliverableValidation'] | undefined;
+  entryFile: string | undefined;
+  artifactPaths: string[];
+}
+
 export interface DaemonReattachOptions {
   /** Runtime that owns the reattached run, when persisted with its message. */
   agentId?: string;
@@ -421,6 +439,7 @@ export interface DaemonReattachOptions {
   initialLastEventId?: string | null;
   onRunStatus?: (status: ChatRunStatus) => void;
   onArtifactPaths?: (paths: string[]) => void;
+  onDeliverableFacts?: (facts: RunDeliverableFacts) => void;
   onRunEventId?: (eventId: string) => void;
   /**
    * 这一轮**被谁取消了**,由 `POST /api/runs/:id/cancel` 的应答如实带回。
@@ -849,6 +868,7 @@ export async function streamViaDaemon({
   appliedPluginSnapshotId,
   mediaExecution,
   titleGeneration,
+  onDeliverableFacts,
   locale,
   workspaceContext,
   initialLastEventId,
@@ -979,6 +999,7 @@ export async function streamViaDaemon({
       initialLastEventId,
       onRunStatus: emitRunStatus,
       onArtifactPaths,
+      onDeliverableFacts,
       onRunEventId,
       onCancelOrigin,
       projectId,
@@ -1590,6 +1611,7 @@ async function consumeDaemonPhysicalRun({
   initialLastEventId,
   onRunStatus,
   onArtifactPaths,
+  onDeliverableFacts,
   onRunEventId,
   onCancelOrigin,
   projectId,
@@ -1599,6 +1621,10 @@ async function consumeDaemonPhysicalRun({
   onStrategyTaskSettled,
 }: DaemonReattachOptions): Promise<DaemonPhysicalRunResult | void> {
   let acc = '';
+  // The terminal frame's (or fallback status's) verdict on the project entry,
+  // reported once with the run's written files when the run succeeded.
+  let endDeliverable: Pick<RunDeliverableFacts, 'valid' | 'validation' | 'entryFile'> | undefined;
+  let endArtifactPaths: string[] = [];
   /*
    * 流水尾部那一行「正在重试」此刻是不是挂着的。
    *
@@ -1655,7 +1681,20 @@ async function consumeDaemonPhysicalRun({
     const paths = value.filter(
       (item): item is string => typeof item === 'string' && item.trim().length > 0,
     );
-    onArtifactPaths?.([...new Set(paths)]);
+    endArtifactPaths = [...new Set(paths)];
+    onArtifactPaths?.(endArtifactPaths);
+  };
+  const reportDeliverable = (source: {
+    deliverableValid?: boolean | undefined;
+    deliverableValidation?: ChatRunStatusResponse['deliverableValidation'] | undefined;
+    deliverableEntryFile?: string | undefined;
+  }) => {
+    if (typeof source.deliverableValid !== 'boolean' && typeof source.deliverableValidation !== 'string') return;
+    endDeliverable = {
+      valid: source.deliverableValid,
+      validation: source.deliverableValidation,
+      entryFile: typeof source.deliverableEntryFile === 'string' ? source.deliverableEntryFile : undefined,
+    };
   };
   let lastEventId: string | null = initialLastEventId ?? null;
   let canceled = false;
@@ -1991,6 +2030,7 @@ async function consumeDaemonPhysicalRun({
             if (typeof event.data.retryable === 'boolean') endRetryable = event.data.retryable;
             reportArtifactCount(event.data.artifactCount);
             reportArtifactPaths(event.data.artifactPaths);
+            reportDeliverable(event.data);
             if (event.data.strategyTask) endStrategyTask = event.data.strategyTask;
             // `serverDeclaredSuccess` records whether the server explicitly
             // set `status: 'succeeded'` in the end payload — the local
@@ -2021,6 +2061,7 @@ async function consumeDaemonPhysicalRun({
           if (typeof status.retryable === 'boolean') endRetryable = status.retryable;
           reportArtifactCount(status.artifactCount);
           reportArtifactPaths(status.artifactPaths);
+          reportDeliverable(status);
           if (status.strategyTask) endStrategyTask = status.strategyTask;
           break;
         }
@@ -2066,6 +2107,7 @@ async function consumeDaemonPhysicalRun({
         if (typeof status.retryable === 'boolean') endRetryable = status.retryable;
         reportArtifactCount(status.artifactCount);
         reportArtifactPaths(status.artifactPaths);
+        reportDeliverable(status);
         if (status.strategyTask) endStrategyTask = status.strategyTask;
         // 拿到终态就撤掉重连行。`onRunStatus` 不在这里发:合并 origin/main 后
         // 它挪到了 strategy task 收敛之后统一发一次(见下方 `onRunStatus?.(endStatus)`),
@@ -2257,6 +2299,14 @@ async function consumeDaemonPhysicalRun({
         conversationId: conversationId!,
         result: 'success',
         artifactCount: resolvedArtifactCount,
+      });
+    }
+    if (endDeliverable && endStatus === 'succeeded') {
+      onDeliverableFacts?.({
+        runId,
+        projectId: projectId ?? null,
+        ...endDeliverable,
+        artifactPaths: endArtifactPaths,
       });
     }
     handlers.onDone(acc);
