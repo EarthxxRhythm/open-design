@@ -168,6 +168,34 @@ export interface PreviewComment {
   /** Comment author's workspaceMemberId (for cross-member attribution/display). */
   authorMemberId?: string;
   /**
+   * Which identity the author holds. Absent means `member` — every comment
+   * written before the share page existed is one.
+   *
+   * A `user` author is someone who opened a share link, signed in, and
+   * commented: they hold a site account but no membership in the owning team,
+   * so `authorMemberId` is absent and `authorAppUserId` carries them instead.
+   */
+  authorKind?: 'member' | 'user';
+  /** The author's account id when `authorKind` is `user`. */
+  authorAppUserId?: string;
+  /**
+   * Display name captured when the comment was written.
+   *
+   * The client previously had no name to render for an author it could not
+   * resolve, and fell back to an id-only anonymous form. It now renders this
+   * instead. The value is a snapshot rather than a live lookup because the
+   * live lookup is the team member directory, which the share page must not
+   * be able to reach — so the name travels with the comment and the two stay
+   * separate channels.
+   */
+  authorDisplayName?: string;
+  /**
+   * Avatar colour seed, keyed on the account rather than the membership.
+   * Display only; `isMine` is decided server-side against the live session,
+   * never by comparing this.
+   */
+  authorKey?: string;
+  /**
    * Bbox written back on each successful anchor. The `lost` ghost pin renders
    * here (last known-good position), NOT the creation-time `position`, which
    * may point somewhere unrelated after the author restructures the HTML.
