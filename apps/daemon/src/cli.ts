@@ -6987,7 +6987,68 @@ async function postImportFolderToDaemon(base, body, baseDir, workspaceHeaders = 
   return postJsonToDaemon(base, '/api/import/folder', body, headers);
 }
 
+function printProjectShareHelp() {
+  console.log(`Usage:
+  od project share publish <id> --path <file> [--json]
+                    Publish a project file using the same endpoint as the UI.
+  od project share get <id> --path <file> [--json]
+                    Read the current publication (null when not published).
+
+Only publish and get are supported by this command.
+
+Common options:
+  --daemon-url <url>   OpenDesign daemon HTTP base.
+  --workspace <id>     Exact Workspace for bound project requests.
+  --workspace-member <id>
+                       Exact caller membership for bound project requests.
+  --json               Emit the raw daemon JSON response.`);
+}
+
+async function runProjectShare(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    printProjectShareHelp();
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  const [action, ...rest] = args;
+  const stringFlags = new Set(['path', 'daemon-url', 'workspace', 'workspace-member']);
+  let flags;
+  try {
+    flags = parseFlags(rest, { string: stringFlags, boolean: new Set(['json']) });
+  } catch {
+    console.error('Usage: od project share <publish|get> <id> --path <file> [--json]. See --help for accepted flags.');
+    process.exit(2);
+  }
+  const positional = positionalArgs(rest, stringFlags);
+  const id = positional[0];
+  const filePath = typeof flags.path === 'string' ? flags.path.trim() : '';
+  const missingFlagValue = [...stringFlags].some((key) =>
+    typeof flags[key] === 'string' && (!flags[key].trim() || flags[key].startsWith('--')));
+  if (!['publish', 'get'].includes(action) || positional.length !== 1 || !id?.trim() || !filePath || missingFlagValue) {
+    console.error('Usage: od project share <publish|get> <id> --path <file> [--json]');
+    process.exit(2);
+  }
+  // Validate before discovery; malformed invocations must not contact a daemon.
+  const headers = workspaceHeadersFromExplicitFlags(flags) ?? {};
+  const base = (await projectDaemonUrl(flags)).replace(/\/$/, '');
+  let resp;
+  try {
+    resp = await fetch(
+      `${base}/api/projects/${encodeURIComponent(id)}/files/${encodeURIComponent(filePath)}/publish-public`,
+      { method: action === 'publish' ? 'POST' : 'GET', headers },
+    );
+  } catch {
+    // Do not echo transport exceptions, which can contain URLs or credentials.
+    return exitWithStructuredError({ code: 'daemon-not-running', message: 'Failed to reach daemon.' });
+  }
+  if (!resp.ok) return structuredHttpFailure(resp);
+  const data = await resp.json();
+  if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+  const publication = action === 'get' ? data.publication : data;
+  console.log(publication ? publication.url : 'Not published.');
+}
+
 async function runProject(args) {
+  if (args[0] === 'share') return runProjectShare(args.slice(1));
   if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
     console.log(`Usage:
   od project create [--name "<title>"] [--skill <id>] [--design-system <id>]
@@ -7008,6 +7069,10 @@ async function runProject(args) {
                                           Restore the daemon-selected default
                                           scenario with a snapshot CAS guard.
   od project delete <id>                  Delete a project.
+  od project share publish <id> --path <file> [--json]
+                    Publish a project file.
+  od project share get <id> --path <file> [--json]
+                    Read the current publication.
   od project revoke-public-link <id> --path <file> --url <public-url>
                     Revoke a public file link whose local publication record
                     was lost during an older daemon restart or upgrade.
