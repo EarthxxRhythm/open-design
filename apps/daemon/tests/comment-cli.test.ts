@@ -165,7 +165,7 @@ describe('od comment CLI', () => {
     expect(JSON.parse(stub.requests[3]!.body)).toEqual({ status: 'resolved' });
   });
 
-  it('passes a >4000-character multibyte prompt file unchanged to the daemon HTTP API', async () => {
+  it('passes a long multibyte prompt file unchanged to the daemon HTTP API', async () => {
     stub = await startStubServer();
     tempRoot = mkdtempSync(join(tmpdir(), 'od-comment-cli-'));
     const note = '评论'.repeat(2_100);
