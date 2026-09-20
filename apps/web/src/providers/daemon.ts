@@ -41,7 +41,6 @@ import type {
   StrategyTaskProjectionV2,
   WorkspaceCollabContext,
 } from '@open-design/contracts';
-import { OD_NEXT_AGENT_DECLARED_BLOCK_REASON } from '@open-design/contracts';
 import type { StreamHandlers } from './anthropic';
 
 /**
@@ -505,52 +504,27 @@ export function createGenericDaemonDisconnectError(): Error & { code: string } {
 }
 
 /**
- * The DIAGNOSTIC sentence, not the card.
+ * The DIAGNOSTIC sentence for a blocked strategy task, not the card.
  *
- * What the user reads is now localized copy, resolved from the reason code this
- * error carries: `runtime/amr-guidance.ts` maps the four Runtime State issue
- * codes to `chat.runError.title.agentReplyIncomplete` +
- * `chat.runError.agentReplyIncompleteMessage`, present in all 19 locales.
- * Before that mapping existed this failure fell through to the generic
- * fallback, so the card said "the task failed" and nothing else while the user
- * was looking at their answers and a complete plan.
- *
- * This string stays English on purpose: it lands in the collapsible diagnostic
- * area and in `error.message`, which is engineering-facing surface. It is
- * written to say what the daemon actually refused, without implying the user
- * or the reply was at fault.
- *
- * ⚠️ THE CARD COPY IS STILL A DRAFT — W41's, not product's.
- * `docs/design/run-errors/error-ux-design.md` has no cell for "the agent
- * answered and Open Design could not record the answer". S21, the nearest,
- * covers an empty / malformed / looping model response, which this is not: the
- * reply is complete, readable, and already on screen. Product should rewrite
- * the two locale strings; the routing and the reason codes are settled.
+ * Since the two-round design a task is `blocked` for one reason only: its
+ * physical Run failed before the round settled (the daemon stamps
+ * `od_next_physical_run_interrupted`). The Run's own error frame normally
+ * arrives first and names the cause; this sentence is what the error carries
+ * when the stream lost that frame and the verdict is read off the run-status
+ * response instead. It stays English on purpose: it lands in `error.message`
+ * and the diagnostics export, which are engineering-facing. What the user
+ * reads is the localized card `runtime/amr-guidance.ts` resolves from the
+ * reason code.
  */
 export const STRATEGY_TASK_BLOCKED_MESSAGE =
-  "The agent's reply did not carry the machine-readable state Open Design needs "
-  + 'to record this step, so the task could not continue.';
+  'The agent process ended before this round settled, so the task stopped here.';
 
 /**
- * Hand the user the daemon's OWN verdict on a blocked strategy task.
- *
- * The blocked projection already says why it blocked — `blockedContext`
- * names the gate that refused the turn — and none of it used to leave this
- * function. The user got one subject-less sentence, the card's raw-error view
- * showed `error_code: n/a`, and `resolveRunFailureUi` had nothing to match on,
- * so every gate in the strategy contract rendered the same anonymous card.
- *
- * The turn most often behind it: the user answers a question form, their
- * answers go in, the agent replies — and the reply carries no Runtime State
- * block, so the clarification stage lands terminal-`blocked`. Refusing it is
- * right (the stage admits only `plan_ready`, which needs a Plan Contract the
- * reply never had, `blocked`, or `canceled`), but the user is looking at their
- * answers and a full prose plan while being told, without elaboration, that
- * nothing could continue.
+ * Hand the user the daemon's own verdict on a blocked strategy task.
  *
  * The primary reason code rides on `code` — the same channel every other
  * structured daemon failure uses — so the diagnostics text, the failure-UI
- * resolver, and the error analytics can all name the gate. A projection from a
+ * resolver, and the error analytics can all name it. A projection from a
  * daemon too old to send `blockedContext` still fails, just anonymously.
  */
 export function createStrategyTaskBlockedError(
@@ -2142,79 +2116,14 @@ async function consumeDaemonPhysicalRun({
       if (endStrategyTask.outcome === 'canceled') {
         endStatus = 'canceled';
       } else if (endStrategyTask.outcome === 'blocked') {
-        // A blocked strategy verdict does not retroactively unmake a Run that
-        // already succeeded AND delivered. Observed across every runtime: the
-        // agent writes the canonical deliverable correctly, the daemon's own
-        // `validateRunDeliverable` resolves it, and then the turn is refused
-        // over a machine-block defect. Remapping that to `failed` hid the file
-        // the user asked for behind a generic error card and suppressed the
-        // next-step actions that reach it.
-        //
-        // The strategy contract is explicit that a post-claim failure keeps the
-        // current Run's own result rather than inventing a new one, so only a
-        // Run that did NOT succeed-and-deliver falls through to the failure
-        // branch. Both fields are filesystem-backed — never the agent's own
-        // assertion — and an unreachable daemon fails closed to the previous
-        // behaviour.
-        //
-        // `projectDeliverableValid` is the one that answers the question this
-        // branch is actually asking. `deliverableValid` asks "did THIS run
-        // write the entry", which the strategy contract needs for accepting a
-        // completion claim but which is `false` for the most ordinary shape of
-        // this failure: the user says "继续", the agent re-checks work an
-        // earlier turn already finished, correctly rewrites nothing, and the
-        // turn is refused over a machine-block defect. That put a red card over
-        // a finished 16-page deck the user could see rendered beside it. The
-        // OR keeps the stricter field meaningful on its own — a run that did
-        // deliver has obviously delivered.
-        //
-        // The looser field additionally requires that this turn actually SAID
-        // something. It credits a file an EARLIER turn wrote, and that only
-        // means "nothing was lost here" if the user got a reply to go with it.
-        // Without the guard, a turn that returned a bare newline into a project
-        // that already holds a prototype would go silent too — which is the
-        // false-success half of this same conflation (#7564), and swapping one
-        // wrong answer for the other is not a fix. The stricter field keeps its
-        // existing behaviour: a run that wrote the entry delivered, prose or no
-        // prose.
-        const blockedRunStatus = endStatus === 'succeeded'
-          ? await fetchChatRunStatus(runId, workspaceContext)
-          : null;
-        const deliveredDespiteBlock = blockedRunStatus !== null
-          && (
-            (blockedRunStatus.projectDeliverableValid === true
-              && acc.trim().length > 0)
-            || blockedRunStatus.deliverableValid === true
-          );
-        // A block the agent declared on itself is not a failure to report.
-        // Asked for a prototype with nothing to build on, the agent answers in
-        // the chat — "the requirement was skipped, so there is no runnable plan
-        // this round" — and that reply is the turn's outcome. Raising a run
-        // error on top of it restated the same sentence inside a red "task
-        // execution failed" card, so a turn that had simply asked for more
-        // detail read as a crash (OPEND-2565).
-        //
-        // Keyed on the reason code, NOT on the presence of visible text. Every
-        // other block is a gate the agent did not ask for — a missing Runtime
-        // State, an unresolvable deliverable, an unproven session — and the
-        // prose sitting next to it is the agent's ordinary reply ("sure, three
-        // pages, here is the plan"), not an account of the stop. Treating that
-        // as an explanation would hide a real protocol failure behind a
-        // cheerful sentence.
-        //
-        // Also requires a Run that reached the end on its own: a Run that
-        // failed keeps its error even when the agent narrated the failure,
-        // because narration is not a substitute for the failure the user has
-        // to act on.
-        const agentDeclaredBlock = endStrategyTask.blockedContext?.reasonCodes
-          .includes(OD_NEXT_AGENT_DECLARED_BLOCK_REASON) === true;
-        const explainedToUser = endStatus === 'succeeded'
-          && agentDeclaredBlock
-          && (endStrategyTask.blockedContext?.visibleText?.trim().length ?? 0) > 0;
-        if (!deliveredDespiteBlock && !explainedToUser) {
-          endStatus = 'failed';
-          pendingStructuredError ??= createStrategyTaskBlockedError(endStrategyTask);
-        }
+        // A task blocks only when its physical Run failed before the round
+        // settled, so the turn is a failure whatever the stream said. The
+        // Run's own error frame, when the stream carried it, is already the
+        // pending error and names the cause; the task's reason code fills in
+        // only when that frame was lost and the verdict came from the
+        // run-status response.
+        endStatus = 'failed';
+        pendingStructuredError ??= createStrategyTaskBlockedError(endStrategyTask);
       } else if (endStrategyTask.outcome === 'completed') {
         endStatus = 'succeeded';
         serverDeclaredSuccess = true;
