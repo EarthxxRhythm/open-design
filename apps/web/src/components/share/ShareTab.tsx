@@ -249,7 +249,11 @@ export function ShareTab({
                               className={publishingPublicFile ? 'icon-spin' : undefined}
                             />
                           </span>
-                          <span>{publishingPublicFile ? t('fileViewer.publishingFile') : t('fileViewer.publishSingleFileTitle')}</span>
+                          <span>{publishingPublicFile
+                            ? t('fileViewer.publishingFile')
+                            : publishFailureKey === 'fileViewer.publishFileFailed'
+                              ? t('preview.retry')
+                              : t('fileViewer.publishSingleFileTitle')}</span>
                         </button>
                       ) }
                       {publishFailureKey ? (
