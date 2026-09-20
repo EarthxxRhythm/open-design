@@ -176,7 +176,7 @@ describe('OD Next runtime capability gate', () => {
   it.each([
     { runtime: 'opencode' as const, companionVersion: '1.18.30-powerformer.g92ba6a3b82b5' },
     { runtime: 'pi' as const, companionVersion: '0.85.1' },
-    { runtime: 'ohmypi' as const, companionVersion: 'omp/18.2.5', velaVersion: '0.0.1-test.harness-align.g3c052d0' },
+    { runtime: 'ohmypi' as const, companionVersion: 'omp/18.2.5', velaVersion: '0.0.1-test.harness-align.g375c818' },
   ])('uses the installed new $runtime tuple with its own simple-only evidence', ({ runtime, companionVersion, velaVersion = '0.0.1-test.latest-frozen.g0479e8f22dd2' }) => {
     const capability = resolveBundledOdNextRuntimeCapability({
       agentId: 'amr', amrRuntime: runtime, agentCliVersion: velaVersion,
