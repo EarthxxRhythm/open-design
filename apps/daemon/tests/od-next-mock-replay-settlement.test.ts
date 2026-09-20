@@ -26,7 +26,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Agent, fetch as undiciFetch } from 'undici';
-import type { StrategyTaskProjectionV2 } from '@open-design/contracts';
+import {
+  buildDaemonPriorTranscript,
+  buildDaemonTranscript,
+  type StrategyTaskProjectionV2,
+} from '@open-design/contracts';
 
 import { closeDatabase } from '../src/db.js';
 import { AGENT_DEFS } from '../src/runtimes/registry.js';
@@ -125,7 +129,15 @@ describe.skipIf(!recordingsAvailable)('OD Next settlement replayed from recorded
     agent: 'claude' | 'codex',
     traces: string[],
     version: string,
-    options: { captureAnalytics?: boolean } = {},
+    options: {
+      captureAnalytics?: boolean;
+      /**
+       * Invocations (0-based) that must die mid-stream: the shim forwards only
+       * that many lines of the recording, then exits 1 — an agent process
+       * that ended before its round settled.
+       */
+      failInvocations?: Record<number, number>;
+    } = {},
   ) {
     if (options.captureAnalytics) {
       // A stand-in for PostHog ingestion, wired before the daemon starts so its
@@ -145,13 +157,16 @@ describe.skipIf(!recordingsAvailable)('OD Next settlement replayed from recorded
     await symlink(process.execPath, path.join(bin, 'node'));
     const shim = path.join(bin, agent);
     const invocationsPath = path.join(fixtureRoot, 'invocations.jsonl');
+    const stdinDir = path.join(fixtureRoot, 'stdin');
+    await mkdir(stdinDir);
     await writeFile(path.join(fixtureRoot, 'replay.json'), JSON.stringify({
       agent, traces, version, helpFlags, mockAgent: MOCK_AGENT, recordingsDir: RECORDINGS_DIR, invocationsPath,
+      stdinDir, failInvocations: options.failInvocations ?? {},
     }));
     await writeFile(shim, `#!/usr/bin/env node
 const fs = require('node:fs');
 const path = require('node:path');
-const { spawnSync } = require('node:child_process');
+const { spawn } = require('node:child_process');
 const config = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'replay.json'), 'utf8'));
 const argv = process.argv.slice(2);
 if (argv.includes('--version')) { console.log(config.version); process.exit(0); }
@@ -174,8 +189,9 @@ const seen = fs.existsSync(config.invocationsPath)
   : 0;
 fs.appendFileSync(config.invocationsPath, JSON.stringify({ argv, cwd: process.cwd() }) + '\\n');
 const trace = config.traces[Math.min(seen, config.traces.length - 1)];
-const result = spawnSync(process.execPath, [config.mockAgent, '--as', config.agent, ...argv], {
-  stdio: 'inherit',
+const keepLines = config.failInvocations[String(seen)];
+const child = spawn(process.execPath, [config.mockAgent, '--as', config.agent, ...argv], {
+  stdio: ['pipe', keepLines === undefined ? 'inherit' : 'pipe', 'inherit'],
   env: {
     ...process.env,
     OD_MOCKS_TRACE: trace,
@@ -183,7 +199,32 @@ const result = spawnSync(process.execPath, [config.mockAgent, '--as', config.age
     OD_MOCKS_RECORDINGS_DIR: config.recordingsDir,
   },
 });
-process.exit(result.status ?? 1);
+// Tee the prompt: what the daemon wrote to this process is what the test
+// reads back, and the mock still gets every byte.
+const stdinLog = path.join(config.stdinDir, 'stdin-' + seen + '.txt');
+fs.writeFileSync(stdinLog, '');
+process.stdin.on('data', (chunk) => { fs.appendFileSync(stdinLog, chunk); child.stdin.write(chunk); });
+process.stdin.on('end', () => child.stdin.end());
+child.stdin.on('error', () => {});
+if (keepLines !== undefined) {
+  // Forward the first lines of the stream, then die like a crashed agent.
+  let forwarded = 0;
+  let rest = '';
+  child.stdout.on('data', (chunk) => {
+    rest += chunk.toString('utf8');
+    let index;
+    while (forwarded < keepLines && (index = rest.indexOf('\\n')) >= 0) {
+      process.stdout.write(rest.slice(0, index + 1));
+      rest = rest.slice(index + 1);
+      forwarded += 1;
+    }
+    if (forwarded >= keepLines) {
+      child.kill('SIGKILL');
+      process.stdout.write('', () => process.exit(1));
+    }
+  });
+}
+child.on('exit', (code) => process.exit(keepLines === undefined ? (code ?? 1) : 1));
 `);
     await chmod(shim, 0o755);
     process.env.OD_AGENT_HOME = home;
@@ -205,7 +246,7 @@ process.exit(result.status ?? 1);
     });
     expect(config.status).toBe(200);
     expect((await fetch(`${started.url}/api/agents`)).status).toBe(200);
-    return { invocationsPath };
+    return { invocationsPath, stdinDir };
   }
 
   async function createPrototypeProject(label: string, options: { ordinaryPath?: boolean } = {}) {
@@ -313,6 +354,115 @@ process.exit(result.status ?? 1);
     throw new Error(`task on run ${runId} did not settle: ${JSON.stringify(latest)}`);
   }
 
+  /** The task's terminal projection whatever its Run's status ended as. */
+  async function waitForTaskTerminal(runId: string): Promise<{ run: RunStatus; task: StrategyTaskProjectionV2 }> {
+    const deadline = Date.now() + 25_000;
+    let latest: RunStatus | null = null;
+    while (Date.now() < deadline) {
+      const response = await fetch(`${started!.url}/api/runs/${encodeURIComponent(runId)}`);
+      latest = await response.json() as RunStatus;
+      if (latest.strategyTask?.terminal) return { run: latest, task: latest.strategyTask };
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error(`task on run ${runId} did not end: ${JSON.stringify(latest)}`);
+  }
+
+  /** The visible text a Run streamed, read back from its persisted event log. */
+  async function runVisibleText(runId: string): Promise<string> {
+    const response = await fetch(`${started!.url}/api/runs/${encodeURIComponent(runId)}/events`, {
+      headers: { accept: 'text/event-stream' },
+    });
+    const body = await response.text();
+    let text = '';
+    for (const frame of body.split('\n\n')) {
+      const lines = frame.split('\n');
+      if (!lines.some((line) => line === 'event: agent')) continue;
+      const data = lines.find((line) => line.startsWith('data: '));
+      if (!data) continue;
+      try {
+        const payload = JSON.parse(data.slice('data: '.length)) as { type?: string; delta?: string };
+        if (payload.type === 'text_delta' && typeof payload.delta === 'string') text += payload.delta;
+      } catch {
+        // keepalives and partial frames carry no text
+      }
+    }
+    return text;
+  }
+
+  /**
+   * What the chat's Retry sends: the user's turn replayed in the same
+   * conversation, with the finished rounds of the failed task ahead of it in
+   * the transcript (`retryRunHistory` in the web app) and none of the failed
+   * ones.
+   */
+  async function retryTask(
+    agent: 'claude' | 'codex',
+    project: { projectId: string; conversationId: string },
+    message: string,
+    finishedRounds: string[],
+    options: { model?: string } = {},
+  ) {
+    const history = [
+      ...(finishedRounds.length > 0
+        ? [
+          { id: `user-${project.projectId}:retried`, role: 'user' as const, content: message },
+          ...finishedRounds.map((content, index) => ({
+            id: `assistant-${project.projectId}-round-${index}`, role: 'assistant' as const, content,
+          })),
+        ]
+        : []),
+      { id: `user-${project.projectId}-retry`, role: 'user' as const, content: message },
+    ];
+    const response = await fetch(`${started!.url}/api/runs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...ANALYTICS_HEADERS },
+      body: JSON.stringify({
+        projectId: project.projectId,
+        conversationId: project.conversationId,
+        agentId: agent,
+        userMessageId: `user-${project.projectId}-retry`,
+        assistantMessageId: `assistant-${project.projectId}-retry`,
+        clientRequestId: `request-${project.projectId}-retry`,
+        message: buildDaemonTranscript(history, agent),
+        currentPrompt: message,
+        priorTranscript: buildDaemonPriorTranscript(history, agent),
+        ...(options.model ? { model: options.model } : {}),
+      }),
+    });
+    const body = await response.json() as { runId: string; taskExecutionId?: string; strategyTask?: StrategyTaskProjectionV2 };
+    expect(response.status, JSON.stringify(body)).toBe(202);
+    expect(body.strategyTask).toMatchObject({ inputStage: 'request', terminal: false });
+    return body as { runId: string; taskExecutionId: string };
+  }
+
+  /**
+   * The prompt text the daemon wrote to a spawned CLI. Claude receives it as
+   * one stream-json user message; anything else is the raw text.
+   */
+  async function promptWrittenTo(stdinDir: string, invocation: number): Promise<string> {
+    const raw = await readFile(path.join(stdinDir, `stdin-${invocation}.txt`), 'utf8');
+    const texts: string[] = [];
+    for (const line of raw.split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const frame = JSON.parse(line) as { message?: { content?: Array<{ type?: string; text?: string }> | string } };
+        const content = frame.message?.content;
+        if (typeof content === 'string') texts.push(content);
+        else for (const block of content ?? []) if (typeof block.text === 'string') texts.push(block.text);
+      } catch {
+        return raw;
+      }
+    }
+    return texts.join('\n');
+  }
+
+  async function projectFileNames(projectId: string): Promise<string[]> {
+    const response = await fetch(`${started!.url}/api/projects/${encodeURIComponent(projectId)}/files`);
+    const body = await response.json() as { files?: Array<{ path?: string; name: string }> } | Array<{ path?: string; name: string }>;
+    const files = Array.isArray(body) ? body : body.files ?? [];
+    return files.map((file) => file.path ?? file.name);
+  }
+
   async function taskRuns(projectId: string, taskExecutionId: string) {
     const response = await fetch(`${started!.url}/api/runs?projectId=${encodeURIComponent(projectId)}`);
     const body = await response.json() as {
@@ -405,6 +555,97 @@ process.exit(result.status ?? 1);
     expect(await taskRuns(project.projectId, created.taskExecutionId)).toHaveLength(2);
     expect(await invocations(invocationsPath)).toHaveLength(2);
   }, 40_000);
+
+  it('blocks the task when the planning round dies, and a retry opens a new task that plans again', async () => {
+    const { invocationsPath, stdinDir } = await installReplayCli(
+      'claude',
+      [TRACES.claudeTextOnly],
+      '2.1.259 (Claude Code)',
+      { failInvocations: { 0: 4 } },
+    );
+    const project = await createPrototypeProject('planning-dies');
+    const message = 'Build the index page.';
+    const created = await startTask('claude', project, message);
+
+    const { run, task } = await waitForTaskTerminal(created.runId);
+    expect(run.status).toBe('failed');
+    expect(task).toMatchObject({
+      taskExecutionId: created.taskExecutionId,
+      inputStage: 'request',
+      outcome: 'blocked',
+      autoRoundCount: 0,
+      blockedContext: { reasonCodes: ['od_next_physical_run_interrupted'] },
+    });
+    // No automatic round follows a Run that failed.
+    expect(await taskRuns(project.projectId, created.taskExecutionId)).toHaveLength(1);
+    expect(await invocations(invocationsPath)).toHaveLength(1);
+
+    const retried = await retryTask('claude', project, message, []);
+    expect(retried.taskExecutionId).not.toBe(created.taskExecutionId);
+    const retriedTask = await waitForTerminalTask(retried.runId);
+    expect(retriedTask).toMatchObject({
+      taskExecutionId: retried.taskExecutionId,
+      outcome: 'completed',
+      settlementReason: 'text_only',
+      autoRoundCount: 1,
+    });
+    const spawned = await invocations(invocationsPath);
+    expect(spawned).toHaveLength(3);
+    // The retry is a new task's first round in the same conversation: it
+    // carries the request as its current turn, not a continuation delta.
+    const retryPrompt = await promptWrittenTo(stdinDir, 1);
+    expect(retryPrompt).toContain(message);
+    expect(retryPrompt).not.toContain('# OD Next build round');
+  }, 60_000);
+
+  it('retries a build round that died with the plan in the transcript and the files still on disk', async () => {
+    const { invocationsPath, stdinDir } = await installReplayCli(
+      'claude',
+      [TRACES.claudeTextOnly, TRACES.claudeEditsIndex],
+      '2.1.259 (Claude Code)',
+      { failInvocations: { 1: 6 } },
+    );
+    const project = await createPrototypeProject('build-dies');
+    const message = 'Build the index page.';
+    const created = await startTask('claude', project, message);
+
+    const { task } = await waitForTaskTerminal(created.runId);
+    expect(task).toMatchObject({
+      taskExecutionId: created.taskExecutionId,
+      inputStage: 'production',
+      outcome: 'blocked',
+      autoRoundCount: 1,
+      blockedContext: { reasonCodes: ['od_next_physical_run_interrupted'] },
+    });
+    const runs = await taskRuns(project.projectId, created.taskExecutionId);
+    expect(runs.map((run) => run.status)).toEqual(['succeeded', 'failed']);
+    const planningRunId = runs[0]!.id;
+    const planText = await runVisibleText(planningRunId);
+    expect(planText.trim().length).toBeGreaterThan(0);
+    const filesBefore = await projectFileNames(project.projectId);
+
+    // The user changed the model before retrying, so the conversation's agent
+    // session cannot be continued and the round starts cold: the plan the
+    // planning round streamed has to ride in the transcript.
+    const retried = await retryTask('claude', project, message, [planText], { model: 'claude-opus-4-1' });
+    expect(retried.taskExecutionId).not.toBe(created.taskExecutionId);
+    const retriedTask = await waitForTerminalTask(retried.runId);
+    expect(retriedTask.taskExecutionId).toBe(retried.taskExecutionId);
+    expect(retriedTask.outcome).toBe('completed');
+
+    const spawned = await invocations(invocationsPath);
+    expect(spawned.length).toBeGreaterThanOrEqual(3);
+    expect(spawned[2]!.argv).not.toContain('--resume');
+    const retryPrompt = await promptWrittenTo(stdinDir, 2);
+    const planHead = planText.trim().slice(0, 80);
+    expect(retryPrompt).toContain(planHead);
+    // The plan sits in the transcript ahead of the replayed request.
+    expect(retryPrompt.indexOf(planHead)).toBeLessThan(retryPrompt.lastIndexOf(message));
+    // Nothing the failed task wrote was cleaned up by the retry.
+    for (const file of filesBefore) {
+      expect(await projectFileNames(project.projectId)).toContain(file);
+    }
+  }, 60_000);
 
   it('reports the task identity on run_created and the settlement, reason codes and launch fact on run_finished', async () => {
     const { invocationsPath } = await installReplayCli(
