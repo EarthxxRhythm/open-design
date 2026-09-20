@@ -448,6 +448,17 @@ async function emitRun(promptText) {
     emitOdNextPlanningRun(promptText);
     return;
   }
+  // A build that leaves the project without an entry: one nested page and
+  // nothing at the root. The files panel's missing-entry notice is what the
+  // user sees, and its button sends the message the branch below answers.
+  if (promptText.includes('Create an OD Next nested canary without an entry')) {
+    emitOdNextPlanningRun(promptText, undefined, { nestedNoEntry: true });
+    return;
+  }
+  if (promptText.includes('opens as the entry page')) {
+    await emitOdNextEntryFixRun();
+    return;
+  }
   if (promptText.includes('Return a stderr-only daemon smoke failure')) {
     process.stderr.write('stderr-only daemon smoke failure from fake ' + agentId + '\\n');
     process.exitCode = 1;
@@ -572,16 +583,18 @@ function odNextPromptIdentity(promptText) {
       if (end < 0) throw new Error('OD Next fake could not finish recipe_identity.' + name);
       return identityMarker.slice(valueStart, end);
     };
+    // The Bundle no longer carries the package hash (it was only ever there
+    // for the retired plan contract); keep reading it when a caller supplies
+    // one so the packaged fixture prompt still round-trips.
     const packageHashPrefix = '"packageHash": "';
     const packageHashStart = promptText.indexOf(packageHashPrefix);
-    if (packageHashStart < 0) throw new Error('OD Next fake could not read packageHash');
     const packageHashValueStart = packageHashStart + packageHashPrefix.length;
-    const packageHashEnd = promptText.indexOf('"', packageHashValueStart);
+    const packageHashEnd = packageHashStart < 0 ? -1 : promptText.indexOf('"', packageHashValueStart);
     const taskTypeMatch = /<task_type>\\s*([^<]+?)\\s*<\\/task_type>/.exec(promptText);
     const identity = {
       version: attribute('strategy_version'),
       snapshotId: attribute('applied_snapshot'),
-      packageHash: promptText.slice(packageHashValueStart, packageHashEnd),
+      packageHash: packageHashStart < 0 ? 'unavailable' : promptText.slice(packageHashValueStart, packageHashEnd),
       taskProfileVersion: attribute('task_profile_version'),
       taskType: taskTypeMatch ? taskTypeMatch[1].trim() : 'prototype',
     };
@@ -610,7 +623,8 @@ function emitOdNextPlanningRun(promptText, taskTypeOverride, options = {}) {
   }
   if (options.legacyDeck) identity.legacyDeck = true;
   if (options.homeFirstRun) identity.homeFirstRun = true;
-  if (taskTypeOverride || options.legacyDeck || options.homeFirstRun) {
+  if (options.nestedNoEntry) identity.nestedNoEntry = true;
+  if (taskTypeOverride || options.legacyDeck || options.homeFirstRun || options.nestedNoEntry) {
     writeFileSync(odNextIdentityPath, JSON.stringify(identity), 'utf8');
   }
   const deliverableKind = identity.taskType === 'ppt' ? 'deck' : 'prototype';
@@ -654,6 +668,25 @@ async function emitOdNextProductionRun(promptText) {
     : odNextPromptIdentity(promptText);
   const legacyDeck = identity.legacyDeck === true;
   const homeFirstRun = identity.homeFirstRun === true;
+  if (identity.nestedNoEntry === true) {
+    // Two nested pages and nothing at the root: no single file can be
+    // inferred as the entry, so the project ends up without one.
+    await mkdir(join(projectDir(), 'screens'), { recursive: true });
+    await writeFileFs(
+      join(projectDir(), 'screens', 'home.html'),
+      '<!doctype html><html><body><h1>Nested home</h1></body></html>',
+      'utf8',
+    );
+    await writeFileFs(
+      join(projectDir(), 'screens', 'about.html'),
+      '<!doctype html><html><body><h1>Nested about</h1></body></html>',
+      'utf8',
+    );
+    emitSuccess('Created screens/home.html and screens/about.html through the continued native session.\\n', false, false);
+    process.exitCode = 0;
+    exitSoon(0);
+    return;
+  }
   if (homeFirstRun) await new Promise((resolve) => setTimeout(resolve, 1200));
   await writeFileFs(
     join(projectDir(), 'od-next-active-canary.html'),
@@ -670,6 +703,17 @@ async function emitOdNextProductionRun(promptText) {
     false,
     false,
   );
+  process.exitCode = 0;
+  exitSoon(0);
+}
+
+async function emitOdNextEntryFixRun() {
+  await writeFileFs(
+    join(projectDir(), 'index.html'),
+    '<!doctype html><html><body><a href="screens/home.html">Home</a></body></html>',
+    'utf8',
+  );
+  emitSuccess('Added index.html as the entry linking to screens/home.html.\\n', false, false);
   process.exitCode = 0;
   exitSoon(0);
 }

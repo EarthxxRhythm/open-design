@@ -383,6 +383,49 @@ test('[P0] local OD Next clarification canary settles on the form and the answer
   });
 });
 
+test('[P0] local OD Next build without an entry completes, shows the notice, and the button asks for one', async ({ page }) => {
+  test.skip(
+    process.env.OD_NEXT_STRATEGY_ROLLOUT !== 'active'
+      || process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY !== '1',
+    'requires the explicit local synthetic rollout canary flags',
+  );
+  await prepareLocalOdNextCanary(page, 'OD Next local nested canary');
+
+  const createResponsePromise = page.waitForResponse(isCreateRunResponse);
+  await sendPrompt(page, 'Create an OD Next nested canary without an entry');
+  const created = await (await createResponsePromise).json() as { runId: string; taskExecutionId: string };
+  const { projectId } = await currentProjectContext(page);
+  await expectProjectFilesToContain(page, projectId, ['screens/home.html', 'screens/about.html']);
+
+  // The task completed on the written pages even though nothing resolves as
+  // the entry: the entry is a project attribute, not a completion gate.
+  await expect.poll(async () => {
+    const response = await page.request.get(`/api/runs/${created.runId}`);
+    return (await response.json() as {
+      strategyTask?: { outcome: string; terminal: boolean; deliverableWritten: boolean };
+    }).strategyTask;
+  }, { timeout: 20_000 }).toMatchObject({ outcome: 'completed', terminal: true, deliverableWritten: true });
+
+  await openAllProjectFiles(page);
+  const notice = page.getByTestId('design-files-entry-missing');
+  await expect(notice).toBeVisible();
+  await expect(notice).toContainText('screens/home.html');
+  await page.screenshot({ path: 'ui/reports/screenshots/entry-missing-notice.png', fullPage: false });
+
+  // The button sends the fixed follow-up in the same conversation; the fake
+  // answers it by adding index.html, which the daemon records as the entry.
+  const fixResponsePromise = page.waitForResponse(isCreateRunResponse);
+  await page.getByTestId('design-files-entry-request').click();
+  const fix = await (await fixResponsePromise).json() as { runId: string; taskExecutionId: string };
+  expect(fix.taskExecutionId).not.toBe(created.taskExecutionId);
+  await expectProjectFilesToContain(page, projectId, ['index.html']);
+  await expect.poll(async () => {
+    const response = await page.request.get(`/api/projects/${encodeURIComponent(projectId)}`);
+    return (await response.json() as { project: { metadata?: { entryFile?: string } } }).project.metadata?.entryFile;
+  }, { timeout: 20_000 }).toBe('index.html');
+  await expect(notice).toHaveCount(0);
+});
+
 test('[P0] local OD Next public canaries project blocked and canceled terminal mappings', async ({ page }) => {
   test.skip(
     process.env.OD_NEXT_STRATEGY_ROLLOUT !== 'active'
