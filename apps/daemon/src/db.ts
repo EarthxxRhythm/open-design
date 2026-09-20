@@ -4193,20 +4193,42 @@ export function mergeSyncedPreviewComment(
     ? Math.max(0, Math.round(comment.anchoredVersion as number))
     : null;
   const updatedAt = Number.isFinite(comment.updatedAt) ? (comment.updatedAt as number) : now;
+  const authorKind = comment.authorKind === 'member' || comment.authorKind === 'user'
+    ? comment.authorKind
+    : undefined;
+  const authorMemberId = authorKind === 'user'
+    ? null
+    : typeof comment.memberId === 'string' && comment.memberId.trim()
+      ? comment.memberId.trim()
+      : null;
+  const authorAppUserId = typeof comment.authorAppUserId === 'string'
+    ? comment.authorAppUserId
+    : undefined;
+  const authorDisplayName = typeof comment.authorDisplayName === 'string'
+    ? comment.authorDisplayName
+    : undefined;
+  const authorKey = typeof comment.authorKey === 'string' ? comment.authorKey : undefined;
   const existing = db
     .prepare(`SELECT updated_at AS updatedAt FROM preview_comments WHERE id = ? AND project_id = ?`)
     .get(comment.id, projectId) as DbRow | undefined;
   if (existing) {
     // Last-writer-wins: only apply a strictly-newer edit. Keeps the existing
-    // row's conversation/created_at/author identity; refreshes mutable content,
-    // status, and drift-ladder anchor state.
+    // row's conversation/created_at, refreshes mutable content/status/anchor
+    // state, and updates author fields only when the incoming wire payload
+    // explicitly carries each trusted field. Legacy payloads cannot erase them.
     if (updatedAt <= Number(existing.updatedAt ?? 0)) return false;
     db.prepare(
       `UPDATE preview_comments SET
          selector = ?, label = ?, text = ?, position_json = ?, html_hint = ?,
          selection_kind = ?, member_count = ?, pod_members_json = ?, style_json = ?,
          attachments_json = ?, slide_index = ?, slide_key = ?, note = ?, status = ?,
-         anchor_state = ?, anchored_version = ?, last_good_position_json = ?, updated_at = ?
+         anchor_state = ?, anchored_version = ?, last_good_position_json = ?,
+         author_member_id = CASE WHEN ? THEN ? ELSE author_member_id END,
+         author_kind = CASE WHEN ? THEN ? ELSE author_kind END,
+         author_app_user_id = CASE WHEN ? THEN ? ELSE author_app_user_id END,
+         author_display_name = CASE WHEN ? THEN ? ELSE author_display_name END,
+         author_key = CASE WHEN ? THEN ? ELSE author_key END,
+         updated_at = ?
        WHERE id = ? AND project_id = ?`,
     ).run(
       comment.selector,
@@ -4226,6 +4248,16 @@ export function mergeSyncedPreviewComment(
       anchorState,
       anchoredVersion,
       comment.lastGoodPosition ? JSON.stringify(comment.lastGoodPosition) : null,
+      authorKind !== undefined ? 1 : 0,
+      authorMemberId,
+      authorKind !== undefined ? 1 : 0,
+      authorKind ?? null,
+      authorAppUserId !== undefined ? 1 : 0,
+      authorAppUserId ?? null,
+      authorDisplayName !== undefined ? 1 : 0,
+      authorDisplayName ?? null,
+      authorKey !== undefined ? 1 : 0,
+      authorKey ?? null,
       updatedAt,
       comment.id,
       projectId,
@@ -4265,9 +4297,9 @@ export function mergeSyncedPreviewComment(
          (id, project_id, conversation_id, file_path, element_id, selector, label,
           text, position_json, html_hint, selection_kind, member_count, pod_members_json,
           style_json, attachments_json, slide_index, slide_key, note, status, created_at, updated_at,
-          anchor_state, anchored_version, author_member_id, last_good_position_json,
-          pin_seq, pin_seq_confirmed, sort_key)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          anchor_state, anchored_version, author_member_id, author_kind, author_app_user_id,
+          author_display_name, author_key, last_good_position_json, pin_seq, pin_seq_confirmed, sort_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       comment.id,
@@ -4293,7 +4325,11 @@ export function mergeSyncedPreviewComment(
       updatedAt,
       anchorState,
       anchoredVersion,
-      typeof comment.memberId === 'string' ? comment.memberId : null,
+      authorMemberId,
+      authorKind ?? null,
+      authorAppUserId ?? null,
+      authorDisplayName ?? null,
+      authorKey ?? null,
       comment.lastGoodPosition ? JSON.stringify(comment.lastGoodPosition) : null,
       pinSeq,
       1,

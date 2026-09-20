@@ -246,9 +246,9 @@ function resolveCommentWorkspaceContext(
     context: {
       ...local.context,
       workspaceType: binding.visibility === 'team' ? 'team' : 'personal',
-      ...(binding.visibility === 'team'
-        ? { teamId: binding.workspaceId }
-        : { teamId: null }),
+      // Personal contexts omit the Team-only field; null is not a valid
+      // WorkspaceCollabContext.teamId and changes no fixture behavior.
+      ...(binding.visibility === 'team' ? { teamId: binding.workspaceId } : {}),
     },
   };
 }

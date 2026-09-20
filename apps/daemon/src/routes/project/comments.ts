@@ -422,6 +422,14 @@ export function registerProjectCommentRoutes(app: Express, ctx: RegisterProjectC
       // New comments do not use a natural element key; editing requires an id
       // and is author-only.
       const body = { ...(req.body || {}) };
+      // Author identity is server-stamped. Strip every client-supplied author
+      // field before resolving the caller so an absent caller cannot inherit a
+      // forged member or share-page user identity into SQLite.
+      delete body.authorMemberId;
+      delete body.authorKind;
+      delete body.authorAppUserId;
+      delete body.authorDisplayName;
+      delete body.authorKey;
       const authorMemberId = await resolveCaller(req, workspaceContext);
       const requestedId = typeof body.id === 'string' && body.id.trim() ? body.id.trim() : '';
       let existing: PreviewComment | null = null;

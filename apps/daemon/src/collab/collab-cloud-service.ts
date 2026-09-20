@@ -105,17 +105,20 @@ const COMMENT_OUTBOX_PUSH_CONCURRENCY = 4;
  * Map a locally-stored preview comment to the cloud sync unit. Carries the full
  * anchoring payload + drift-ladder fields so the comment keeps pointing at the
  * same element on the receiver. `memberId` is the AUTHOR (who wrote it), taken
- * from the comment's authorMemberId, falling back to the sharing member.
+ * only from the comment's authorMemberId; an authorless comment stays blank so
+ * the relay owner is never misrepresented as its author.
  */
 export function previewCommentToCloud(
   comment: PreviewComment,
-  fallbackMemberId: string,
+  _fallbackMemberId: string,
 ): CollabCloudComment {
   const cloud: CollabCloudComment = {
     id: comment.id,
     projectId: comment.projectId,
     conversationId: comment.conversationId,
-    memberId: comment.authorMemberId ?? fallbackMemberId,
+    // A relay owner is not the author. Keep the legacy required wire field
+    // empty when an external/authorless comment has no workspace member.
+    memberId: comment.authorKind === 'user' ? '' : comment.authorMemberId ?? '',
     seq: 0,
     note: comment.note,
     filePath: comment.filePath,
@@ -139,6 +142,10 @@ export function previewCommentToCloud(
   if (comment.anchorState !== undefined) cloud.anchorState = comment.anchorState;
   if (comment.anchoredVersion !== undefined) cloud.anchoredVersion = comment.anchoredVersion;
   if (comment.lastGoodPosition !== undefined) cloud.lastGoodPosition = comment.lastGoodPosition;
+  if (comment.authorKind !== undefined) cloud.authorKind = comment.authorKind;
+  if (comment.authorAppUserId !== undefined) cloud.authorAppUserId = comment.authorAppUserId;
+  if (comment.authorDisplayName !== undefined) cloud.authorDisplayName = comment.authorDisplayName;
+  if (comment.authorKey !== undefined) cloud.authorKey = comment.authorKey;
   return cloud;
 }
 

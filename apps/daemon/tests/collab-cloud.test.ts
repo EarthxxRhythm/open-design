@@ -132,7 +132,7 @@ describe('previewCommentToCloud', () => {
     expect(cloud.seq).toBe(0);
   });
 
-  it('falls back to the sharing member when the comment has no author', () => {
+  it('does not attribute an authorless or external comment to the relay owner', () => {
     const cloud = previewCommentToCloud(
       {
         id: 'c1',
@@ -152,7 +152,27 @@ describe('previewCommentToCloud', () => {
       } as any,
       'm-fallback',
     );
-    expect(cloud.memberId).toBe('m-fallback');
+    expect(cloud.memberId).toBe('');
+
+    const external = previewCommentToCloud(
+      {
+        ...cloud,
+        // A stale member id on an external row must not become its author.
+        authorMemberId: 'stale-member',
+        authorKind: 'user',
+        authorAppUserId: 'app-user-1',
+        authorDisplayName: 'Ada',
+        authorKey: 'a'.repeat(64),
+      },
+      'm-fallback',
+    );
+    expect(external).toMatchObject({
+      memberId: '',
+      authorKind: 'user',
+      authorAppUserId: 'app-user-1',
+      authorDisplayName: 'Ada',
+      authorKey: 'a'.repeat(64),
+    });
   });
 });
 
@@ -177,6 +197,49 @@ describe('mergeSyncedPreviewComment', () => {
     expect(stored[0]!.authorMemberId).toBe('m-author');
     expect(stored[0]!.anchorState).toBe('anchored');
     expect(stored[0]!.anchoredVersion).toBe(3);
+  });
+
+  it('updates trusted cloud author metadata and retains it for legacy payloads', () => {
+    const db = seededDb();
+    const initial = cloudComment('c-author', {
+      updatedAt: 100,
+      memberId: '',
+      authorKind: 'user',
+      authorAppUserId: 'app-user-1',
+      authorDisplayName: 'Ada',
+      authorKey: 'a'.repeat(64),
+    });
+    expect(mergeSyncedPreviewComment(db, 'p1', 'conv-local', initial)).toBe(true);
+
+    const updated = {
+      ...initial,
+      updatedAt: 200,
+      authorDisplayName: 'Ada Lovelace',
+      authorKey: 'b'.repeat(64),
+    };
+    expect(mergeSyncedPreviewComment(db, 'p1', 'conv-local', updated)).toBe(true);
+    expect(listPreviewComments(db, 'p1', 'conv-local')[0]).toMatchObject({
+      authorKind: 'user',
+      authorAppUserId: 'app-user-1',
+      authorDisplayName: 'Ada Lovelace',
+      authorKey: 'b'.repeat(64),
+    });
+
+    const {
+      authorKind: _authorKind,
+      authorAppUserId: _authorAppUserId,
+      authorDisplayName: _authorDisplayName,
+      authorKey: _authorKey,
+      ...legacyUpdate
+    } = updated;
+    legacyUpdate.updatedAt = 300;
+    expect(mergeSyncedPreviewComment(db, 'p1', 'conv-local', legacyUpdate)).toBe(true);
+    expect(listPreviewComments(db, 'p1', 'conv-local')[0]).toMatchObject({
+      authorKind: 'user',
+      authorAppUserId: 'app-user-1',
+      authorDisplayName: 'Ada Lovelace',
+      authorKey: 'b'.repeat(64),
+    });
   });
 
   it('lands under the LOCAL conversation, not the cloud comment conversationId', () => {
@@ -785,8 +848,8 @@ describe('createCollabCloudService', () => {
     ).resolves.toMatchObject({ displayName: 'Owner A' });
 
     expect(calls).toEqual([
-      { operation: 'push', teamId: 'workspace-a', memberId: 'member-a' },
-      { operation: 'delete', teamId: 'workspace-a', memberId: 'member-a' },
+      { operation: 'push', teamId: 'workspace-a', memberId: '' },
+      { operation: 'delete', teamId: 'workspace-a', memberId: '' },
       { operation: 'pull', teamId: 'workspace-a' },
       { operation: 'resolve-member', teamId: 'workspace-a' },
     ]);
