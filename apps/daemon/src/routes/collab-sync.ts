@@ -531,27 +531,20 @@ function writeLruEntry<K, V>(cache: Map<K, V>, key: K, value: V): void {
   }
 }
 
-function normalizePublicFilePath(raw: string): string | null {
-  if (raw.includes('\\')) return null;
-  let decoded: string;
-  try {
-    decoded = raw
-      .split('/')
-      .map((part) => decodeURIComponent(part))
-      .join('/');
-  } catch {
-    return null;
-  }
-  if (decoded.includes('\\')) return null;
-  const normalized = decoded.replace(/^\/+/, '').replace(/\/+/g, '/');
+/** Validate Express-decoded route params without interpreting literal percent escapes. */
+function normalizePublicFilePath(filePath: string): string | null {
+  // Express decodes each regexp capture once, including encoded separators.
+  // Reject unsafe segments rather than normalizing them into a different file.
   if (
-    !normalized ||
-    normalized.includes('\0') ||
-    normalized.split('/').some((part) => part === '' || part === '.' || part === '..')
+    !filePath ||
+    filePath.includes('\\') ||
+    filePath.includes('\0') ||
+    /^[A-Za-z]:/.test(filePath) ||
+    filePath.split('/').some((part) => part === '' || part === '.' || part === '..')
   ) {
     return null;
   }
-  return normalized;
+  return filePath;
 }
 
 function publicFileResourceIdFor(
