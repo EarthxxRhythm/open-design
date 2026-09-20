@@ -11,11 +11,11 @@ import {
   type OdNextStrategyRequestRecipeV2,
 } from '../src/prompts/od-next-strategy.js';
 import {
-  FullPlanV2Schema,
+  OD_NEXT_DESIGN_NOTES_FILE,
+} from '../src/prompts/od-next-strategy.js';
+import {
   OD_NEXT_PLAN_CONTRACT_BLOCK,
   OD_NEXT_RUNTIME_STATE_BLOCK,
-  OpenDesignPlanContractV2Schema,
-  StrategyRuntimeStateV2Schema,
 } from '../src/plugins/strategy-v2.js';
 import { composeSystemPrompt } from '../src/prompts/system.js';
 
@@ -169,34 +169,9 @@ describe('OD Next V2 prompt recipe', () => {
   });
 
   it('states the deliverable rules that only bite once a plan declares more than one', () => {
-    // The canonical Plan Contract example carries a single deliverable whose id
-    // equals `canonicalDeliverable.id`, so the membership rule reads as a
-    // coincidence of the one-item example rather than an invariant. A complex
-    // plan naturally declares one deliverable per page and picks one as
-    // canonical, at which point codex emitted a canonical id that appeared
-    // nowhere in requiredDeliverables and terminated on
-    // `taskProfile.requiredDeliverables: The canonical deliverable must be part
-    // of requiredDeliverables.`
+    // Prompt text pinned until the planning round stops teaching the plan
+    // block; the daemon no longer parses it.
     const prompt = composeOdNextStrategyRequestPromptV2(recipe);
-    const contract = OpenDesignPlanContractV2Schema.parse(
-      parseWireBlock(prompt, OD_NEXT_PLAN_CONTRACT_BLOCK),
-    );
-    const multiDeliverable = {
-      ...contract,
-      taskProfile: {
-        ...contract.taskProfile,
-        canonicalDeliverable: { ...contract.taskProfile.canonicalDeliverable, id: 'home' },
-        requiredDeliverables: [
-          { id: 'pricing', kind: contract.taskProfile.canonicalDeliverable.kind },
-          { id: 'about', kind: contract.taskProfile.canonicalDeliverable.kind },
-        ],
-      },
-    };
-    const rejected = OpenDesignPlanContractV2Schema.safeParse(multiDeliverable);
-    expect(rejected.success).toBe(false);
-    expect(JSON.stringify(rejected.error?.issues)).toContain(
-      'The canonical deliverable must be part of requiredDeliverables.',
-    );
     expect(prompt).toContain(
       'taskProfile.canonicalDeliverable.id must itself appear as one of the requiredDeliverables ids',
     );
@@ -204,48 +179,13 @@ describe('OD Next V2 prompt recipe', () => {
   });
 
   it('spells out the Build Package shape that only a complex plan ever emits', () => {
-    // The canonical Plan Contract example is a SIMPLE plan, and the schema
-    // rejects a simple plan that carries Build Packages, so that example's
-    // `buildPackages` is necessarily `[]`. It left the one array unique to
-    // complex mode with neither a template nor a prose shape, while
-    // `buildRequirements` and `readinessArtifacts` both got spelled out. A
-    // model asked for complex therefore had to invent seven `.strict()` field
-    // names: codex and opencode independently guessed `dependencies` plus a
-    // stray `boundary`, and both terminated on
-    // `od_next_protocol_plan_contract_invalid_schema`.
-    const buildPackage = FullPlanV2Schema.parse({
-      executionMode: 'complex',
-      steps: [
-        { id: 'shell', objective: 'Build the shared shell.', outputs: ['shell'] },
-        { id: 'flow', objective: 'Build the primary flow.', outputs: ['flow'], dependsOn: ['shell'] },
-      ],
-      readinessArtifacts: [],
-      buildPackages: [
-        {
-          id: 'shell',
-          objective: 'Build the shared shell.',
-          inputs: [],
-          outputs: ['shell'],
-          sharedConstraints: ['Use the frozen type and spacing tokens.'],
-          dependsOn: [],
-          allowedResources: ['project-source'],
-        },
-        {
-          id: 'flow',
-          objective: 'Build the primary flow.',
-          inputs: ['shell'],
-          outputs: ['flow'],
-          sharedConstraints: ['Use the frozen type and spacing tokens.'],
-          dependsOn: ['shell'],
-          allowedResources: ['project-source'],
-        },
-      ],
-    }).buildPackages[0]!;
-
+    // Prompt text pinned until the planning round stops teaching the plan
+    // block; the daemon no longer parses it.
+    const buildPackageFields = [
+      'id', 'objective', 'inputs', 'outputs', 'sharedConstraints', 'dependsOn', 'allowedResources',
+    ];
     const prompt = composeOdNextStrategyRequestPromptV2(recipe);
-    // Naming every accepted key means a new schema field cannot land without
-    // the contract prose growing to describe it.
-    for (const field of Object.keys(buildPackage)) {
+    for (const field of buildPackageFields) {
       expect(prompt).toContain(field);
     }
     expect(prompt).toContain(
@@ -345,7 +285,7 @@ describe('OD Next V2 prompt recipe', () => {
     const contract = parseWireBlock(prompt, OD_NEXT_PLAN_CONTRACT_BLOCK);
     // The example carries only per-task-type values; every per-task value is a
     // placeholder the Agent copies from <runtime_facts>.
-    expect(OpenDesignPlanContractV2Schema.parse(contract)).toMatchObject({
+    expect(contract).toMatchObject({
       taskProfile: {
         taskProfileVersion: '2.0.0',
         canonicalDeliverable: { kind: 'prototype' },
@@ -512,13 +452,13 @@ describe('OD Next V2 prompt recipe', () => {
     })).not.toContain('name="example-reference"');
   });
 
-  it('prints wrapper protocol examples that remain valid against the exact V2 schemas', () => {
+  it('prints wrapper protocol examples as JSON the daemon can strip from the visible reply', () => {
     const prompt = composeOdNextStrategyRequestPromptV2(recipe, { agentId: 'codex' });
     const planContract = parseWireBlock(prompt, OD_NEXT_PLAN_CONTRACT_BLOCK);
     const runtimeState = parseWireBlock(prompt, OD_NEXT_RUNTIME_STATE_BLOCK);
 
-    expect(OpenDesignPlanContractV2Schema.parse(planContract)).toEqual(planContract);
-    expect(StrategyRuntimeStateV2Schema.parse(runtimeState)).toEqual(runtimeState);
+    expect(planContract).toMatchObject({ schema: 'open-design.plan-contract/v2' });
+    expect(runtimeState).toMatchObject({ schema: 'open-design.strategy-state/v2' });
     expect(prompt).toContain('open-design.plan-contract/v2');
     expect(prompt).toContain('open-design.strategy-state/v2');
     expect(prompt).toContain('capabilitySnapshotHash');
@@ -627,10 +567,8 @@ describe('OD Next V2 prompt recipe', () => {
     const bundle = composeOdNextStrategyBundleHeadV2(recipe);
     const production = composeOdNextStrategyContinuationV2({
       stage: 'production',
-      nativeSessionResume: true,
       taskExecutionId: 'task-1',
       taskRunIndex: 1,
-      planContractHash: A,
       hostProtocolKey: '0123456789abcdef',
     });
 
@@ -651,134 +589,59 @@ describe('OD Next V2 prompt recipe', () => {
     expect(odNextPromptCacheIdentityV2({ ...recipe, taskProfileDigest: A })).not.toBe(baseline);
   });
 
-  it('carries the locked planning intent through a native form continuation and preserves legacy production defaults', () => {
-    const input = { stage: 'clarification' as const, nativeSessionResume: true as const,
-      taskExecutionId: 'planning-task', taskRunIndex: 1, answer: 'The four required answers.' };
-    const planning = composeOdNextStrategyContinuationV2({ ...input, executionIntent: 'plan_only' });
-    expect(planning).toContain('task is locked to executionIntent plan_only');
-    expect(planning).toContain('without creating or modifying files');
-    expect(planning).toContain(input.answer);
-    expect(composeOdNextStrategyContinuationV2({ ...input, executionIntent: 'produce' }))
-      .toBe(composeOdNextStrategyContinuationV2(input));
+  it('keeps the session-mode wording the request stage still teaches', () => {
     const request = composeOdNextStrategyRequestPromptV2(recipe, { sessionMode: 'chat' });
     expect(request).not.toContain('chat and plan session modes always mean plan_only');
     expect(request).toContain('Plan mode requires editable Markdown documents');
     expect(request).toContain('Chat mode permits explicitly requested trivial file changes');
-    expect(request).toContain('Resolve executionIntent from the user');
   });
 
-  it('keeps clarification-stage guidance compatible with a completed no-write answer', () => {
-    const input = { stage: 'clarification' as const, nativeSessionResume: true as const,
-      taskExecutionId: 'planning-task', taskRunIndex: 1, answer: 'Use the operator console.' };
-    const planning = composeOdNextStrategyContinuationV2({ ...input, executionIntent: 'plan_only' });
-    expect(planning).toContain('task is locked to executionIntent plan_only');
-    expect(planning).toContain('inputStage clarification (not request)');
-    expect(planning).toContain('outcome completed for an executionIntent plan_only answer without file writes');
-    expect(planning).toContain(input.answer);
-
-    const production = composeOdNextStrategyContinuationV2({ ...input, executionIntent: 'produce' });
-    expect(production).toContain('inputStage clarification (not request)');
-    expect(production).toContain('outcome plan_ready once the Full Plan is frozen for production');
-    expect(production).not.toContain('task is locked to executionIntent plan_only');
-  });
-
-  it('emits native-session-only deltas and gives Production the frozen plan plus terminal state shape', () => {
-    const clarification = composeOdNextStrategyContinuationV2({
-      stage: 'clarification',
-      nativeSessionResume: true,
-      taskExecutionId: 'task-1',
-      taskRunIndex: 1,
-      answer: 'Keep the audience focused on operators.',
-    });
-    const contractRepair = composeOdNextStrategyContinuationV2({
-      stage: 'contract_repair',
-      nativeSessionResume: true,
-      taskExecutionId: 'task-1',
-      taskRunIndex: 1,
-      serializationIssue: 'fullPlan.steps[0].outputs is missing.',
-    });
+  it('composes the build round as one instruction plus the keyed host protocols', () => {
     const production = composeOdNextStrategyContinuationV2({
       stage: 'production',
-      nativeSessionResume: true,
       taskExecutionId: 'task-1',
       taskRunIndex: 1,
-      planContractHash: A,
       hostProtocolKey: '0123456789abcdef',
     });
-
-    expect(clarification).toContain('Clarification answer');
-    // OPEND-2954: every Runtime State example in the protocol reference shows
-    // `inputStage: "request"`, and this was the one continuation that never
-    // named its own stage — so a clarification turn copied the example and was
-    // refused for it. The continuation now says which stage it runs at.
-    expect(clarification).toContain('stage="clarification" task_run_index="1"');
-    expect(clarification).toContain('inputStage clarification');
-    expect(clarification).toContain('outcome plan_ready');
-    expect(contractRepair).toContain('serialization-only');
-    expect(production).toContain(`planContractHash=${A}`);
     expect(production).toMatch(/^<open_design_request_turn/);
     expect(production).toContain('task_execution_id="task-1"');
     expect(production).toContain('stage="production" task_run_index="1"');
-    expect(production).toContain('## Closing Runtime State');
-    expect(production).toContain('exactly one open-design-runtime-state block');
-    expect(production).toContain('schema open-design.strategy-state/v2');
-    expect(production).toContain('route full_plan');
-    expect(production).toContain('inputStage production');
-    expect(production).toContain('executionMode equal to the mode locked');
-    expect(production).toContain('outcome completed');
-    expect(production).toContain('reasonCodes []');
-    expect(production).toContain('no Plan Contract block');
-    expect(production).not.toContain(recipe.coreStrategy);
-    expect(production).not.toContain(recipe.generalOrchestration);
-    expect(production).not.toContain(recipe.taskSkill);
-    expect(production).not.toContain(B);
-    expect(production).toContain('inputStage=production');
+    expect(production).toContain('# OD Next build round');
+    expect(production).toContain('Build what the planning round planned.');
+    expect(production).toContain('do not ask another question');
     expect(production).toContain('<od-done key="0123456789abcdef"/>');
     expect(production).toContain('<od-next key="0123456789abcdef" value="Add an orders list page"/>');
     expect(production).toContain('<od-focus key="0123456789abcdef"');
-    expect(production).toContain('Place the Closing Runtime State before any final follow-up markers');
-    expect(production).not.toContain('End this response with exactly one');
-    expect(clarification).not.toContain('<od-done');
-    expect(contractRepair).not.toContain('<od-done');
-    const complexProduction = composeOdNextStrategyContinuationV2({
+    // No machine contract left to bind or to close with.
+    expect(production).not.toContain('planContractHash');
+    expect(production).not.toContain('Closing Runtime State');
+    expect(production).not.toContain(OD_NEXT_RUNTIME_STATE_BLOCK);
+    expect(production).not.toContain('This round runs in a new session');
+    expect(production).not.toContain(recipe.coreStrategy);
+    expect(production).not.toContain(recipe.generalOrchestration);
+    expect(production).not.toContain(recipe.taskSkill);
+    expect(() => composeOdNextStrategyContinuationV2({
       stage: 'production',
-      nativeSessionResume: true,
       taskExecutionId: 'task-1',
-      taskRunIndex: 2,
-      planContractHash: A,
-      nativeBuildPackageBindings: [{
-        buildPackageId: 'shell',
-        nativeAgentHandle: 'od-build-1-0123456789abcdef',
-        dependsOn: [],
-      }, {
-        buildPackageId: 'flow',
-        nativeAgentHandle: 'od-build-2-fedcba9876543210',
-        dependsOn: ['shell'],
-      }],
+      taskRunIndex: 1,
+      hostProtocolKey: '',
+    })).toThrow(/hostProtocolKey/);
+  });
+
+  it('tells a cold-started build round where the plan lives and what to do without it', () => {
+    const cold = composeOdNextStrategyContinuationV2({
+      stage: 'production',
+      taskExecutionId: 'task-1',
+      taskRunIndex: 1,
+      hostProtocolKey: '0123456789abcdef',
+      coldStart: true,
+      locale: 'zh-CN',
     });
-    expect(complexProduction).toContain('structured `subagent_type` handle');
-    expect(complexProduction).toContain('## Closing Runtime State');
-    expect(complexProduction).not.toContain('<od-done');
-    expect(complexProduction).not.toContain('Place the Closing Runtime State before any final follow-up markers');
-    expect(complexProduction).toContain('od-build-1-0123456789abcdef');
-    expect(complexProduction).toContain('"dependsOn":["shell"]');
-    expect(() => composeOdNextStrategyContinuationV2({
-      stage: 'production',
-      nativeSessionResume: true,
-      taskExecutionId: 'task-1',
-      taskRunIndex: 2,
-      planContractHash: A,
-      nativeBuildPackageBindings: [{
-        buildPackageId: 'shell',
-        nativeAgentHandle: 'shell-from-prose',
-        dependsOn: [],
-      }],
-    })).toThrow(/daemon-issued/);
-    expect(() => composeOdNextStrategyContinuationV2({
-      stage: 'production',
-      nativeSessionResume: false,
-      planContractHash: A,
-    } as never)).toThrow(/native session resume/i);
+    expect(cold).toContain('This round runs in a new session');
+    expect(cold).toContain('previous assistant turn in the conversation transcript above');
+    expect(cold).toContain(`\`${OD_NEXT_DESIGN_NOTES_FILE}\` at the project root`);
+    expect(cold).toContain("build directly from the user's original request");
+    expect(cold).toContain('the OpenDesign UI locale for this run is `zh-CN`');
   });
 });
 

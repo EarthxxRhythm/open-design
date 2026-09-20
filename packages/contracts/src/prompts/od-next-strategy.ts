@@ -5,9 +5,6 @@ import {
   OD_NEXT_RUNTIME_STATE_BLOCK,
   OD_NEXT_RUNTIME_STATE_SCHEMA,
   OD_NEXT_STRATEGY_ID,
-  type OpenDesignPlanContractV2,
-  type StrategyRuntimeStateV2,
-  type StrategyExecutionIntentV2,
   type StrategyInputStageV2,
   type StrategyTaskTypeV2,
 } from '../plugins/strategy-v2.js';
@@ -164,42 +161,32 @@ export interface OdNextStrategyStableRequestContextV2 {
   projectInstructions?: string | undefined;
 }
 
-export type OdNextStrategyContinuationV2 =
-  | {
-      stage: 'clarification';
-      executionIntent?: StrategyExecutionIntentV2;
-      nativeSessionResume: true;
-      taskExecutionId: string;
-      taskRunIndex: number;
-      answer: string;
-    }
-  | {
-      stage: 'contract_repair';
-      nativeSessionResume: true;
-      taskExecutionId: string;
-      taskRunIndex: number;
-      serializationIssue: string;
-    }
-  | {
-      stage: 'production';
-      nativeSessionResume: true;
-      taskExecutionId: string;
-      taskRunIndex: number;
-      planContractHash: string;
-      /** Per-run nonce; omitted for non-completing continuation stages. */
-      hostProtocolKey?: string;
-      /**
-       * Run UI locale, for the host protocols the production stage closes with
-       * (OPEND-2765). Only the follow-up-suggestion rule reads it; the rest of
-       * this payload is machine structure and stays English.
-       */
-      locale?: string;
-      nativeBuildPackageBindings?: readonly {
-        buildPackageId: string;
-        nativeAgentHandle: string;
-        dependsOn: readonly string[];
-      }[];
-    };
+/**
+ * The one round the daemon starts on its own: the build round that follows a
+ * planning round. There is no clarification continuation and no repair round
+ * any more — a question is answered by the user's next message, which opens a
+ * new task, and the daemon no longer parses a plan it could need repaired.
+ */
+export interface OdNextStrategyContinuationV2 {
+  stage: 'production';
+  taskExecutionId: string;
+  taskRunIndex: number;
+  /** Per-run nonce for the keyed host protocols the build round closes with. */
+  hostProtocolKey: string;
+  /**
+   * Run UI locale, for the host protocols the build round closes with
+   * (OPEND-2765). Only the follow-up-suggestion rule reads it.
+   */
+  locale?: string | undefined;
+  /**
+   * True when the round starts a fresh agent process instead of continuing the
+   * planning round's native session. The plan then only exists in the
+   * transcript and in the design notes file, so the instruction says where to
+   * look and what to do when neither is there.
+   */
+  coldStart?: boolean | undefined;
+}
+
 
 function requireSha256(value: string, field: string): string {
   if (!SHA256_HEX.test(value)) {
@@ -741,7 +728,7 @@ export function renderOdNextOutputContractV2(
       risks: [],
       openDecisions: [],
     },
-  } satisfies OpenDesignPlanContractV2;
+  };
   const runtimeStateExample = {
     schema: OD_NEXT_RUNTIME_STATE_SCHEMA,
     route: 'full_plan',
@@ -750,7 +737,7 @@ export function renderOdNextOutputContractV2(
     executionMode: 'simple',
     executionIntent: 'produce',
     reasonCodes: [],
-  } satisfies StrategyRuntimeStateV2;
+  };
   const clarificationStateExample = {
     schema: OD_NEXT_RUNTIME_STATE_SCHEMA,
     route: 'full_plan',
@@ -759,7 +746,7 @@ export function renderOdNextOutputContractV2(
     executionMode: null,
     executionIntent: 'produce',
     reasonCodes: [],
-  } satisfies StrategyRuntimeStateV2;
+  };
   const blockedStateExample = {
     schema: OD_NEXT_RUNTIME_STATE_SCHEMA,
     route: 'full_plan',
@@ -767,7 +754,7 @@ export function renderOdNextOutputContractV2(
     outcome: 'blocked',
     executionMode: null,
     reasonCodes: [],
-  } satisfies StrategyRuntimeStateV2;
+  };
 
   return `Resolve executionIntent from the user's original request and frozen sessionMode before asking questions. Use plan_only when the user restricts this task to a response in chat without creating or modifying files, including an explicit no-write request. Session mode alone never implies plan_only: Plan mode requires editable Markdown documents, and Chat mode permits explicitly requested trivial file changes. Those authorized file tasks use produce and retain their existing mode-specific scope and delivery checks. A form answer supplies the requested information and does not grant permission to produce files. Once plan_only is declared it stays locked for this task. Use the full_plan route, answer or plan in visible prose, and emit outcome completed with executionIntent plan_only on the request or clarification stage when that response is complete; emit no Plan Contract unless already serializing a plan. executionMode may remain null. Do not enter production or perform Build work for plan_only. Normal produce tasks retain every existing delivery and native-child requirement.\n\nThe JSON field sets below are the exact V2 contract shapes. Replace example values with resolved run values; do not add fields. Every value named \`copy-…\`, plus the all-zero capabilitySnapshotHash, is a placeholder: copy the real value byte-for-byte from the <recipe_identity> attributes or the <runtime_facts> block in <context>, and never invent one. Every buildRequirements entry is an object with exactly id and text; every readinessArtifacts entry is an object with exactly id, version, and a 64-character lowercase-hex digest. Every buildPackages entry is an object with exactly id, objective, inputs, outputs, sharedConstraints, dependsOn, and allowedResources, where inputs, dependsOn, and allowedResources are string arrays that may be empty, outputs and sharedConstraints are non-empty string arrays, and dependsOn lists ids of other Build Packages in this same plan. A simple plan leaves buildPackages empty; a complex plan needs at least two Build Packages, an acyclic dependsOn graph, and exactly one owning Build Package per output. Ids must be unique within requiredDeliverables and within buildRequirements, and taskProfile.canonicalDeliverable.id must itself appear as one of the requiredDeliverables ids: when a plan declares several deliverables, list the canonical one among them rather than alongside them. designSpec.source is exactly existing-artifact, brand, or resolved-baseline. Emit JSON only between the matching tags, without Markdown fences or a second copy. Write every machine block as plain text in the response body, between the exact tags shown below. Emit exactly one Runtime State block on every response. Emit at most one Plan Contract block, only when a complete Full Plan is ready. On the production stage emit no Plan Contract and exactly one Runtime State block, with inputStage production, the executionMode locked by the accepted Plan Contract, and a terminal outcome: completed once every required deliverable is written, otherwise blocked or canceled. Keep machine blocks separate from visible prose.
 
@@ -994,63 +981,51 @@ export function composeOdNextStrategyCorePromptV2(
   return composeOdNextStrategyRequestPromptV2(input, {});
 }
 
+/** The design notes file the planning round writes and the build round reads. */
+export const OD_NEXT_DESIGN_NOTES_FILE = 'design-notes.md' as const;
+
 /**
- * Compose only the per-stage delta for a continued native session. There is no
- * request-stage fallback: callers that cannot prove native resume must stop
- * before invoking this function instead of cold-seeding a new session.
+ * The instruction text of the build round, without the request-turn envelope.
+ *
+ * One sentence of intent plus the keyed host protocols. A round that continues
+ * the planning round's native session already holds the plan; a cold-started
+ * round is told where the plan lives and what to do when it cannot find it,
+ * so a missing notes file never becomes an error.
+ */
+export function composeOdNextBuildRoundInstructionV2(input: {
+  hostProtocolKey: string;
+  locale?: string | undefined;
+  coldStart?: boolean | undefined;
+}): string {
+  const hostProtocol = renderChatTurnHostProtocolInstructions(
+    input.hostProtocolKey,
+    'od_next_production',
+    input.locale,
+  ).text;
+  const coldStart = input.coldStart
+    ? `\n\nThis round runs in a new session. The plan is the previous assistant turn in the conversation transcript above, and the design notes are in \`${OD_NEXT_DESIGN_NOTES_FILE}\` at the project root: read both before writing files. If neither is available, build directly from the user's original request.`
+    : '';
+  return `# OD Next build round\n\nBuild what the planning round planned. Do not restate the plan, do not choose a new direction, and do not ask another question; when the build is done, close the turn with the host protocols below.${coldStart}\n\n${hostProtocol}`;
+}
+
+/**
+ * Compose the build round as a request turn for a continued native session.
+ * A cold-started build round does not use this: it is sent as a full Prompt
+ * Bundle derived from the task's frozen first-round Bundle, with this same
+ * instruction as its user turn.
  */
 export function composeOdNextStrategyContinuationV2(
   input: OdNextStrategyContinuationV2,
 ): string {
-  if (input.nativeSessionResume !== true) {
-    throw new TypeError('OD Next continuation requires a native session resume.');
-  }
-  let payload: string;
-  if (input.stage === 'clarification') {
-    const intent = input.executionIntent === 'plan_only'
-      ? ' The task is locked to executionIntent plan_only: retain the original no-write constraint, answer in visible prose, and finish with outcome completed without creating or modifying files.'
-      : '';
-    payload = `# OD Next native continuation — clarification\n\nMerge the user's answer below into the existing Full Plan context.${intent} Preserve the locked route, ask no second question round, rerun only affected resolution and Preflight work, and emit the updated V2 machine structures. This turn runs at the clarification stage: the Runtime State reports inputStage clarification (not request), with outcome completed for an executionIntent plan_only answer without file writes, or outcome plan_ready once the Full Plan is frozen for production; otherwise blocked or canceled.\n\n## Clarification answer\n\n${requireText(input.answer, 'answer')}`;
-  } else if (input.stage === 'contract_repair') {
-    payload = `# OD Next native continuation — contract_repair\n\nThe semantic plan in this native session is frozen. Make one serialization-only attempt that addresses the issue below. Use no tools, do not re-plan, and preserve the locked route, execution mode, Design Spec, steps, and Build Packages.\n\n## Serialization issue\n\n${requireText(input.serializationIssue, 'serializationIssue')}`;
-  } else {
-    const bindings = input.nativeBuildPackageBindings ?? [];
-    const packageIds = bindings.map(({ buildPackageId }) => requireText(
-      buildPackageId,
-      'nativeBuildPackageBindings.buildPackageId',
-    ));
-    const handles = bindings.map(({ nativeAgentHandle }) => {
-      const handle = requireText(
-        nativeAgentHandle,
-        'nativeBuildPackageBindings.nativeAgentHandle',
-      );
-      if (!/^od-build-[1-9][0-9]*-[a-f0-9]{16}$/.test(handle)) {
-        throw new TypeError('nativeAgentHandle must use the daemon-issued OD Next format.');
-      }
-      return handle;
-    });
-    if (new Set(packageIds).size !== packageIds.length || new Set(handles).size !== handles.length) {
-      throw new TypeError('Native Build Package bindings must be one-to-one.');
-    }
-    const bindingBlock = bindings.length === 0
-      ? ''
-      : `\n\n## Native Build Package bindings\n\nFor every Build Package below, invoke exactly one native \`Agent\` Child with the exact structured \`subagent_type\` handle. Observe dependency order: a dependent Child may start only after every declared dependency Child completed. Do not substitute a package id written in Prompt, description, prose, or output; Open Design verifies only the native handle.\n\n\`\`\`json\n${JSON.stringify(bindings.map((binding) => ({
-          buildPackageId: requireText(binding.buildPackageId, 'buildPackageId'),
-          nativeAgentHandle: requireText(binding.nativeAgentHandle, 'nativeAgentHandle'),
-          dependsOn: binding.dependsOn.map((dependency) => requireText(dependency, 'dependsOn')),
-        })))}\n\`\`\``;
-    const hostProtocol = renderChatTurnHostProtocolInstructions(
-      input.hostProtocolKey ?? '',
-      'od_next_production',
-      input.locale,
-    ).text;
-    payload = `# OD Next native continuation — production\n\nContinue this native session and execute the frozen Full Plan bound to \`planContractHash=${requireSha256(input.planContractHash, 'planContractHash')}\`. Use the existing in-session Task Profile, Design Spec, Todo plan, and Build Packages. Do not re-seed or restate their full text, do not choose a new route or execution mode, and do not ask another question. Open Design must be able to identify one runnable entry in the delivered files, otherwise the completed task is rejected: it looks for a root \`index.html\`, then a single root-level html file, then a single file matching the project kind. Lay the deliverable out so exactly one of those resolves.${bindingBlock}\n\n## Closing Runtime State\n\nFinish the delivery response with exactly one ${OD_NEXT_RUNTIME_STATE_BLOCK} block written as plain text between its tags, and no Plan Contract block: schema ${OD_NEXT_RUNTIME_STATE_SCHEMA}, route full_plan, inputStage production, executionMode equal to the mode locked by the accepted Plan Contract, outcome completed once every required deliverable is written (otherwise blocked or canceled), reasonCodes [], and no other fields.${hostProtocol ? `\n\nPlace the Closing Runtime State before any final follow-up markers required by the host protocols below.\n\n${hostProtocol}` : ''}`;
-  }
   return serializeOdNextRequestTurnV1({
     taskExecutionId: input.taskExecutionId,
     stage: input.stage,
     taskRunIndex: input.taskRunIndex,
-    payload,
+    payload: composeOdNextBuildRoundInstructionV2({
+      hostProtocolKey: requireText(input.hostProtocolKey, 'hostProtocolKey'),
+      locale: input.locale,
+      coldStart: input.coldStart,
+    }),
   });
 }
 
