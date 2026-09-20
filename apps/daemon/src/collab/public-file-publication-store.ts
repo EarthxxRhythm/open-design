@@ -38,6 +38,38 @@ export interface ProjectPublicFilePublicationStore extends PublicFilePublication
   }>;
 }
 
+export interface PublicFileStopTaskKey extends PublicFilePublicationScope {
+  slug: string;
+}
+
+export interface PublicFileStopTask extends PublicFileStopTaskKey {
+  failureCount: number;
+}
+
+/** Internal persistence only: callers own stop requests and startup scheduling. */
+export interface StopQueuePublicFilePublicationStore extends ProjectPublicFilePublicationStore {
+  /** Record initial failure (count 1); existing tasks, even exhausted ones, are unchanged. */
+  enqueueStop(key: PublicFileStopTaskKey): void;
+  /** Detached snapshot including exhausted tasks for diagnostics; no raw errors are stored. */
+  listStops(): ReadonlyArray<PublicFileStopTask>;
+  /** One entry per retryable key for one startup pass; no retries are executed here. */
+  listRetryableStops(): ReadonlyArray<PublicFileStopTask>;
+  /** Increment an existing task once, capped at five total failures; absent tasks are ignored. */
+  recordStopFailure(key: PublicFileStopTaskKey): void;
+  /** After successful stop, remove only this exact task, including explicitly resolved terminal tasks. */
+  completeStop(key: PublicFileStopTaskKey): void;
+}
+
+const MAX_STOP_FAILURES = 5;
+
+function stopTaskValues(key: PublicFileStopTaskKey): [string, string, string, string, string] {
+  return [key.resourceTeamId, key.ownerMemberId, key.projectId, key.filePath, key.slug];
+}
+
+function stopTaskKey(key: PublicFileStopTaskKey): string {
+  return JSON.stringify(stopTaskValues(key));
+}
+
 export function migratePublicFilePublications(db: SqliteDb): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS public_file_publications (
@@ -51,6 +83,15 @@ export function migratePublicFilePublications(db: SqliteDb): void {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       PRIMARY KEY (resource_team_id, owner_member_id, project_id, file_path)
+    );
+    CREATE TABLE IF NOT EXISTS public_file_stop_queue (
+      resource_team_id TEXT NOT NULL,
+      owner_member_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      slug TEXT NOT NULL,
+      failure_count INTEGER NOT NULL CHECK (failure_count BETWEEN 1 AND 5),
+      PRIMARY KEY (resource_team_id, owner_member_id, project_id, file_path, slug)
     );
   `);
 }
@@ -70,13 +111,36 @@ function comparePublicationFilePaths(a: { filePath: string }, b: { filePath: str
   return a.filePath < b.filePath ? -1 : 1;
 }
 
-export function createInMemoryPublicFilePublicationStore(): ProjectPublicFilePublicationStore {
+export function createInMemoryPublicFilePublicationStore(): StopQueuePublicFilePublicationStore {
+  const stopTasks = new Map<string, PublicFileStopTask>();
   const publications = new Map<string, {
     scope: PublicFilePublicationScope;
     publication: PublicFilePublication;
     publishedAt: number;
   }>();
   return {
+    enqueueStop(key) {
+      const id = stopTaskKey(key);
+      if (!stopTasks.has(id)) {
+        stopTasks.set(id, {
+          resourceTeamId: key.resourceTeamId,
+          ownerMemberId: key.ownerMemberId,
+          projectId: key.projectId,
+          filePath: key.filePath,
+          slug: key.slug,
+          failureCount: 1,
+        });
+      }
+    },
+    listStops: () => [...stopTasks.values()].map((task) => ({ ...task })),
+    listRetryableStops: () => [...stopTasks.values()]
+      .filter((task) => task.failureCount < MAX_STOP_FAILURES)
+      .map((task) => ({ ...task })),
+    recordStopFailure(key) {
+      const task = stopTasks.get(stopTaskKey(key));
+      if (task && task.failureCount < MAX_STOP_FAILURES) task.failureCount += 1;
+    },
+    completeStop(key) { stopTasks.delete(stopTaskKey(key)); },
     get: (scope) => publications.get(scopeKey(scope))?.publication ?? null,
     listByProject: (scope) => [...publications.values()]
       .filter((entry) => entry.scope.resourceTeamId === scope.resourceTeamId
@@ -110,7 +174,7 @@ export function createInMemoryPublicFilePublicationStore(): ProjectPublicFilePub
 export function createSqlitePublicFilePublicationStore(
   db: SqliteDb,
   now: () => number = Date.now,
-): ProjectPublicFilePublicationStore {
+): StopQueuePublicFilePublicationStore {
   const selectRow = db.prepare(`
     SELECT url, slug, file_name AS fileName
       FROM public_file_publications
@@ -146,7 +210,32 @@ export function createSqlitePublicFilePublicationStore(
        AND file_path = ?
   `);
 
+  // Independent of publications/projects: replacement slugs and local deletion
+  // must not erase an outstanding remote stop, including exhausted diagnostics.
+  const stopSelect = `SELECT resource_team_id AS resourceTeamId,
+    owner_member_id AS ownerMemberId, project_id AS projectId,
+    file_path AS filePath, slug, failure_count AS failureCount
+    FROM public_file_stop_queue`;
+  const selectStops = db.prepare(stopSelect);
+  const selectRetryableStops = db.prepare(`${stopSelect} WHERE failure_count < ?`);
+  const enqueueStop = db.prepare(`
+    INSERT INTO public_file_stop_queue
+      (resource_team_id, owner_member_id, project_id, file_path, slug, failure_count)
+    VALUES (?, ?, ?, ?, ?, 1)
+    ON CONFLICT(resource_team_id, owner_member_id, project_id, file_path, slug) DO NOTHING
+  `);
+  const failStop = db.prepare(`UPDATE public_file_stop_queue
+    SET failure_count = failure_count + 1 WHERE resource_team_id = ? AND owner_member_id = ?
+    AND project_id = ? AND file_path = ? AND slug = ? AND failure_count < ?`);
+  const completeStop = db.prepare(`DELETE FROM public_file_stop_queue WHERE resource_team_id = ?
+    AND owner_member_id = ? AND project_id = ? AND file_path = ? AND slug = ?`);
+
   return {
+    enqueueStop(key) { enqueueStop.run(...stopTaskValues(key)); },
+    listStops() { return selectStops.all() as PublicFileStopTask[]; },
+    listRetryableStops() { return selectRetryableStops.all(MAX_STOP_FAILURES) as PublicFileStopTask[]; },
+    recordStopFailure(key) { failStop.run(...stopTaskValues(key), MAX_STOP_FAILURES); },
+    completeStop(key) { completeStop.run(...stopTaskValues(key)); },
     get(scope) {
       const row = selectRow.get(
         scope.resourceTeamId,
