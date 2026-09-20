@@ -12,6 +12,8 @@ import type {
   ChatMessage,
   CollabCloudComment,
   OdNextDevicePlatformV1,
+  PreviewComment,
+  PreviewCommentAttachment,
   ProjectBrowserWorkspaceTab,
   ProjectTabsState,
 } from '@open-design/contracts';
@@ -22,6 +24,7 @@ import {
   stripArtifactFocusMarkers,
   stripDoneMarkers,
   stripNextStepMarkers,
+  asPreviewCommentAnchorState,
 } from '@open-design/contracts';
 import { migrateCollabSyncSnapshots } from './collab/sync-snapshot-store.js';
 import { migrateCommentRelayOutbox } from './collab/comment-relay-outbox.js';
@@ -4312,10 +4315,34 @@ export function getProjectPreviewComment(db: SqliteDb, projectId: string, id: st
   return row ? normalizePreviewComment(row) : null;
 }
 
-function normalizePreviewComment(row: DbRow) {
+/**
+ * Row → `PreviewComment`. The return type is annotated ON PURPOSE.
+ *
+ * Without it, this function's shape is inferred from whatever it happens to
+ * build, and the routes hand the result onward through
+ * `saved as unknown as PreviewComment`. That pair means a field added to the
+ * contract but forgotten here does not fail typecheck — it is simply
+ * `undefined` for the whole DB→HTTP leg, everywhere, silently. Annotating the
+ * return makes the compiler the thing that notices instead of a reviewer.
+ */
+/**
+ * Every `PreviewComment` field, required but allowed to be `undefined`.
+ *
+ * `exactOptionalPropertyTypes` refuses `{ x: undefined }` for an `x?: T`, and
+ * this function builds every optional field explicitly. Stripping the `?` and
+ * widening with `| undefined` keeps the build honest AND makes it stricter
+ * than the plain contract type would: a field added to `PreviewComment` and
+ * forgotten here is a missing-property error, which is the whole point of
+ * annotating this function.
+ */
+type NormalizedPreviewComment = {
+  [K in keyof PreviewComment]-?: PreviewComment[K] | undefined;
+};
+
+function normalizePreviewComment(row: DbRow): PreviewComment {
   const podMembers = parseJsonOrUndef(row.podMembersJson);
   const normalizedPodMembers = Array.isArray(podMembers) ? podMembers : undefined;
-  return {
+  const normalized: NormalizedPreviewComment = {
     id: row.id,
     projectId: row.projectId,
     conversationId: row.conversationId,
@@ -4341,26 +4368,32 @@ function normalizePreviewComment(row: DbRow) {
     status: row.status,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
-    anchorState: typeof row.anchorState === 'string' ? row.anchorState : undefined,
+    anchorState: asPreviewCommentAnchorState(row.anchorState),
     anchoredVersion: Number.isFinite(row.anchoredVersion) ? row.anchoredVersion : undefined,
     authorMemberId: typeof row.authorMemberId === 'string' ? row.authorMemberId : undefined,
     lastGoodPosition: parseJsonOrUndef(row.lastGoodPositionJson),
     pinSeq: Number.isFinite(row.pinSeq) ? row.pinSeq : undefined,
     sortKey: Number.isFinite(row.sortKey) ? row.sortKey : undefined,
   };
+  // Sound at runtime: an optional property holding `undefined` is what an
+  // absent property reads as. The cast only relaxes the explicit-undefined
+  // rule, never the key set or the value types.
+  return normalized as PreviewComment;
 }
 
-function normalizePreviewCommentAttachments(input: unknown) {
+function normalizePreviewCommentAttachments(input: unknown): PreviewCommentAttachment[] {
   if (!Array.isArray(input)) return [];
   return input
-    .map((item) => {
+    .map((item): PreviewCommentAttachment | null => {
       if (!item || typeof item !== 'object') return null;
       const path = typeof (item as DbRow).path === 'string' ? (item as DbRow).path.trim() : '';
       if (!path) return null;
       const rawName = typeof (item as DbRow).name === 'string' ? (item as DbRow).name.trim() : '';
       return { path, name: rawName || path.split('/').pop() || path };
     })
-    .filter(Boolean)
+    // `.filter(Boolean)` does not narrow, and the annotated return type is
+    // what makes that visible — the runtime was always dropping these.
+    .filter((item): item is PreviewCommentAttachment => item !== null)
     .slice(0, 20);
 }
 

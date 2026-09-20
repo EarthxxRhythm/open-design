@@ -44,11 +44,30 @@ export type PreviewVisualMarkKind = 'click' | 'stroke' | 'click+stroke';
  * The explicit `stale`/`lost` marking is load-bearing: with no injected id,
  * drift must be surfaced, never silently mis-pointed.
  */
-export type PreviewCommentAnchorState =
-  | 'anchored'
-  | 'reanchored'
-  | 'stale'
-  | 'lost';
+export const PREVIEW_COMMENT_ANCHOR_STATES = [
+  'anchored',
+  'reanchored',
+  'stale',
+  'lost',
+] as const;
+
+export type PreviewCommentAnchorState = (typeof PREVIEW_COMMENT_ANCHOR_STATES)[number];
+
+/**
+ * Narrow a persisted value to an anchor state. Storage hands back a bare
+ * string, and the renderer switches on this union to decide between a normal
+ * pin, a "based on older vN" badge, a dashed warning and a ghost pin — so an
+ * unrecognized value must become `undefined` (no drift marking) rather than
+ * flow through as a state nothing matches.
+ */
+export function asPreviewCommentAnchorState(
+  value: unknown,
+): PreviewCommentAnchorState | undefined {
+  return typeof value === 'string'
+    && (PREVIEW_COMMENT_ANCHOR_STATES as readonly string[]).includes(value)
+    ? (value as PreviewCommentAnchorState)
+    : undefined;
+}
 
 /**
  * An image attached to a preview comment. `path` is the project-relative file
