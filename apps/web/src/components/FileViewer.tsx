@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import type { ArtifactExportFormat } from '../runtime/chat/artifact-export';
-import { ShareTab } from './share/ShareTab';
+import { boundedPublishProgress, ShareTab } from './share/ShareTab';
 import { AnchoredMenuShell } from './chat/AnchoredMenuShell';
 import { createPortal, flushSync } from 'react-dom';
 import { Button, Input, Select } from '@open-design/components';
@@ -7972,6 +7972,22 @@ function HtmlViewer({
     if (!deployMenuOpen) setShareAccessMenuOpen(false);
   }, [deployMenuOpen]);
 
+  // Owned by the viewer: closing ShareTab neither cancels nor restarts a publish.
+  const [publishProgress, setPublishProgress] = useState<number | null>(null);
+  const publicFileProgressTimerRef = useRef<number | null>(null);
+  const publicFileProgressCompletionRef = useRef<number | null>(null);
+
+  function clearPublicFileProgressTimers() {
+    if (publicFileProgressTimerRef.current !== null) {
+      window.clearInterval(publicFileProgressTimerRef.current);
+      publicFileProgressTimerRef.current = null;
+    }
+    if (publicFileProgressCompletionRef.current !== null) {
+      window.clearTimeout(publicFileProgressCompletionRef.current);
+      publicFileProgressCompletionRef.current = null;
+    }
+  }
+
   const publicFileCopySeqRef = useRef(0);
   const publicFileCopyTimerRef = useRef<number | null>(null);
 
@@ -7987,10 +8003,13 @@ function HtmlViewer({
 
   useEffect(() => () => {
     ++publicFileRequestSeqRef.current;
+    clearPublicFileProgressTimers();
     invalidatePublicFileCopy();
   }, []);
 
   useEffect(() => {
+    clearPublicFileProgressTimers();
+    setPublishProgress(null);
     invalidatePublicFileCopy();
     publicFileIdentityRef.current = { projectId, fileName: file.name };
     const requestSeq = ++publicFileRequestSeqRef.current;
@@ -8094,8 +8113,15 @@ function HtmlViewer({
     const requestFileName = file.name;
     const requestSeq = ++publicFileRequestSeqRef.current;
     invalidatePublicFileCopy();
+    clearPublicFileProgressTimers();
+    setPublishProgress(boundedPublishProgress(0, false));
     firePublishFlowClick('publish_file');
     const publishStarted = performance.now();
+    publicFileProgressTimerRef.current = window.setInterval(() => {
+      if (publicFileRequestSeqRef.current !== requestSeq) return;
+      setPublishProgress((previous) => Math.max(previous ?? 0,
+        boundedPublishProgress(performance.now() - publishStarted, false)));
+    }, 250);
     setPublishingPublicFile(true);
     setPublishLinkFeedback(null);
     setPublishFailureKey(null);
@@ -8116,6 +8142,14 @@ function HtmlViewer({
       }
       setPublishedFileUrl(response.url);
       setPublishedFileSlug(response.slug);
+      clearPublicFileProgressTimers();
+      setPublishProgress(boundedPublishProgress(0, true));
+      // Keep success observable without delaying the link or S3's clipboard window.
+      publicFileProgressCompletionRef.current = window.setTimeout(() => {
+        if (publicFileRequestSeqRef.current !== requestSeq) return;
+        publicFileProgressCompletionRef.current = null;
+        setPublishProgress(null);
+      }, 1000);
       // Copy this response, not the previous render's URL. Clipboard failure
       // is not publication failure, and automatic copy is not a user click.
       void copyPublicFileUrl(response.url);
@@ -8129,6 +8163,8 @@ function HtmlViewer({
         publish_duration_ms: Math.round(performance.now() - publishStarted),
       });
       if (publicFileRequestSeqRef.current === requestSeq) {
+        clearPublicFileProgressTimers();
+        setPublishProgress(null);
         if (recoveryPublication) {
           setPublishedFileUrl(recoveryPublication.url);
           setPublishedFileSlug(recoveryPublication.slug);
@@ -8151,6 +8187,8 @@ function HtmlViewer({
     const requestSlug = publishedFileSlug;
     const requestSeq = ++publicFileRequestSeqRef.current;
     invalidatePublicFileCopy();
+    clearPublicFileProgressTimers();
+    setPublishProgress(null);
     const unpublishStarted = performance.now();
     setPublishingPublicFile(true);
     setPublishLinkFeedback(null);
@@ -17035,6 +17073,7 @@ function HtmlViewer({
                         copyPublishedFileLink={copyPublishedFileLink}
                         publishLinkFeedback={publishLinkFeedback}
                         publishingPublicFile={publishingPublicFile}
+                        publishProgress={publishProgress}
                         unpublishCurrentFilePublic={unpublishCurrentFilePublic}
                         viewerOnlyDisabledTitle={viewerOnlyDisabledTitle}
                         publishCurrentFilePublic={publishCurrentFilePublic}
