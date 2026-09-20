@@ -1251,10 +1251,21 @@ process.exit(127);
       ),
     );
     expect(created.strategyTask).toMatchObject({ inputStage: 'request', terminal: false });
+    // The facts admit the Run (the unrecognized version resolves through its
+    // adapter family) and feed telemetry; they are not echoed to the model —
+    // the bundle no longer carries a hash for the agent to write back.
     const task = getStrategyTaskExecution(database(), created.taskExecutionId as string);
-    expect(task?.promptBundle.text).toContain(
+    expect(task?.promptBundle.text).not.toContain(
       resolvedCapability.snapshot!.snapshotHash.slice('sha256:'.length),
     );
+    expect(await readDurableRunState(created.runId as string)).toMatchObject({
+      strategyRolloutDecision: {
+        decisionClass: 'active',
+        effectiveMode: 'active',
+        taskType: 'prototype',
+        primaryReasonCode: 'od_next_rollout_eligible',
+      },
+    });
 
     const canceled = await fetch(
       `${started.url}/api/runs/${encodeURIComponent(created.runId as string)}/cancel`,
@@ -1375,7 +1386,9 @@ process.exit(127);
     const promptBundleText = activeTask?.promptBundle.text ?? '';
     const doneKey = /<od-done key="([a-f0-9]{16})"\/>/.exec(promptBundleText)?.[1];
     expect(doneKey).toMatch(/^[a-f0-9]{16}$/);
-    expect(promptBundleText).toContain('route=direct_edit');
+    // No route to declare since the two-round design; the echo guard's
+    // examples still carry the daemon-minted key.
+    expect(promptBundleText).not.toContain('route=direct_edit');
     expect(promptBundleText).toContain(`<od-next key="${doneKey}" value="Add an orders list page"/>`);
     expect(promptBundleText).toContain(`<od-focus key="${doneKey}"`);
     expect(promptBundleText.slice(
@@ -2582,7 +2595,7 @@ process.exit(127);
     const invocations = await readProjectInvocations(fixture.logPath, fixture.projectId);
     expect(invocations).toHaveLength(1);
     expect(parseOdNextPromptBundleV2(invocations[0]!.stdin).coreSystemPrompt.outputContract)
-      .toContain('Emit exactly one Runtime State block on every response.');
+      .toContain('Open Design settles the task on what it observed');
     const reloaded = await fetch(`${started!.url}/api/projects/${fixture.projectId}/conversations/${fixture.conversationId}/messages`);
     const { messages } = await reloaded.json() as { messages: Array<{ runId?: string; strategyTaskDelivered?: boolean }> };
     expect(messages.find((message) => message.runId === task.latestRunId)?.strategyTaskDelivered).toBe(true);
