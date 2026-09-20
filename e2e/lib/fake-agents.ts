@@ -444,6 +444,10 @@ async function emitRun(promptText) {
     emitOdNextBlockedRun();
     return;
   }
+  if (promptText.includes('Say hi as an OD Next non-design canary')) {
+    emitOdNextNonDesignReply();
+    return;
+  }
   if (promptText.includes('Create an OD Next active canary artifact')) {
     emitOdNextPlanningRun(promptText);
     return;
@@ -648,6 +652,18 @@ function emitOdNextClarificationRequest(promptText) {
     + '"options":[{"label":"Desktop web","value":"desktop"}],"required":true}]}'
     + '</question-form>';
   emitSuccess('One platform choice is required.\\n' + form, false, false);
+  process.exitCode = 0;
+  exitSoon(0);
+}
+
+// A greeting answered in prose, with the light declaration the status block
+// carries: nothing to design, nothing written. The daemon ends the task on
+// its own reason and the chat shows an ordinary reply.
+function emitOdNextNonDesignReply() {
+  const block = '<open-design-runtime-state>\\n'
+    + JSON.stringify({ nonDesignRequest: true, noFileWrites: true })
+    + '\\n</open-design-runtime-state>';
+  emitSuccess('Hi! Tell me what you would like to design and I will plan it.\\n' + block, false, false);
   process.exitCode = 0;
   exitSoon(0);
 }

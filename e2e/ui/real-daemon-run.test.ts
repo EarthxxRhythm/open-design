@@ -383,6 +383,61 @@ test('[P0] local OD Next clarification canary settles on the form and the answer
   });
 });
 
+test('[P0] local OD Next non-design canary reads as an ordinary reply and ends the task in its own bucket', async ({ page }) => {
+  test.skip(
+    process.env.OD_NEXT_STRATEGY_ROLLOUT !== 'active'
+      || process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY !== '1',
+    'requires the explicit local synthetic rollout canary flags',
+  );
+  await prepareLocalOdNextCanary(page, 'OD Next local non-design canary');
+
+  const createResponsePromise = page.waitForResponse(isCreateRunResponse);
+  await sendPrompt(page, 'Say hi as an OD Next non-design canary');
+  const created = await (await createResponsePromise).json() as {
+    runId: string;
+    taskExecutionId: string;
+  };
+  // The declaration ends the task on its own reason: completed, not blocked,
+  // no build round, nothing delivered.
+  await expect.poll(async () => {
+    const response = await page.request.get(`/api/runs/${created.runId}`);
+    return (await response.json() as {
+      status: string;
+      strategyTask?: {
+        taskExecutionId: string;
+        outcome: string;
+        terminal: boolean;
+        settlementReason?: string;
+        deliverableWritten: boolean;
+        autoRoundCount: number;
+      };
+    });
+  }, { timeout: 20_000 }).toMatchObject({
+    status: 'succeeded',
+    strategyTask: {
+      taskExecutionId: created.taskExecutionId,
+      outcome: 'completed',
+      terminal: true,
+      settlementReason: 'non_design',
+      deliverableWritten: false,
+      autoRoundCount: 0,
+    },
+  });
+  // The chat shows the greeting as an ordinary reply: the declaration block
+  // is not on screen, no failure card, no next step to retry.
+  await expect(page.getByText('Tell me what you would like to design and I will plan it.').last()).toBeVisible();
+  await expect(page.getByText('open-design-runtime-state')).toHaveCount(0);
+  await expect(page.getByText('nonDesignRequest')).toHaveCount(0);
+  await expect(runErrorCard(page)).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /^Retry$/ })).toHaveCount(0);
+  await page.locator('.chat-log').first().screenshot({ path: test.info().outputPath('od-next-non-design-reply.png') });
+  const { projectId } = await currentProjectContext(page);
+  const files = await page.request.get(`/api/projects/${projectId}/files`);
+  expect(files.ok()).toBeTruthy();
+  const listed = await files.json() as { files?: Array<{ name: string }> } | Array<{ name: string }>;
+  expect((Array.isArray(listed) ? listed : listed.files ?? []).map((file) => file.name)).toEqual([]);
+});
+
 test('[P0] local OD Next build without an entry completes, shows the notice, and the button asks for one', async ({ page }) => {
   test.skip(
     process.env.OD_NEXT_STRATEGY_ROLLOUT !== 'active'
