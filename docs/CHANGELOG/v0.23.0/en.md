@@ -1,6 +1,6 @@
 ---
 title: Open Design 0.23.0 — A New Home, Conversations That Hold Together
-description: A redesigned home and project entry, plus a round of conversation reliability work: clarifications survive a restart, delivered results stay delivered, and the conversation keeps its place when work gets complicated.
+description: "A redesigned home and project entry, plus a round of conversation reliability work: clarifications survive a restart, delivered results stay delivered, and the conversation keeps its place when work gets complicated."
 ---
 
 ### 🌟 Codename: *A New Home, Conversations That Hold Together*
