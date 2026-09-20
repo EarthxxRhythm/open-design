@@ -1,3 +1,4 @@
+import { deliverableFactsFromRunStatus } from '../runtime/run-deliverable-facts';
 import { readRetriedErrorSurface, retriedErrorSurfaceKey, writeRetriedErrorSurface } from '../runtime/chat/retried-error-surface';
 import {
   startTransition,
@@ -6562,6 +6563,16 @@ export function ProjectView({
               status: projectedTaskStatus,
             }
           : physicalStatus;
+        // The files panel's missing-entry notice follows the project's last
+        // settled round whether or not this page watched it settle — a reload
+        // during the build round, a conversation opened after it. The stored
+        // verdict is the one the terminal frame carried; a project that has
+        // recorded an entry since then owes no notice. A predecessor whose
+        // task advanced is not the last round: its successor row reports.
+        if (!taskRunAdvanced && !currentProject.metadata?.entryFile) {
+          const facts = deliverableFactsFromRunStatus(physicalStatus, project.id);
+          if (facts) noteDeliverableFacts(facts);
+        }
         const projectedRunAlreadyHydrated = Boolean(
           taskRunAdvanced
           && messages.some(

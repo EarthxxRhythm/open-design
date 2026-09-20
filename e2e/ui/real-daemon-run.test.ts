@@ -467,6 +467,19 @@ test('[P0] local OD Next build without an entry completes, shows the notice, and
   await expect(notice).toContainText('screens/home.html');
   await page.screenshot({ path: 'ui/reports/screenshots/entry-missing-notice.png', fullPage: false });
 
+  // A build round usually outlives the tab that started it. The notice is
+  // read off the stored verdict of the last settled round, so a page that
+  // did not watch the terminal frame — this one, after a reload — shows it
+  // the same.
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await expectWorkspaceReady(page);
+  // The saved tab set restores after the workspace is ready and re-selects
+  // the page tab the build left active; open the files panel after that.
+  await expect(page.getByTestId('file-workspace').getByRole('tab', { name: /home\.html/ })).toBeVisible();
+  await openAllProjectFiles(page);
+  await expect(notice).toBeVisible();
+  await expect(notice).toContainText('screens/about.html');
+
   // The button sends the fixed follow-up in the same conversation; the fake
   // answers it by adding index.html, which the daemon records as the entry.
   const fixResponsePromise = page.waitForResponse(isCreateRunResponse);
