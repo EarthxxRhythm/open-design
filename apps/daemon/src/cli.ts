@@ -6995,8 +6995,10 @@ function printProjectShareHelp() {
                     Read the current publication (null when not published).
   od project share status <id> --path <file> [--json]
                     Alias for get.
+  od project share stop <id> --path <file> --slug <slug> [--json]
+                    Stop the specified public snapshot (not resumable).
 
-Only publish, get, and status (an alias for get) are supported by this command.
+Only publish, get, status (an alias for get), and stop are supported by this command.
 
 Common options:
   --daemon-url <url>   OpenDesign daemon HTTP base.
@@ -7013,12 +7015,13 @@ async function runProjectShare(args) {
   }
   const [requestedAction, ...rest] = args;
   const action = requestedAction === 'status' ? 'get' : requestedAction;
-  const stringFlags = new Set(['path', 'daemon-url', 'workspace', 'workspace-member']);
+  const stringFlags = new Set(['path', 'daemon-url', 'workspace', 'workspace-member',
+    ...(action === 'stop' ? ['slug'] : [])]);
   let flags;
   try {
     flags = parseFlags(rest, { string: stringFlags, boolean: new Set(['json']) });
   } catch {
-    console.error('Usage: od project share <publish|get|status> <id> --path <file> [--json]. See --help for accepted flags.');
+    console.error('Usage: od project share <publish|get|status|stop> <id> --path <file> [--json] (stop requires --slug <slug>). See --help for accepted flags.');
     process.exit(2);
   }
   const positional = positionalArgs(rest, stringFlags);
@@ -7026,8 +7029,9 @@ async function runProjectShare(args) {
   const filePath = typeof flags.path === 'string' ? flags.path.trim() : '';
   const missingFlagValue = [...stringFlags].some((key) =>
     typeof flags[key] === 'string' && (!flags[key].trim() || flags[key].startsWith('--')));
-  if (!['publish', 'get'].includes(action) || positional.length !== 1 || !id?.trim() || !filePath || missingFlagValue) {
-    console.error('Usage: od project share <publish|get|status> <id> --path <file> [--json]');
+  const slug = typeof flags.slug === 'string' ? flags.slug.trim() : '';
+  if (!['publish', 'get', 'stop'].includes(action) || positional.length !== 1 || !id?.trim() || !filePath || missingFlagValue || (action === 'stop' && !slug)) {
+    console.error('Usage: od project share <publish|get|status|stop> <id> --path <file> [--json] (stop requires --slug <slug>)');
     process.exit(2);
   }
   // Validate before discovery; malformed invocations must not contact a daemon.
@@ -7037,7 +7041,9 @@ async function runProjectShare(args) {
   try {
     resp = await fetch(
       `${base}/api/projects/${encodeURIComponent(id)}/files/${encodeURIComponent(filePath)}/publish-public`,
-      { method: action === 'publish' ? 'POST' : 'GET', headers },
+      action === 'stop'
+        ? { method: 'DELETE', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify({ slug }) }
+        : { method: action === 'publish' ? 'POST' : 'GET', headers },
     );
   } catch {
     // Do not echo transport exceptions, which can contain URLs or credentials.
@@ -7046,6 +7052,7 @@ async function runProjectShare(args) {
   if (!resp.ok) return structuredHttpFailure(resp);
   const data = await resp.json();
   if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+  if (action === 'stop') return console.log('Sharing stopped.');
   const publication = action === 'get' ? data.publication : data;
   console.log(publication ? publication.url : 'Not published.');
 }
@@ -7078,6 +7085,8 @@ async function runProject(args) {
                     Read the current publication.
   od project share status <id> --path <file> [--json]
                     Alias for get.
+  od project share stop <id> --path <file> --slug <slug> [--json]
+                    Stop the specified public snapshot (not resumable).
   od project revoke-public-link <id> --path <file> --url <public-url>
                     Revoke a public file link whose local publication record
                     was lost during an older daemon restart or upgrade.
