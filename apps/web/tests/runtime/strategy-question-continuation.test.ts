@@ -63,6 +63,8 @@ function blockedProjection(
     executionMode: null,
     activeRunId: 'run-1',
     terminal: true,
+    deliverableWritten: false,
+    autoRoundCount: 0,
     ...overrides,
   } as StrategyTaskProjectionV2;
 }
@@ -106,12 +108,28 @@ describe('strategyBlockedMessageFields', () => {
 });
 
 describe('strategySettledMessageFields', () => {
-  it('stamps a delivered flag for a completed task', () => {
+  it('stamps a delivered flag for a completed task whose round wrote a deliverable', () => {
     expect(strategySettledMessageFields(blockedProjection({
       outcome: 'completed',
       terminal: true,
       blockedContext: undefined,
+      deliverableWritten: true,
+      settlementReason: 'deliverable_changed',
+      autoRoundCount: 1,
     }))).toEqual({ strategyTaskDelivered: true });
+  });
+
+  it('stamps nothing for a completed task that delivered nothing', () => {
+    for (const settlementReason of ['question', 'todo_unfinished', 'text_only', 'non_design'] as const) {
+      expect(strategySettledMessageFields(blockedProjection({
+        outcome: 'completed',
+        terminal: true,
+        blockedContext: undefined,
+        deliverableWritten: false,
+        settlementReason,
+        autoRoundCount: settlementReason === 'question' ? 0 : 1,
+      }))).toBeNull();
+    }
   });
 
   it('keeps the blocked stamp taking precedence', () => {

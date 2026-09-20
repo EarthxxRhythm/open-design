@@ -97,6 +97,7 @@ function blockedTask(overrides: Partial<StrategyTaskProjectionV2> = {}): Strateg
   const task: StrategyTaskProjectionV2 = {
     taskExecutionId: taskId(), activeRunId: runId(), executionMode: null,
     inputStage: 'request', route: 'full_plan', outcome: 'blocked', terminal: true,
+    deliverableWritten: false, autoRoundCount: 0,
     strategy: { id: 'od-next-strategy', version: '2.0.4', packageHash: 'a'.repeat(64), snapshotId: 'fixture' },
     blockedContext: { reasonCodes: [MISSING_STATE], visibleText: 'The requested result was prepared.' },
     ...overrides,

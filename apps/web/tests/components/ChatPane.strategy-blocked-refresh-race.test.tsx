@@ -119,6 +119,8 @@ const BLOCKED_PROJECTION: StrategyTaskProjectionV2 = {
   executionMode: null,
   activeRunId: RUN_ID,
   terminal: true,
+  deliverableWritten: false,
+  autoRoundCount: 0,
   blockedContext: {
     reasonCodes: [REASON_CODE],
     visibleText: ANSWER_TEXT,
