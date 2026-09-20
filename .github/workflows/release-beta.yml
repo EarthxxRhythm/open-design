@@ -416,7 +416,7 @@ jobs:
       - name: "[resolve] Authorized result consumption"
         id: mode
         env:
-          AUTHORIZED: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/feat/plan-foundation' && steps.identity.outputs.commit == github.sha }}
+          AUTHORIZED: ${{ github.event_name == 'workflow_dispatch' && steps.identity.outputs.commit == github.sha && (github.ref == 'refs/heads/feat/plan-foundation' || (!inputs.publish && github.ref == 'refs/heads/diagnostic/mac-x64-archive-ab')) }}
         run: |
           echo "contribution=$AUTHORIZED" >> "$GITHUB_OUTPUT"
           if [ "$AUTHORIZED" = true ]; then
