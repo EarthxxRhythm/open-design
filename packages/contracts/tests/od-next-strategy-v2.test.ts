@@ -119,6 +119,16 @@ describe('OD Next V2 task projection and settlement contracts', () => {
       autoRoundCount: 1,
     };
     expect(StrategyTaskProjectionV2Schema.parse(running)).toEqual(running);
+    const mapped = { ...running, runMappings: [
+      { runId: 'run-plan', taskRunIndex: 0 },
+      { runId: 'run-build', taskRunIndex: 1 },
+    ] };
+    expect(StrategyTaskProjectionV2Schema.parse(mapped)).toEqual(mapped);
+    for (const taskRunIndex of [-1, 0.5]) {
+      expect(() => StrategyTaskProjectionV2Schema.parse({
+        ...running, runMappings: [{ runId: 'run-plan', taskRunIndex }],
+      })).toThrow();
+    }
     const settled = {
       ...running,
       inputStage: 'production',
