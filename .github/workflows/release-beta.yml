@@ -1051,6 +1051,15 @@ jobs:
           for label, root in [('new', temp / 'mac-runtime-product'), ('old', temp / 'mac-runtime-product-old')]:
               print('runtime-tree', label, json.dumps(measure(root), sort_keys=True))
           PY
+      - name: "[diagnostic] Reverse runtime order"
+        if: ${{ !inputs.publish }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mv "$RUNNER_TEMP/mac-runtime-product" "$RUNNER_TEMP/mac-runtime-product-new"
+          mv "$RUNNER_TEMP/mac-runtime-product-old" "$RUNNER_TEMP/mac-runtime-product"
+          mv "$RUNNER_TEMP/mac-runtime-product-new" "$RUNNER_TEMP/mac-runtime-product-old"
+          echo "Diagnostic build order: old archive, then new archive"
       - name: Setup Node.js
         uses: actions/setup-node@v6.4.0
         with:
@@ -1090,6 +1099,8 @@ jobs:
           OD_WEB_SOURCEMAP_UPLOAD: ${{ !inputs.enable_mac_arm64 }}
         run: |
           set -euo pipefail
+          df -h "$RUNNER_TEMP"
+          ps -Ao pid,pcpu,comm | sort -k2,2nr | sed -n '1,8p'
           mkdir -p "$RUNNER_TEMP/release-build/mac_x64"
           rm -rf "$RUNNER_TEMP/tools-pack"
           : > "$RUNNER_TEMP/release-build/mac_x64/build.log"
@@ -1121,6 +1132,8 @@ jobs:
           OD_WEB_SOURCEMAP_UPLOAD: ${{ !inputs.enable_mac_arm64 }}
         run: |
           set -euo pipefail
+          df -h "$RUNNER_TEMP"
+          ps -Ao pid,pcpu,comm | sort -k2,2nr | sed -n '1,8p'
           mkdir -p "$RUNNER_TEMP/release-build/mac_x64-old"
           node "$RELEASE_EXECUTOR_ROOT/pack/dist/index.mjs" mac package \
             --dir "$RUNNER_TEMP/tools-pack-old" \
@@ -1143,7 +1156,7 @@ jobs:
           from pathlib import Path
 
           temp = Path(os.environ['RUNNER_TEMP'])
-          for label, directory in [('new', 'tools-pack'), ('old', 'tools-pack-old')]:
+          for label, directory in [('first-old', 'tools-pack'), ('second-new', 'tools-pack-old')]:
               root = temp / directory / 'out/mac/namespaces/release-beta-x64/builder/mac/Open Design Beta.app'
               files = linked = logical = allocated = 0
               inodes = set()
