@@ -1,9 +1,11 @@
 import type { Express, Request, Response } from 'express';
-import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
   PUBLIC_FILE_MANUAL_REVOKE_REQUIRED,
+  SHARE_MAX_TOTAL_BYTES,
+  type SharePlanSummary,
   workspaceContextHasWorkspaceIdentity,
   type PublicFileManualRevokeRequiredResponse,
   type PublicProjectFilePublication,
@@ -57,6 +59,7 @@ import {
 } from '../collab/public-file-publication-store.js';
 import { readVelaControlApiContext } from '../integrations/vela.js';
 import { isAbortedOperationError } from '../integrations/aborted-error.js';
+import { buildDeployFilePlan } from '../deploy.js';
 import { readProjectManifest } from '../project-locations.js';
 import { redactSecrets } from '../redact.js';
 import { findRealElementRange, HTML_TAG_PATTERNS } from '@open-design/contracts/runtime/html-injection-points';
@@ -386,6 +389,36 @@ const PUBLIC_FILE_REF = 'published';
 
 const MAX_ERROR_LOG_FIELD_LENGTH = 2_048;
 
+/** Builds the share payload through the deploy planner without inheriting its hook. */
+async function buildSharePlan(
+  projectDir: string,
+  entryName: string,
+  metadata: unknown,
+): Promise<{ summary: SharePlanSummary; files: Awaited<ReturnType<typeof buildDeployFilePlan>>['files'] }> {
+  const deployPlan = await buildDeployFilePlan(
+    path.dirname(projectDir),
+    path.basename(projectDir),
+    entryName,
+    { metadata, hookScriptUrl: '' },
+  );
+  const totalBytes = deployPlan.files.reduce(
+    (total, file) => total + Buffer.from(file.data).byteLength,
+    0,
+  );
+  return {
+    files: deployPlan.files,
+    summary: {
+      fileCount: deployPlan.files.length,
+      totalBytes,
+      exceedsSizeLimit: totalBytes > SHARE_MAX_TOTAL_BYTES,
+      exclusions: [
+        ...deployPlan.missing.map((path) => ({ path, reason: 'missing' as const })),
+        ...deployPlan.invalid.map((path) => ({ path, reason: 'invalid' as const })),
+      ],
+    },
+  };
+}
+
 function redactedErrorLogText(value: unknown): string {
   const text = value instanceof Error
     ? value.message || value.name
@@ -519,20 +552,6 @@ function normalizePublicFilePath(raw: string): string | null {
     return null;
   }
   return normalized;
-}
-
-async function resolvePublicSourceFile(projectDir: string, filePath: string): Promise<string> {
-  const [projectRoot, candidate] = await Promise.all([
-    realpath(projectDir),
-    realpath(path.join(projectDir, filePath)),
-  ]);
-  const relative = path.relative(projectRoot, candidate);
-  if (relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))) {
-    return candidate;
-  }
-  const error = new Error('public file path escapes project root') as NodeJS.ErrnoException;
-  error.code = 'EACCES';
-  throw error;
 }
 
 function publicFileResourceIdFor(
@@ -1275,23 +1294,41 @@ export function registerCollabSyncRoutes(
     }
 
     const projectDir = await resolveProjectDir(projectId);
-    let data: Buffer;
+    let sharePlan: Awaited<ReturnType<typeof buildSharePlan>>;
     try {
-      const sourceFile = await resolvePublicSourceFile(projectDir, filePath);
-      data = await readFile(sourceFile);
+      sharePlan = await buildSharePlan(
+        projectDir,
+        filePath,
+        projectStore?.get?.(projectId)?.metadata,
+      );
     } catch (error) {
       const code = (error as NodeJS.ErrnoException)?.code;
       return res.status(code === 'ENOENT' ? 404 : 400).json({
         error: code === 'ENOENT' ? 'FILE_NOT_FOUND' : 'FILE_UNAVAILABLE',
       });
     }
+    if (sharePlan.summary.exceedsSizeLimit) {
+      return res.status(413).json({
+        error: 'too_large',
+        plan: sharePlan.summary,
+        bytes: sharePlan.summary.totalBytes,
+        totalBytes: sharePlan.summary.totalBytes,
+        limit: SHARE_MAX_TOTAL_BYTES,
+      });
+    }
 
     const resourceId = publicFileResourceIdFor(projectId, filePath, principal);
     const tempDir = await mkdtemp(path.join(os.tmpdir(), 'od-public-file-'));
     try {
-      const targetFile = path.join(tempDir, filePath);
-      await mkdir(path.dirname(targetFile), { recursive: true });
-      await writeFile(targetFile, data);
+      for (const file of sharePlan.files) {
+        const targetFile = path.join(tempDir, file.file);
+        const relative = path.relative(tempDir, targetFile);
+        if (relative.startsWith('..') || path.isAbsolute(relative)) {
+          throw new Error('share plan file escapes staging directory');
+        }
+        await mkdir(path.dirname(targetFile), { recursive: true });
+        await writeFile(targetFile, file.data);
+      }
       const metadata = {
         source: 'open-design',
         projectId,
@@ -1321,7 +1358,8 @@ export function registerCollabSyncRoutes(
         return res.status(502).json({ error: 'PUBLIC_SNAPSHOT_UNAVAILABLE' });
       }
       const publication: PublicProjectFilePublication = {
-        url: publicSnapshotFileUrl(baseUrl, snapshot.slug, filePath),
+        // The deploy planner rewrites the selected HTML to the snapshot root.
+        url: publicSnapshotFileUrl(baseUrl, snapshot.slug, 'index.html'),
         slug: snapshot.slug,
         fileName: filePath,
       };

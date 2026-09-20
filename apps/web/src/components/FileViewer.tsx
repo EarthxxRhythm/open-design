@@ -16911,7 +16911,6 @@ function HtmlViewer({
               <RemixIcon name="history-line" size={15} />
             </button>
           ) : null}
-          {rawCanShare || rawCanDownload ? (
             <div className="chrome-file-action-menus">
               {/* Outside-click dismissal is scoped to the Share/Export pair —
                   the handoff split button next door must count as "outside" so
@@ -16943,21 +16942,19 @@ function HtmlViewer({
                     <span>{t('fileViewer.unifiedExportTab')}</span>
                   </button>
                 ) : null}
-                {rawCanShare ? (
                   <button
                     type="button"
                     className="chrome-action chrome-action-secondary chrome-action-with-label chrome-action-text-only chrome-action-unified"
                     aria-haspopup="menu"
                     aria-expanded={deployMenuOpen && unifiedActionTab === 'share'}
                     aria-label={shareMenuLabel}
-                    disabled={viewerOnly}
-                    title={viewerOnly ? viewerOnlyDisabledTitle : undefined}
+                    disabled={viewerOnly || !rawCanShare || streaming}
+                    title={viewerOnly ? viewerOnlyDisabledTitle : !rawCanShare || streaming ? shareUnavailableHint : undefined}
                     onClick={openShareMenu}
                   >
                     <RemixIcon name="share-forward-line" size={15} />
                     <span>{shareMenuLabel}</span>
                   </button>
-                ) : null}
                 {deployMenuOpen && (rawCanShare || rawCanDownload) ? (
                   /*
                     * **同一块菜单,只是可能换个地方开。**
@@ -17112,7 +17109,7 @@ function HtmlViewer({
                   </AnchoredMenuShell>
                 ) : null}
               </div>
-              {viewerOnly ? null : (
+              {viewerOnly || !(rawCanShare || rawCanDownload) ? null : (
                 <HandoffButton
                   projectId={projectId}
                   projectKind={projectKind}
@@ -17126,7 +17123,6 @@ function HtmlViewer({
                 />
               )}
             </div>
-          ) : null}
       </>)}
       <div className="viewer-body" ref={previewBodyRef}>
         {initialPreviewLoading ? (
