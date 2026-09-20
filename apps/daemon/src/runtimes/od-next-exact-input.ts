@@ -233,10 +233,10 @@ export const OD_NEXT_EXACT_INPUT_MAP_V1 = [
   {
     id: 'runtime_facts',
     classification: 'initial_bundle',
-    source: 'renderOdNextRuntimeFactsV2()',
+    source: 'composeDaemonSystemPrompt() — always empty since the plan contract was retired',
     owner: 'bundle context serializer',
     textTarget: 'context/runtime_facts',
-    note: 'Runtime-owned planning facts the Agent copies verbatim; per-task, so excluded from the cache-stable head.',
+    note: 'Formerly the planning facts the Agent copied into its plan contract. Nothing reads such a contract any more, so the slot is left empty; Bundles frozen before that still carry it.',
   },
   {
     id: 'runtime_tool_prompt',
@@ -564,7 +564,7 @@ export const OD_NEXT_SEMANTIC_REQUEST_FACT_MAP_V1 = [
     source: 'odNextStrategyRecipe.planningFacts and capabilitySnapshotHash',
     owner: 'Task 02 core recipe; Task 04 canonical task configuration',
     textTarget: 'context/runtime_facts',
-    note: 'Runtime facts are per-task, so they are emitted as Bundle context instead of inside the cross-task-constant head; task_metadata carries only the stable allowlisted execution selection.',
+    note: 'Per-task facts that used to be emitted as Bundle context for the plan contract; they now feed only the rollout admission and telemetry, and the Bundle slot stays empty. task_metadata carries only the stable allowlisted execution selection.',
   },
   {
     id: 'request_execution_configuration',

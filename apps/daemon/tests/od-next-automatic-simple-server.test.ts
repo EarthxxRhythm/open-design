@@ -2090,6 +2090,13 @@ process.exit(127);
     expect(invocations[0]?.stdin).toContain('"reference":"workspace:project"');
     expect(invocations[0]?.stdin).not.toContain(process.env.OD_DATA_DIR ?? '__missing_data_root__');
     expect(invocations[0]?.stdin).not.toContain('# User request');
+    // The planning round is taught two rounds and the notes file, and no
+    // longer a plan contract, a preflight, or a route to declare.
+    expect(invocations[0]?.stdin).toContain('`design-notes.md`');
+    expect(invocations[0]?.stdin).toContain('"nonDesignRequest": true');
+    expect(invocations[0]?.stdin).not.toContain('<open-design-plan-contract>');
+    expect(invocations[0]?.stdin).not.toContain('Preflight');
+    expect(invocations[0]?.stdin).not.toContain('route=direct_edit');
     // The build round continues the planning round's native session as a
     // short request turn: no plan hash to bind, no machine block to close with.
     expect(invocations[1]?.argv.slice(0, 2)).toEqual(['exec', 'resume']);
