@@ -450,6 +450,42 @@ test('[P0] local OD Next public canaries project blocked and canceled terminal m
     terminal: true,
   });
 
+  // A blocked task is a Run that failed: the failure card is the Run's own
+  // (the fixture guard fails the process). On a local CLI the card's runtime
+  // action is the Cloud switch, so sending the request again is how the user
+  // retries; it opens a new round in the same conversation — a new task, the
+  // same project and conversation, the conversation URL unchanged, and the
+  // failed task's form (there is none here) or files left as they were.
+  const blockedCard = runErrorCard(page);
+  await expect(blockedCard).toBeVisible({ timeout: 15_000 });
+  await expect(blockedCard).toContainText('The task could not be completed');
+  await expect(blockedCard.getByRole('button')).toHaveText([
+    'Contact us', 'Export logs', 'Switch to OpenDesign Cloud',
+  ]);
+  await blockedCard.screenshot({ path: test.info().outputPath('od-next-blocked-run-card.png') });
+  const blockedContext = await currentProjectContext(page);
+  const urlBeforeRetry = page.url();
+  const retryResponse = await sendPrompt(page, 'Create an OD Next blocked canary');
+  const retryRequest = retryResponse.request().postDataJSON() as {
+    projectId: string; conversationId: string; currentPrompt?: string;
+  };
+  expect(retryRequest.projectId).toBe(blockedContext.projectId);
+  expect(retryRequest.conversationId).toBe(blockedContext.conversationId);
+  const retried = await retryResponse.json() as { runId: string; taskExecutionId: string };
+  expect(retried.runId).not.toBe(blocked.runId);
+  expect(retried.taskExecutionId).not.toBe(blocked.taskExecutionId);
+  expect(page.url()).toBe(urlBeforeRetry);
+  await expect.poll(async () => {
+    const response = await page.request.get(`/api/runs/${retried.runId}`);
+    return (await response.json() as {
+      strategyTask?: { taskExecutionId: string; outcome: string; terminal: boolean };
+    }).strategyTask;
+  }, { timeout: 20_000 }).toMatchObject({
+    taskExecutionId: retried.taskExecutionId,
+    outcome: 'blocked',
+    terminal: true,
+  });
+
   await prepareLocalOdNextCanary(page, 'OD Next local canceled canary');
   const canceledResponsePromise = page.waitForResponse(isCreateRunResponse);
   await sendPrompt(page, 'Hold the daemon run open until canceled');
@@ -469,6 +505,97 @@ test('[P0] local OD Next public canaries project blocked and canceled terminal m
     outcome: 'canceled',
     terminal: true,
   });
+});
+
+// The copy of the failure card for the codes the daemon raises around an OD
+// Next round. Each variant is a persisted conversation whose last assistant
+// turn failed with that code — written through the same message API the chat
+// uses — so the card renders from the persisted error event exactly as it does
+// after a reload. The screenshots are the review evidence for the wording.
+const OD_NEXT_ROUND_FAILURE_COPY = [
+  {
+    code: 'OD_NEXT_SESSION_UNAVAILABLE',
+    detail: 'The agent session this build round continues is no longer available.',
+    title: 'Build round lost its session',
+    description: "The build round was set to continue the planning round's agent session, but that session was gone by the time it started. Send the request again to start a new round: the plan stays in the conversation, and files already written stay in the project.",
+  },
+  {
+    code: 'od_next_physical_run_interrupted',
+    detail: 'The agent process ended before this round settled, so the task stopped here.',
+    title: 'Round interrupted',
+    description: 'The agent stopped before this round finished. Send the request again to start a new round in this conversation; files already written stay in the project.',
+  },
+  {
+    code: 'OD_NEXT_CONTINUATION_FAILED',
+    detail: 'Strategy task changed while applying settlement.',
+    title: 'Round could not be recorded',
+    description: 'The agent finished, but Open Design ran into an error while recording this round and starting the next one. Send the request again to start a new round; if it keeps happening, export the logs and send them to us.',
+  },
+  {
+    code: 'OD_NEXT_TASK_STATE_INVALID',
+    detail: 'OD Next Run, request, immutable input owner, and persisted task mapping are not one exact scope.',
+    title: 'Task record mismatch',
+    description: "Open Design's record of this task did not match the run it was starting, so the round stopped before the agent ran. Send the request again to start a fresh round with new records.",
+  },
+  {
+    code: 'OD_NEXT_INPUT_SNAPSHOT_OVERSIZE',
+    detail: 'OD Next attachments exceed the task byte cap.',
+    title: 'Attachments too large',
+    description: 'The attachments exceed what one request can carry. Remove or shrink some and send the request again.',
+  },
+  {
+    code: 'OD_NEXT_INPUT_SNAPSHOT_TOCTOU',
+    detail: 'OD Next attachment changed while it was being frozen.',
+    title: 'Attachments changed',
+    description: 'The attachments changed while the request was being prepared, or their frozen copy did not match, so they could not be handed to the agent. Send the request again.',
+  },
+] as const;
+
+test('[P1] OD Next round failures render their own card copy from the persisted error', async ({ page }) => {
+  for (const variant of OD_NEXT_ROUND_FAILURE_COPY) {
+    const projectId = `od-next-failure-copy-${variant.code.toLowerCase()}-${Date.now()}`;
+    const { conversationId } = await createProjectViaApi(page, projectId, `Failure copy ${variant.code}`);
+    const now = Date.now();
+    const userId = `${projectId}-user`;
+    const assistantId = `${projectId}-assistant`;
+    for (const message of [
+      { id: userId, role: 'user', content: 'Build a landing page for a coffee roaster.', createdAt: now - 10_000 },
+      {
+        id: assistantId,
+        role: 'assistant',
+        agentId: 'codex',
+        content: '',
+        createdAt: now - 9_000,
+        startedAt: now - 9_000,
+        endedAt: now - 1_000,
+        runId: `${projectId}-run`,
+        runStatus: 'failed',
+        events: [
+          { kind: 'status', label: 'starting', detail: 'codex' },
+          { kind: 'status', label: 'error', detail: variant.detail, code: variant.code },
+        ],
+      },
+    ]) {
+      const response = await page.request.put(
+        `/api/projects/${projectId}/conversations/${conversationId}/messages/${message.id}`,
+        { data: message },
+      );
+      expect(response.ok(), await response.text()).toBeTruthy();
+    }
+
+    await page.goto(`/projects/${projectId}/conversations/${conversationId}`, { waitUntil: 'domcontentloaded' });
+    await waitForLoadingToClear(page);
+    const card = runErrorCard(page);
+    await expect(card).toContainText(variant.title, { timeout: 15_000 });
+    await expect(card.getByTestId('chat-run-error-description')).toHaveText(variant.description);
+    await expect(card).not.toContainText(variant.detail);
+    // A failed local CLI run keeps its fixed action set; the copy is what
+    // changes per code.
+    await expect(card.getByRole('button')).toHaveText([
+      'Contact us', 'Export logs', 'Switch to OpenDesign Cloud',
+    ]);
+    await card.screenshot({ path: test.info().outputPath(`od-next-failure-${variant.code}.png`) });
+  }
 });
 
 test('[P0] OD Next app-config switch takes effect immediately and rejects invalid modes atomically', async ({ page }) => {
