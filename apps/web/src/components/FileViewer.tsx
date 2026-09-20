@@ -7972,7 +7972,26 @@ function HtmlViewer({
     if (!deployMenuOpen) setShareAccessMenuOpen(false);
   }, [deployMenuOpen]);
 
+  const publicFileCopySeqRef = useRef(0);
+  const publicFileCopyTimerRef = useRef<number | null>(null);
+
+  // Each clipboard completion and timer belongs to one operation, not just
+  // to its feedback label: two successive successful copies both say "copied".
+  function invalidatePublicFileCopy() {
+    ++publicFileCopySeqRef.current;
+    if (publicFileCopyTimerRef.current !== null) {
+      window.clearTimeout(publicFileCopyTimerRef.current);
+      publicFileCopyTimerRef.current = null;
+    }
+  }
+
+  useEffect(() => () => {
+    ++publicFileRequestSeqRef.current;
+    invalidatePublicFileCopy();
+  }, []);
+
   useEffect(() => {
+    invalidatePublicFileCopy();
     publicFileIdentityRef.current = { projectId, fileName: file.name };
     const requestSeq = ++publicFileRequestSeqRef.current;
     let cancelled = false;
@@ -8074,6 +8093,7 @@ function HtmlViewer({
     const requestProjectId = projectId;
     const requestFileName = file.name;
     const requestSeq = ++publicFileRequestSeqRef.current;
+    invalidatePublicFileCopy();
     firePublishFlowClick('publish_file');
     const publishStarted = performance.now();
     setPublishingPublicFile(true);
@@ -8096,6 +8116,9 @@ function HtmlViewer({
       }
       setPublishedFileUrl(response.url);
       setPublishedFileSlug(response.slug);
+      // Copy this response, not the previous render's URL. Clipboard failure
+      // is not publication failure, and automatic copy is not a user click.
+      void copyPublicFileUrl(response.url);
     } catch (error) {
       console.warn('[FileViewer] failed to publish public file', error);
       const recoveryPublication = publicFileManualRevokePublication(error);
@@ -8127,6 +8150,7 @@ function HtmlViewer({
     const requestFileName = file.name;
     const requestSlug = publishedFileSlug;
     const requestSeq = ++publicFileRequestSeqRef.current;
+    invalidatePublicFileCopy();
     const unpublishStarted = performance.now();
     setPublishingPublicFile(true);
     setPublishLinkFeedback(null);
@@ -8165,22 +8189,34 @@ function HtmlViewer({
     }
   }
 
-  async function copyPublishedFileLink() {
-    firePublishFlowClick('copy_publish_link');
+  async function copyPublicFileUrl(url: string) {
+    invalidatePublicFileCopy();
+    const copySeq = publicFileCopySeqRef.current;
+    const requestSeq = publicFileRequestSeqRef.current;
+    const isCurrent = () => publicFileCopySeqRef.current === copySeq &&
+      publicFileRequestSeqRef.current === requestSeq;
+    setPublishLinkFeedback(null);
     let ok = false;
     try {
-      if (publishedFileUrl && typeof navigator !== 'undefined' && navigator.clipboard) {
-        await navigator.clipboard.writeText(publishedFileUrl);
+      if (url && typeof navigator !== 'undefined' && navigator.clipboard) {
+        await navigator.clipboard.writeText(url);
         ok = true;
       }
     } catch {
       ok = false;
     }
-    const feedback = ok ? 'copied' : 'failed';
-    setPublishLinkFeedback(feedback);
-    window.setTimeout(() => {
-      setPublishLinkFeedback((current) => (current === feedback ? null : current));
+    if (!isCurrent()) return;
+    setPublishLinkFeedback(ok ? 'copied' : 'failed');
+    publicFileCopyTimerRef.current = window.setTimeout(() => {
+      if (!isCurrent()) return;
+      publicFileCopyTimerRef.current = null;
+      setPublishLinkFeedback(null);
     }, 1800);
+  }
+
+  async function copyPublishedFileLink() {
+    firePublishFlowClick('copy_publish_link');
+    await copyPublicFileUrl(publishedFileUrl);
   }
   // Same shared 转入/移出团队空间 confirmation as the project grid — see the
   // ReactComponentViewer copy above for the rationale.
