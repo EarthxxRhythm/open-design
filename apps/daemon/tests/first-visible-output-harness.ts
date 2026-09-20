@@ -52,7 +52,13 @@ export type StartedServer = {
   shutdown?: () => Promise<void> | void;
 };
 
-export type RunStatus = { id: string; status: string };
+export type RunStatus = {
+  id: string;
+  status: string;
+  exitCode?: number | null;
+  errorCode?: string | null;
+  strategyTask?: { outcome?: string; blockedContext?: unknown } | null;
+};
 
 export type RunTiming = {
   time_to_first_token_ms?: number;
