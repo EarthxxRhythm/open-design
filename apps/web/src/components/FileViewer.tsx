@@ -239,6 +239,14 @@ import type {
   ProjectFile,
 } from '../types';
 import { Icon } from './Icon';
+import {
+  canDeleteComment,
+  canEditComment,
+  canSendCommentToAgent as canSendCommentToAgentPure,
+  commentAuthoredByViewer,
+  viewerIsProjectOwner,
+  type CommentAuthorityContext,
+} from '../comments/comment-authority';
 import { RemixIcon } from './RemixIcon';
 import { projectIsSharedWithWorkspace } from '../collab/project-shared-status';
 import { HandoffButton } from './HandoffButton';
@@ -16080,25 +16088,19 @@ function HtmlViewer({
   // their own note; the author OR the project owner may delete it or send it to
   // the agent. The B lane enforces the same rules server-side.
   const myMemberId = collab.member?.memberId ?? null;
-  const iAmProjectOwner = collab.isOwner;
-  const commentAuthoredByMe = (comment: PreviewComment | null | undefined): boolean => {
-    // No persisted comment means this is the create flow: the draft belongs
-    // to the current viewer, including a read-only member/admin annotating
-    // someone else's shared project.
-    if (!comment) return true;
-    const authorId = comment?.authorMemberId ?? null;
-    // A legacy shared comment without an author is deliberately owner-only.
-    // Treating it as "mine" for every member made the client advertise a
-    // destructive action the daemon must reject. Personal/unshared comments
-    // retain their historical single-user behavior.
-    if (authorId == null) return !collab.enabled || iAmProjectOwner;
-    return authorId === myMemberId;
+  const commentAuthority: CommentAuthorityContext = {
+    viewerMemberId: myMemberId,
+    collabEnabled: collab.enabled,
+    isProjectOwner: collab.isOwner,
   };
+  const iAmProjectOwner = viewerIsProjectOwner(commentAuthority);
+  const commentAuthoredByMe = (comment: PreviewComment | null | undefined): boolean =>
+    commentAuthoredByViewer(comment, commentAuthority);
   const canSendCommentToAgent = (comment: PreviewComment | null | undefined): boolean =>
-    commentAuthoredByMe(comment) || iAmProjectOwner;
-  const canEditActiveComment = commentAuthoredByMe(activeComposerComment);
-  const canDeleteActiveComment = canEditActiveComment || iAmProjectOwner;
-  const canSendActiveComment = canEditActiveComment || iAmProjectOwner;
+    canSendCommentToAgentPure(comment, commentAuthority);
+  const canEditActiveComment = canEditComment(activeComposerComment, commentAuthority);
+  const canDeleteActiveComment = canDeleteComment(activeComposerComment, commentAuthority);
+  const canSendActiveComment = canSendCommentToAgentPure(activeComposerComment, commentAuthority);
   // The viewer's own author identity for the comment cards. Derived from the
   // workspace context this component ALREADY reads (see `workspaceContext`
   // above) — no extra request. Deliberately NOT `collab.member`, which is null
