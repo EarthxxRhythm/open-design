@@ -24,6 +24,20 @@ export interface PublicFilePublicationStore {
   delete(scope: PublicFilePublicationScope): void;
 }
 
+/** Full store capability for consumers that enumerate project publications. */
+export interface ProjectPublicFilePublicationStore extends PublicFilePublicationStore {
+  /** Lists only this principal's project; shareId is the persisted snapshot slug. */
+  listByProject(scope: {
+    resourceTeamId: string;
+    ownerMemberId: string;
+    projectId: string;
+  }): ReadonlyArray<PublicFilePublication & {
+    filePath: string;
+    shareId: string;
+    updatedAt: string;
+  }>;
+}
+
 export function migratePublicFilePublications(db: SqliteDb): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS public_file_publications (
@@ -50,12 +64,37 @@ function scopeKey(scope: PublicFilePublicationScope): string {
   ]);
 }
 
-export function createInMemoryPublicFilePublicationStore(): PublicFilePublicationStore {
-  const publications = new Map<string, PublicFilePublication>();
+// Use the same locale-independent ordering for both backends, including Unicode paths.
+function comparePublicationFilePaths(a: { filePath: string }, b: { filePath: string }): number {
+  if (a.filePath === b.filePath) return 0;
+  return a.filePath < b.filePath ? -1 : 1;
+}
+
+export function createInMemoryPublicFilePublicationStore(): ProjectPublicFilePublicationStore {
+  const publications = new Map<string, {
+    scope: PublicFilePublicationScope;
+    publication: PublicFilePublication;
+    updatedAt: string;
+  }>();
   return {
-    get: (scope) => publications.get(scopeKey(scope)) ?? null,
+    get: (scope) => publications.get(scopeKey(scope))?.publication ?? null,
+    listByProject: (scope) => [...publications.values()]
+      .filter((entry) => entry.scope.resourceTeamId === scope.resourceTeamId
+        && entry.scope.ownerMemberId === scope.ownerMemberId
+        && entry.scope.projectId === scope.projectId)
+      .map((entry) => ({
+        ...entry.publication,
+        filePath: entry.scope.filePath,
+        shareId: entry.publication.slug,
+        updatedAt: entry.updatedAt,
+      }))
+      .sort(comparePublicationFilePaths),
     set: (scope, publication) => {
-      publications.set(scopeKey(scope), publication);
+      publications.set(scopeKey(scope), {
+        scope: { ...scope },
+        publication,
+        updatedAt: new Date(Date.now()).toISOString(),
+      });
     },
     delete: (scope) => {
       publications.delete(scopeKey(scope));
@@ -72,7 +111,7 @@ export function createInMemoryPublicFilePublicationStore(): PublicFilePublicatio
 export function createSqlitePublicFilePublicationStore(
   db: SqliteDb,
   now: () => number = Date.now,
-): PublicFilePublicationStore {
+): ProjectPublicFilePublicationStore {
   const selectRow = db.prepare(`
     SELECT url, slug, file_name AS fileName
       FROM public_file_publications
@@ -80,6 +119,14 @@ export function createSqlitePublicFilePublicationStore(
        AND owner_member_id = ?
        AND project_id = ?
        AND file_path = ?
+  `);
+  const selectProjectRows = db.prepare(`
+    SELECT url, slug, file_name AS fileName, file_path AS filePath,
+           updated_at AS updatedAt
+      FROM public_file_publications
+     WHERE resource_team_id = ?
+       AND owner_member_id = ?
+       AND project_id = ?
   `);
   const upsertRow = db.prepare(`
     INSERT INTO public_file_publications
@@ -118,6 +165,18 @@ export function createSqlitePublicFilePublicationStore(
         return null;
       }
       return { url: row.url, slug: row.slug, fileName: row.fileName };
+    },
+    listByProject(scope) {
+      const rows = selectProjectRows.all(
+        scope.resourceTeamId,
+        scope.ownerMemberId,
+        scope.projectId,
+      ) as Array<PublicFilePublication & { filePath: string; updatedAt: number }>;
+      return rows.map((row) => ({
+        ...row,
+        shareId: row.slug,
+        updatedAt: new Date(row.updatedAt).toISOString(),
+      })).sort(comparePublicationFilePaths);
     },
     set(scope, publication) {
       const timestamp = now();
