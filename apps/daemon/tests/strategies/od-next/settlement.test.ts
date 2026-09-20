@@ -259,7 +259,8 @@ describe('settling and building against the durable store', () => {
       taskExecutionId: 'task-1',
       strategy: { id: 'od-next-strategy', version: '2.0.0', packageHash: snapshot.strategy!.packageHash, snapshotId: snapshot.snapshotId },
       inputStage: 'request', outcome: 'completed', route: 'full_plan', executionMode: 'simple',
-      activeRunId: 'run-request', terminal: true, deliverableWritten: false, settlementReason: 'question', autoRoundCount: 0,
+      activeRunId: 'run-request', runMappings: [{ runId: 'run-request', taskRunIndex: 0 }],
+      terminal: true, deliverableWritten: false, settlementReason: 'question', autoRoundCount: 0,
     });
     expect(() => settleStrategyTask(db, { taskExecutionId: task.taskExecutionId, runId: 'run-request', reason: 'text_only', deliverableWritten: false }))
       .toThrow(/running/);
