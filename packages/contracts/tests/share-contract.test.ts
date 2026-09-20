@@ -7,7 +7,7 @@ import {
   SHARE_AUTHOR_KINDS,
   SHARE_COMMENT_ERROR_CODES,
   SHARE_COMMENT_EVENT_TYPES,
-  SHARE_COMMENT_MAX_LENGTH,
+  SHARE_COMMENT_MAX_BYTES,
   SHARE_COMMENT_PAGE_LIMIT,
   SHARE_COMMENT_VALIDATION_ORDER,
   SHARE_MAX_TOTAL_BYTES,
@@ -187,8 +187,30 @@ describe('share contract · comment API (I4)', () => {
     expect(order.indexOf('INVALID_COMMENT')).toBeLessThan(order.indexOf('RATE_LIMITED'));
   });
 
-  it('caps the page and the body at the frozen figures', () => {
+  it('caps the page at the frozen figure', () => {
     expect(SHARE_COMMENT_PAGE_LIMIT).toBe(500);
-    expect(SHARE_COMMENT_MAX_LENGTH).toBe(4000);
+  });
+
+  /**
+   * Comment length is NOT limited as a product rule — a character cap was
+   * proposed three times (200 code points, 1-400 characters, 4000 characters)
+   * and rejected each time. What remains is an anti-abuse byte ceiling, and
+   * the difference between the two is exactly what this asserts: a byte
+   * budget that no client counts against, refused as PAYLOAD_TOO_LARGE rather
+   * than as an invalid comment.
+   *
+   * If someone later reads this as "the limit is 64000 characters" and builds
+   * a counter from it, that is the product decision quietly coming back — so
+   * the unit is asserted, not just the number.
+   */
+  it('keeps the body ceiling an anti-abuse BYTE cap, not a character limit', () => {
+    expect(SHARE_COMMENT_MAX_BYTES).toBe(64 * 1024);
+    // Far beyond anything a person types: ~20k Chinese characters.
+    expect(SHARE_COMMENT_MAX_BYTES).toBeGreaterThan(4000 * 3);
+    // The overflow answer is a transport refusal, not a validation verdict.
+    expect(SHARE_COMMENT_ERROR_CODES).toContain('PAYLOAD_TOO_LARGE');
+    // ...and it is deliberately absent from the validation ORDER, because it
+    // is not one of the four checks a comment body goes through.
+    expect(SHARE_COMMENT_VALIDATION_ORDER).not.toContain('PAYLOAD_TOO_LARGE');
   });
 });
