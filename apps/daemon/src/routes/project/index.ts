@@ -5430,6 +5430,71 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
     }
   });
 
+  /**
+   * The entry file is a project attribute the preview, exports, shares and
+   * external agents all read. It is set here by the UI's "set as entry"
+   * control and by `od project entry`, and by the daemon itself when a
+   * delivering Run leaves the project without one. It never decides whether a
+   * Run or a task completed.
+   */
+  app.put('/api/projects/:id/entry-file', async (req, res) => {
+    try {
+      const project = getProject(db, req.params.id);
+      if (!project) {
+        return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'not found');
+      }
+      if (!await enforceWorkspaceProjectMutation(
+        req,
+        res,
+        sendApiError,
+        getWorkspaceProject,
+        getWorkspaceProjectByProjectId,
+        db,
+        project.id,
+        'rename',
+      )) return;
+      /** @type {import('@open-design/contracts').ProjectEntryFileUpdateRequest} */
+      const body = req.body ?? {};
+      const requested = body.entryFile;
+      if (requested !== null && typeof requested !== 'string') {
+        return sendApiError(res, 400, 'BAD_REQUEST', 'entryFile must be a project-relative file path or null');
+      }
+      const existingMeta = project.metadata ?? { kind: 'prototype' };
+      let nextMeta;
+      if (requested === null) {
+        const { entryFile: _cleared, ...rest } = existingMeta;
+        nextMeta = rest;
+      } else {
+        const normalized = requested.trim().replaceAll('\\', '/').replace(/^\.\//, '');
+        if (
+          !normalized
+          || normalized.startsWith('/')
+          || normalized.split('/').some((segment: string) => segment === '..' || segment === '')
+        ) {
+          return sendApiError(res, 400, 'BAD_REQUEST', 'entryFile must be a project-relative file path');
+        }
+        const files: ProjectFile[] = await listFiles(PROJECTS_DIR, project.id, { metadata: existingMeta });
+        const match = files.find((file: ProjectFile) => (
+          file.type !== 'dir' && ((file.path ?? file.name) === normalized || file.name === normalized)
+        ));
+        if (!match) {
+          return sendApiError(res, 404, 'FILE_NOT_FOUND', `${normalized} is not a file in this project`);
+        }
+        nextMeta = { ...existingMeta, entryFile: match.path ?? match.name };
+      }
+      const updated = updateProject(db, project.id, { metadata: nextMeta });
+      if (!updated) return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'not found');
+      /** @type {import('@open-design/contracts').ProjectEntryFileUpdateResponse} */
+      const response = {
+        project: updated,
+        entryFile: typeof updated.metadata?.entryFile === 'string' ? updated.metadata.entryFile : null,
+      };
+      res.json(response);
+    } catch (err: any) {
+      sendApiError(res, 400, 'BAD_REQUEST', String(err));
+    }
+  });
+
   app.delete('/api/projects/:id', async (req, res) => {
     try {
       const project = getProject(db, req.params.id);

@@ -2110,6 +2110,12 @@ process.exit(127);
     expect(invocations[1]?.stdin).not.toContain('planContractHash');
     expect(invocations[1]?.stdin).not.toContain('Closing Runtime State');
     expect(statuses[0]!.updatedAt).toBeLessThanOrEqual(invocations[1]!.startedAt);
+    // The build round delivered index.html into a project that recorded no
+    // entry, so the daemon records it as the project's entry attribute.
+    const projectAfter = await fetch(`${started!.url}/api/projects/${encodeURIComponent(fixture.projectId)}`);
+    expect(projectAfter.status).toBe(200);
+    expect((await projectAfter.json() as { project: { metadata?: { entryFile?: string } } }).project.metadata?.entryFile)
+      .toBe('index.html');
     for (const invocation of invocations) {
       expect(invocation.taskInputDir).toContain('od-next-run-inputs');
       expect(invocation.taskInputDir).not.toContain('od-next-task-inputs');

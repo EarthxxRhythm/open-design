@@ -16665,28 +16665,39 @@ export async function startServer({
             : {}),
         });
         const { deliverable } = deliverableFinalization;
-        // Adding a second page must not erase an unambiguous pre-run entry.
-        // Retain only a verified baseline identity, without replacing a user's
-        // explicit selection or metadata changed while this Run was executing.
-        if (
-          deliverable.valid && deliverable.linkedPage
-          && deliverable.entryFile === baselineEntryFile
-          && run.artifactOutcome?.diff && run.projectId && cwd
-        ) {
+        // The entry is a project attribute. A Run that delivered a
+        // resolvable entry records it on the project when the project has
+        // none, or when the one it records no longer exists on disk — never
+        // over a recorded entry that is still there, which is the user's (or
+        // an earlier Run's) choice. Metadata changed while this Run executed
+        // is re-read here, not taken from the pre-run snapshot.
+        if (deliverable.valid && deliverable.entryFile && run.projectId && cwd) {
           try {
             const current = getProject(db, run.projectId);
+            const recorded = typeof current?.metadata?.entryFile === 'string'
+              ? current.metadata.entryFile
+              : null;
+            const recordedExists = recorded
+              ? fs.existsSync(path.join(resolveProjectDir(PROJECTS_DIR, current.id, current.metadata), recorded))
+              : false;
             if (
-              current?.metadata?.kind === 'prototype'
-              && !current.metadata.entryFile
+              current
+              && !recordedExists
+              && recorded !== deliverable.entryFile
               && resolveProjectDir(PROJECTS_DIR, current.id, current.metadata) === cwd
             ) {
               updateProject(db, current.id, {
                 metadata: { ...current.metadata, entryFile: deliverable.entryFile },
                 updatedAt: SYNC_KEEPS_UPDATED_AT,
               });
+              design.runs.emit(run, 'diagnostic', {
+                type: 'project_entry_recorded',
+                entryFile: deliverable.entryFile,
+                previousEntryFile: recorded,
+              });
             }
           } catch {
-            console.warn('[deliverable] could not retain verified prototype entry');
+            console.warn('[deliverable] could not record the delivered entry on the project');
           }
         }
         // Recorded as a fact on the Run status for every strategy round; the
