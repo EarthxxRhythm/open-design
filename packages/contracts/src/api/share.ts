@@ -23,7 +23,8 @@
 /**
  * Public share URL shape, frozen 2026-09-21:
  *
- *     https://open-design.ai/artifact/{projectId}/{slug}
+ *     https://open-design.ai/cloud/artifact/{projectId}/{slug}
+ *                            └── base path ──┘
  *
  * Both segments are load-bearing and neither is decorative:
  *
@@ -35,11 +36,50 @@
  *   (`resource_hub.snapshots.slug`). It identifies WHICH published version is
  *   being viewed; re-publishing mints a new slug.
  *
+ * `/cloud/` is the DEPLOYMENT base path (`VITE_APP_BASE_PATH`), not part of
+ * the application route, so it is deliberately absent from what this module
+ * builds. Baking it in here would produce a wrong URL in every environment
+ * that mounts the app somewhere else.
+ *
  * `team_id` is deliberately NOT in the URL. The snapshot table already carries
  * that rule for its own public read — team_id is resolved server-side and
  * never exposed publicly — and the share binding follows it.
+ *
+ * ## Two segments means two independent public inputs
+ *
+ * A caller supplies `projectId` and `slug` separately, so the server MUST
+ * confirm the slug actually belongs to that project before serving anything.
+ * Without that check, pairing project A's id with project B's slug reads
+ * across the boundary. The single-segment alternative had no such hole by
+ * construction; this shape has to close it explicitly — see
+ * {@link ShareBindingLookup}.
+ *
+ * ## `projectId` is a public identifier from now on
+ *
+ * It appears in URLs, `Referer` headers and browser history. Any existing
+ * logic of the form "knowing a projectId is sufficient to do X" needs
+ * re-examining against that.
  */
 export const SHARE_URL_PATH_SEGMENT = 'artifact';
+
+/**
+ * What the server must resolve a share URL's two segments into before it
+ * serves a share page or any of its comments.
+ *
+ * The resolution is the authorization step, not a lookup convenience: it is
+ * where "this slug belongs to this project" is established. A caller that has
+ * a valid `projectId` and a valid `slug` that do not belong together must be
+ * refused with {@link ShareCommentErrorCode} `SHARE_NOT_FOUND` — the same
+ * answer an unknown slug gets, so the mismatch does not confirm that either
+ * half exists.
+ */
+export interface ShareBindingLookup {
+  projectId: string;
+  slug: string;
+  /** Resolved server-side; never echoed to the client. */
+  teamId: string;
+  status: ShareStatus;
+}
 
 /** Parsed form of a share URL path. */
 export interface ShareUrlParts {

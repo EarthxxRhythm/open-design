@@ -59,6 +59,32 @@ describe('share contract · addressing', () => {
   it('rejects a malformed percent-escape instead of throwing', () => {
     expect(parseSharePath('/artifact/%E0%A4%A/slug')).toBeNull();
   });
+
+  /**
+   * The deployment mounts the app under /cloud/, but that prefix belongs to
+   * the deployment, not the route. If it ever leaks into the builder, every
+   * environment that mounts the app elsewhere gets a wrong link — and the
+   * round-trip above would still pass, because parse would learn the same
+   * mistake. So it is asserted directly.
+   */
+  it('leaves the deployment base path out of the built path', () => {
+    const path = buildSharePath({ projectId: 'p', slug: 's' });
+    expect(path.startsWith('/artifact/')).toBe(true);
+    expect(path).not.toContain('/cloud/');
+  });
+
+  /**
+   * Two segments are two independent public inputs, so a well-formed path
+   * proves nothing about whether the pair belongs together. Parsing must stay
+   * purely syntactic: the moment it looks like it validates a pair, a caller
+   * will treat a non-null result as authorization.
+   */
+  it('parses a mismatched pair without complaint — pairing is the server\'s job', () => {
+    expect(parseSharePath('/artifact/project-a/slug-belonging-to-project-b')).toEqual({
+      projectId: 'project-a',
+      slug: 'slug-belonging-to-project-b',
+    });
+  });
 });
 
 describe('share contract · author identity', () => {
