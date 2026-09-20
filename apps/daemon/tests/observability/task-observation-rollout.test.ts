@@ -531,11 +531,93 @@ describe('task observation rollout', () => {
         'od-next-strategy-v2',
         'route:direct_edit',
         'execution-mode:simple',
+        'outcome:completed',
+        'settlement:none',
+        'agent-launch:started',
         'environment:synthetic-test',
         'rollout:od-next-task-v1',
       ],
+      metadata: expect.objectContaining({
+        settlementReason: null,
+        autoRoundCount: 0,
+        deliverableWritten: false,
+        blockedReasonCodes: [],
+        agentLaunch: 'started',
+      }),
     });
     expect(batch.filter((event) => event.type === 'span-create')).toHaveLength(1);
+  });
+
+  it('buckets the task under the admitted task type and reports how it settled', async () => {
+    db.prepare(`
+      UPDATE strategy_task_executions
+         SET settlement_reason = 'deliverable_changed', auto_round_count = 1,
+             deliverable_written = 1, updated_at = 2_000
+       WHERE task_execution_id = 'task-1'
+    `).run();
+    const fetchImpl = vi.fn<typeof fetch>(async () => acceptedResponse());
+    const rollout = service({ mode: 'send', fetchImpl });
+    await expect(rollout.finalizeForRun('run-1')).resolves.toMatchObject({ action: 'sent' });
+    const request = fetchImpl.mock.calls[0]![1]!;
+    const batch = JSON.parse(String(request.body)).batch as Array<{
+      type: string;
+      body: { tags?: string[]; metadata?: Record<string, unknown> };
+    }>;
+    const trace = batch.find((event) => event.type === 'trace-create')!;
+    // The applied snapshot names the task type at creation; no agent output is
+    // needed for the bucket to be filled.
+    expect(trace.body.metadata).toMatchObject({
+      taskType: 'prototype',
+      settlementReason: 'deliverable_changed',
+      autoRoundCount: 1,
+      deliverableWritten: true,
+      blockedReasonCodes: [],
+      agentLaunch: 'started',
+    });
+    expect(trace.body.metadata!.limitations).not.toContain('task_type_unavailable');
+    expect(trace.body.tags).toEqual(expect.arrayContaining([
+      'outcome:completed',
+      'settlement:deliverable_changed',
+      'agent-launch:started',
+    ]));
+  });
+
+  it('separates a task whose agent never started from one the gate refused', async () => {
+    db.prepare(`
+      UPDATE strategy_task_executions
+         SET outcome = 'blocked',
+             blocked_reason_codes_json = ?,
+             blocked_visible_text = NULL,
+             updated_at = 2_000
+       WHERE task_execution_id = 'task-1'
+    `).run(JSON.stringify(['od_next_physical_run_failed', 'od_next_session_unavailable']));
+    const fetchImpl = vi.fn<typeof fetch>(async () => acceptedResponse());
+    const rollout = service({
+      mode: 'send',
+      fetchImpl,
+      getRun: (runId) => runId === 'run-1'
+        ? { ...syntheticRun(), status: 'failed', errorCode: 'OD_NEXT_SESSION_UNAVAILABLE', events: [] }
+        : null,
+    });
+    await expect(rollout.finalizeForRun('run-1')).resolves.toMatchObject({ action: 'sent' });
+    const request = fetchImpl.mock.calls[0]![1]!;
+    const batch = JSON.parse(String(request.body)).batch as Array<{
+      type: string;
+      body: { tags?: string[]; metadata?: Record<string, unknown> };
+    }>;
+    const trace = batch.find((event) => event.type === 'trace-create')!;
+    expect(trace.body.metadata).toMatchObject({
+      outcome: 'blocked',
+      settlementReason: null,
+      blockedReasonCodes: ['od_next_physical_run_failed', 'od_next_session_unavailable'],
+      // A failed Run that produced no token, tool call or visible output.
+      agentLaunch: 'not_started',
+    });
+    expect(trace.body.tags).toEqual(expect.arrayContaining([
+      'outcome:blocked',
+      'settlement:none',
+      'agent-launch:not_started',
+    ]));
   });
 
   it('rebuilds safe Run quality from durable facts before exporting the Task payload', async () => {

@@ -69,6 +69,8 @@ export type CaptureSink = {
    * that never reports is a real regression, not something to wait out.
    */
   waitForRunFinished(runId: string, flush: () => Promise<void>): Promise<RunTiming>;
+  /** Every captured event so far, in arrival order. */
+  captured(): ReadonlyArray<{ event: string; properties: Record<string, unknown> }>;
   close(): Promise<void>;
 };
 
@@ -161,6 +163,9 @@ export async function startCaptureSink(): Promise<CaptureSink> {
           events.map((record) => record.event).join(', ') || '<nothing>'
         }`,
       );
+    },
+    captured() {
+      return events;
     },
     close(): Promise<void> {
       return new Promise<void>((resolve) => server.close(() => resolve()));

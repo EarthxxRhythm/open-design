@@ -32,6 +32,7 @@ import { closeDatabase } from '../src/db.js';
 import { AGENT_DEFS } from '../src/runtimes/registry.js';
 import { agentBinEnvKey } from '../src/runtimes/executables.js';
 import { startServer } from '../src/server.js';
+import { startCaptureSink, type CaptureSink } from './first-visible-output-harness.js';
 
 const DAEMON_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const REPO_ROOT = path.resolve(DAEMON_ROOT, '..', '..');
@@ -75,13 +76,17 @@ describe.skipIf(!recordingsAvailable)('OD Next settlement replayed from recorded
   let started: StartedServer | null = null;
   let dispatcher: Agent | null = null;
   let fixtureRoot: string | null = null;
+  let sink: CaptureSink | null = null;
   let previousEnv: Record<string, string | undefined> = {};
 
   beforeEach(() => {
     previousEnv = Object.fromEntries([
       'PATH', 'OD_AGENT_HOME', 'OD_CODEX_TRANSPORT', 'OD_NEXT_STRATEGY_ROLLOUT',
-      'OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY', ...fixtureAgentBinEnvKeys,
+      'OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY', 'POSTHOG_KEY', 'POSTHOG_HOST',
+      ...fixtureAgentBinEnvKeys,
     ].map((key) => [key, process.env[key]]));
+    delete process.env.POSTHOG_KEY;
+    delete process.env.POSTHOG_HOST;
     process.env.OD_CODEX_TRANSPORT = 'exec-json';
     process.env.OD_NEXT_STRATEGY_ROLLOUT = 'active';
     process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY = '1';
@@ -92,11 +97,13 @@ describe.skipIf(!recordingsAvailable)('OD Next settlement replayed from recorded
       await started?.shutdown?.();
       started?.server.close();
       await dispatcher?.close();
+      await sink?.close();
       closeDatabase();
       if (fixtureRoot) await rm(fixtureRoot, { recursive: true, force: true });
     } finally {
       started = null;
       dispatcher = null;
+      sink = null;
       fixtureRoot = null;
       for (const [key, value] of Object.entries(previousEnv)) {
         if (value === undefined) delete process.env[key];
@@ -114,7 +121,19 @@ describe.skipIf(!recordingsAvailable)('OD Next settlement replayed from recorded
    * records every invocation, and otherwise replays one recording per
    * invocation through the shared mock (the last recording repeats).
    */
-  async function installReplayCli(agent: 'claude' | 'codex', traces: string[], version: string) {
+  async function installReplayCli(
+    agent: 'claude' | 'codex',
+    traces: string[],
+    version: string,
+    options: { captureAnalytics?: boolean } = {},
+  ) {
+    if (options.captureAnalytics) {
+      // A stand-in for PostHog ingestion, wired before the daemon starts so its
+      // analytics client posts every capture here.
+      sink = await startCaptureSink();
+      process.env.POSTHOG_KEY = 'phc_od_next_replay_settlement';
+      process.env.POSTHOG_HOST = sink.url;
+    }
     const helpFlags = agent === 'claude'
       ? ['  --include-partial-messages', '  --forward-subagent-text', '  --agents <json>', '  --add-dir <dirs...>']
       : ['  exec', '  --json', '  resume'];
@@ -180,7 +199,7 @@ process.exit(result.status ?? 1);
       body: JSON.stringify({
         agentId: agent,
         agentCliEnv: { [agent]: { [binEnvKey]: shim } },
-        telemetry: { metrics: false, content: false, artifactManifest: false },
+        telemetry: { metrics: options.captureAnalytics === true, content: false, artifactManifest: false },
         privacyDecisionAt: Date.now(),
       }),
     });
@@ -189,7 +208,7 @@ process.exit(result.status ?? 1);
     return { invocationsPath };
   }
 
-  async function createPrototypeProject(label: string) {
+  async function createPrototypeProject(label: string, options: { ordinaryPath?: boolean } = {}) {
     const projectId = `od-next-replay-${label}-${Date.now()}`;
     const response = await fetch(`${started!.url}/api/projects`, {
       method: 'POST',
@@ -199,7 +218,11 @@ process.exit(result.status ?? 1);
         name: `OD Next replay ${label}`,
         metadata: { kind: 'prototype' },
         conversationMode: 'design',
-        automaticStrategyTaskProfile: 'prototype',
+        // A project that names its scenario plugin explicitly takes the
+        // ordinary route; only the automatic task profile admits OD Next.
+        ...(options.ordinaryPath
+          ? { pluginId: 'example-web-prototype' }
+          : { automaticStrategyTaskProfile: 'prototype' }),
         skipDiscoveryBrief: true,
       }),
     });
@@ -208,10 +231,21 @@ process.exit(result.status ?? 1);
     return { projectId, conversationId };
   }
 
-  async function startTask(agent: 'claude' | 'codex', project: { projectId: string; conversationId: string }, message: string) {
+  const ANALYTICS_HEADERS = {
+    'x-od-analytics-device-id': 'od-next-replay-device',
+    'x-od-analytics-session-id': 'od-next-replay-session',
+    'x-od-analytics-client-type': 'web',
+  };
+
+  async function startTask(
+    agent: 'claude' | 'codex',
+    project: { projectId: string; conversationId: string },
+    message: string,
+    options: { expectTask?: boolean } = {},
+  ) {
     const response = await fetch(`${started!.url}/api/runs`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...ANALYTICS_HEADERS },
       body: JSON.stringify({
         projectId: project.projectId,
         conversationId: project.conversationId,
@@ -225,8 +259,42 @@ process.exit(result.status ?? 1);
     });
     const body = await response.json() as { runId: string; taskExecutionId?: string; strategyTask?: StrategyTaskProjectionV2 };
     expect(response.status, JSON.stringify(body)).toBe(202);
-    expect(body.strategyTask).toMatchObject({ inputStage: 'request', terminal: false });
+    if (options.expectTask === false) {
+      expect(body.strategyTask).toBeUndefined();
+    } else {
+      expect(body.strategyTask).toMatchObject({ inputStage: 'request', terminal: false });
+    }
     return body as { runId: string; taskExecutionId: string };
+  }
+
+  async function waitForRunTerminal(runId: string): Promise<RunStatus> {
+    const deadline = Date.now() + 25_000;
+    let latest: RunStatus | null = null;
+    while (Date.now() < deadline) {
+      const response = await fetch(`${started!.url}/api/runs/${encodeURIComponent(runId)}`);
+      latest = await response.json() as RunStatus;
+      if (['succeeded', 'failed', 'canceled'].includes(latest.status)) return latest;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error(`run ${runId} did not finish: ${JSON.stringify(latest)}`);
+  }
+
+  /** Every capture the daemon posted for one Run, after draining its analytics client. */
+  async function capturedRunEvents(runId: string, eventName: 'run_created' | 'run_finished') {
+    const find = () => sink!.captured().filter((record) => (
+      record.event === eventName && record.properties.run_id === runId
+    ));
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline && find().length === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (find().length === 0) {
+      // The daemon's shutdown drains posthog-node; after it the sink holds
+      // everything the daemon will ever send.
+      await started!.shutdown?.();
+      started = null;
+    }
+    return find();
   }
 
   async function waitForTerminalTask(runId: string): Promise<StrategyTaskProjectionV2> {
@@ -337,6 +405,86 @@ process.exit(result.status ?? 1);
     expect(await taskRuns(project.projectId, created.taskExecutionId)).toHaveLength(2);
     expect(await invocations(invocationsPath)).toHaveLength(2);
   }, 40_000);
+
+  it('reports the task identity on run_created and the settlement, reason codes and launch fact on run_finished', async () => {
+    const { invocationsPath } = await installReplayCli(
+      'claude',
+      [TRACES.claudeTextOnly],
+      '2.1.259 (Claude Code)',
+      { captureAnalytics: true },
+    );
+    const project = await createPrototypeProject('analytics');
+    const created = await startTask('claude', project, 'Commit this stage.');
+    const task = await waitForTerminalTask(created.runId);
+    expect(task).toMatchObject({ settlementReason: 'text_only', autoRoundCount: 1 });
+    const runs = await taskRuns(project.projectId, created.taskExecutionId);
+    expect(runs).toHaveLength(2);
+    expect(await invocations(invocationsPath)).toHaveLength(2);
+    const buildRunId = runs.find((run) => run.id !== created.runId)!.id;
+
+    const planningCreated = await capturedRunEvents(created.runId, 'run_created');
+    const planningFinished = await capturedRunEvents(created.runId, 'run_finished');
+    const buildFinished = await capturedRunEvents(buildRunId, 'run_finished');
+    expect(planningCreated).toHaveLength(1);
+    expect(planningFinished).toHaveLength(1);
+    expect(buildFinished).toHaveLength(1);
+
+    // The strategy package the task was frozen on, from the task row, on
+    // both events of the planning Run. (`task_execution_id` on these events
+    // is the client's recovery lineage, not the daemon task id; the build Run
+    // inherits it below.)
+    const lineage = planningCreated[0]!.properties.task_execution_id;
+    expect(lineage).toEqual(expect.any(String));
+    expect(planningCreated[0]!.properties).toMatchObject({
+      harness: 'od_next',
+      od_next_strategy_version: task.strategy.version,
+      od_next_strategy_package_hash: task.strategy.packageHash,
+      od_next_task_stage: 'request',
+    });
+    // The planning Run ended with the build round already claimed.
+    expect(planningFinished[0]!.properties).toMatchObject({
+      result: 'success',
+      od_next_strategy_version: task.strategy.version,
+      od_next_task_stage: 'request',
+      od_next_task_outcome: 'running',
+      od_next_auto_round_count: 1,
+      od_next_deliverable_written: false,
+      od_next_agent_launch: 'started',
+    });
+    expect(planningFinished[0]!.properties).not.toHaveProperty('od_next_settlement_reason');
+    // The build Run carries the settlement.
+    expect(buildFinished[0]!.properties).toMatchObject({
+      result: 'success',
+      task_execution_id: lineage,
+      task_run_index: 1,
+      od_next_task_stage: 'production',
+      od_next_task_outcome: 'completed',
+      od_next_settlement_reason: 'text_only',
+      od_next_auto_round_count: 1,
+      od_next_deliverable_written: false,
+      od_next_agent_launch: 'started',
+    });
+    for (const record of [...planningCreated, ...planningFinished, ...buildFinished]) {
+      expect(record.properties).not.toHaveProperty('od_next_reason_codes');
+      expect(record.properties).not.toHaveProperty('od_next_blocked_reason_code');
+    }
+  }, 60_000);
+
+  it('reports none of the task fields on an ordinary-path Run', async () => {
+    await installReplayCli(
+      'claude',
+      [TRACES.claudeTextOnly],
+      '2.1.259 (Claude Code)',
+      { captureAnalytics: true },
+    );
+    const project = await createPrototypeProject('ordinary', { ordinaryPath: true });
+    const created = await startTask('claude', project, 'Commit this stage.', { expectTask: false });
+    expect((await waitForRunTerminal(created.runId)).status).toBe('succeeded');
+    const finished = await capturedRunEvents(created.runId, 'run_finished');
+    expect(finished).toHaveLength(1);
+    expect(finished[0]!.properties.harness).toBe('ordinary');
+    expect(Object.keys(finished[0]!.properties).filter((key) => key.startsWith('od_next_'))).toEqual([]);
+  }, 60_000);
 
   it('cannot see a recorded codex round writing through Bash, so the task settles undelivered after its build round', async () => {
     const { invocationsPath } = await installReplayCli('codex', [TRACES.codexBashOnly], 'codex-cli 0.147.0');
