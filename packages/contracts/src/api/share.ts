@@ -62,14 +62,15 @@ export function buildSharePath(parts: ShareUrlParts): string {
  * segment, which is a different route, not a share with a suffix.
  */
 export function parseSharePath(pathname: string): ShareUrlParts | null {
-  const segments = pathname.split('/').filter(Boolean);
-  if (segments.length !== 3) return null;
-  if (segments[0] !== SHARE_URL_PATH_SEGMENT) return null;
+  const [head, rawProjectId, rawSlug, ...rest] = pathname.split('/').filter(Boolean);
+  if (rest.length > 0) return null;
+  if (head !== SHARE_URL_PATH_SEGMENT) return null;
+  if (rawProjectId === undefined || rawSlug === undefined) return null;
   let projectId: string;
   let slug: string;
   try {
-    projectId = decodeURIComponent(segments[1]);
-    slug = decodeURIComponent(segments[2]);
+    projectId = decodeURIComponent(rawProjectId);
+    slug = decodeURIComponent(rawSlug);
   } catch {
     return null;
   }
