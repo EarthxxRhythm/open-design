@@ -4444,6 +4444,102 @@ function commentAuthorRoleLabel(role: CollabMemberRole): string {
   return role.charAt(0).toUpperCase() + role.slice(1);
 }
 
+function CommentAuthorIdentity({
+  comment,
+  currentUser,
+  displayNumber,
+  t,
+}: {
+  comment: PreviewComment;
+  currentUser?: CollabCloudMemberDirectoryEntry | null;
+  displayNumber: number;
+  t: TranslateFn;
+}) {
+  if (comment.authorKind === 'user') {
+    return (
+      <CommentAuthorIdentityContent
+        comment={comment}
+        displayName={comment.authorDisplayName?.trim() ?? ''}
+        displayNumber={displayNumber}
+        seed={comment.authorKey ?? comment.authorAppUserId ?? ''}
+        t={t}
+      />
+    );
+  }
+  return (
+    <MemberCommentAuthorIdentity
+      comment={comment}
+      currentUser={currentUser}
+      displayNumber={displayNumber}
+      t={t}
+    />
+  );
+}
+
+function MemberCommentAuthorIdentity({
+  comment,
+  currentUser,
+  displayNumber,
+  t,
+}: {
+  comment: PreviewComment;
+  currentUser?: CollabCloudMemberDirectoryEntry | null;
+  displayNumber: number;
+  t: TranslateFn;
+}) {
+  const { resolve: resolveCommentAuthor } = useTeamMembers(currentUser);
+  const directoryAuthor = resolveCommentAuthor(comment.authorMemberId);
+  return (
+    <CommentAuthorIdentityContent
+      comment={comment}
+      displayName={comment.authorDisplayName?.trim() || directoryAuthor?.displayName?.trim() || ''}
+      displayNumber={displayNumber}
+      role={directoryAuthor?.role}
+      seed={comment.authorKey ?? comment.authorMemberId ?? directoryAuthor?.memberId ?? ''}
+      t={t}
+    />
+  );
+}
+
+function CommentAuthorIdentityContent({
+  comment,
+  displayName,
+  displayNumber,
+  role,
+  seed,
+  t,
+}: {
+  comment: PreviewComment;
+  displayName: string;
+  displayNumber: number;
+  role?: CollabMemberRole;
+  seed?: string;
+  t: TranslateFn;
+}) {
+  return (
+    <span className="comment-side-author" data-author-kind={comment.authorKind ?? 'member'}>
+      {displayName ? (
+        <span
+          className="comment-side-avatar"
+          style={{ background: commentAuthorAvatarColor(seed ?? '') }}
+          aria-hidden="true"
+        >
+          {commentAuthorInitials(displayName)}
+        </span>
+      ) : null}
+      <span className="comment-side-author-copy">
+        <strong>{`${displayNumber}. ${commentDisplayLabel(comment, t)}`}</strong>
+        {displayName ? (
+          <small>
+            {displayName}
+            {role ? <> · {commentAuthorRoleLabel(role)}</> : null}
+          </small>
+        ) : null}
+      </span>
+    </span>
+  );
+}
+
 function commentDisplayLabel(comment: PreviewComment, t: TranslateFn): string {
   if (comment.elementId.startsWith('pin-')) return t('chat.comments.pin');
   const label = String(comment.label || '').trim().toLowerCase();
@@ -4521,11 +4617,6 @@ export function CommentSidePanel({
   const { workspaceContext } = useProjectCollabContext();
   const [newCommentDraft, setNewCommentDraft] = useState('');
   const [dragState, setDragState] = useState<CommentSideDragState | null>(null);
-  // Collab-cloud member directory: turns a comment's authorMemberId into a
-  // display name + role for the author line + avatar. The viewer's own identity
-  // resolves through `currentUser` even when the directory is empty; an unknown
-  // OTHER member still renders without an author line, exactly as before.
-  const { resolve: resolveCommentAuthor } = useTeamMembers(currentUser);
   const sorted = comments;
   // recvq5BVsolIxi: the inline "N." prefix must match the canvas pin number
   // (comment.pinSeq) so the two surfaces always agree, even when this panel
@@ -4722,7 +4813,6 @@ export function CommentSidePanel({
           const selected = visibleSelectedIds.has(comment.id);
           const active = comment.id === activeCommentId;
           const sendable = canSend(comment);
-          const author = resolveCommentAuthor(comment.authorMemberId);
           const isDragging = dragState?.draggingId === comment.id;
           const dropClass = dragState?.overId === comment.id &&
             dragState.draggingId !== comment.id &&
@@ -4761,27 +4851,12 @@ export function CommentSidePanel({
                 >
                   <Icon name="grip-vertical" size={13} />
                 </button>
-                <span className="comment-side-author">
-                  {author ? (
-                    <span
-                      className="comment-side-avatar"
-                      style={{ background: commentAuthorAvatarColor(comment.authorMemberId ?? author.memberId) }}
-                      aria-hidden="true"
-                    >
-                      {commentAuthorInitials(author.displayName)}
-                    </span>
-                  ) : null}
-                  <span className="comment-side-author-copy">
-                    <strong>{`${displayCommentNumber(comment, index)}. ${commentDisplayLabel(comment, t)}`}</strong>
-                    {author ? (
-                      <small>
-                        {author.displayName}
-                        {' · '}
-                        {commentAuthorRoleLabel(author.role)}
-                      </small>
-                    ) : null}
-                  </span>
-                </span>
+                <CommentAuthorIdentity
+                  comment={comment}
+                  currentUser={currentUser}
+                  displayNumber={displayCommentNumber(comment, index)}
+                  t={t}
+                />
                 <span className="comment-side-time">{formatCommentTime(commentActivityAt(comment), t)}</span>
                 {sendable ? (
                   <button

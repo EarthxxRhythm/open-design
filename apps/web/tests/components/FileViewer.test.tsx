@@ -13182,7 +13182,7 @@ describe('FileViewer tweaks toolbar', () => {
     expect(within(item).getByText(/琼羽/)).toBeTruthy();
   });
 
-  it('leaves a comment by an unresolved other member on its id-only rendering', async () => {
+  it('renders an unresolved member from its trusted display-name snapshot', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: RequestInfo | URL) => {
@@ -13208,6 +13208,7 @@ describe('FileViewer tweaks toolbar', () => {
       note: 'Tighten this headline.',
       status: 'open',
       authorMemberId: 'wm-someone-else',
+      authorDisplayName: 'Snapshot Member',
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -13231,8 +13232,77 @@ describe('FileViewer tweaks toolbar', () => {
     );
 
     const item = await screen.findByTestId('comment-side-item');
-    expect(item.querySelector('.comment-side-avatar')).toBeNull();
-    expect(within(item).queryByText(/琼羽/)).toBeNull();
+    expect(item.querySelector('.comment-side-avatar')?.textContent).toBe('S');
+    expect(within(item).getByText(/Snapshot Member/)).toBeTruthy();
+    expect(within(item).queryByText(/Open Design 用户/)).toBeNull();
+  });
+
+  it('renders a user author from its trusted snapshot without querying the member directory', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL) => new Response(
+      JSON.stringify({ members: [] }),
+      { status: 200 },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+    const comment: PreviewComment = {
+      id: 'comment-user', projectId: 'project-1', conversationId: 'conversation-1',
+      filePath: 'preview.html', elementId: 'hero-copy', selector: '[data-od-id="hero-copy"]',
+      label: 'Hero copy', text: 'Hero copy', htmlHint: '<p data-od-id="hero-copy">',
+      position: { x: 16, y: 24, width: 320, height: 48 }, note: 'External feedback.', status: 'open',
+      authorKind: 'user', authorDisplayName: 'Avery Visitor', authorAppUserId: 'user-1',
+      authorKey: 'a'.repeat(64),
+      createdAt: Date.now(), updatedAt: Date.now(),
+    };
+
+    renderWithProjectWorkspace(
+      <CommentSidePanel
+        comments={[comment]} selectedIds={new Set()} activeCommentId={null} collapsed={false}
+        onCollapsedChange={() => {}} onToggleSelect={() => {}} onSelectAll={() => {}}
+        onClearSelection={() => {}} onReply={() => {}} onSendSelected={() => {}}
+        sending={false} t={t}
+      />,
+      teamWorkspaceContext(),
+    );
+
+    const item = await screen.findByTestId('comment-side-item');
+    const avatar = item.querySelector<HTMLElement>('.comment-side-avatar');
+    expect(avatar?.textContent).toBe('A');
+    expect(avatar?.style.background).toBe('rgb(202, 138, 4)');
+    expect(within(item).getByText(/Avery Visitor/)).toBeTruthy();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/api/workspace/members'))).toBe(false);
+  });
+
+  it('keeps relative comment-time boundaries stable across clock boundaries', () => {
+    vi.useFakeTimers();
+    try {
+      const now = new Date('2026-01-01T00:30:00.000Z');
+      vi.setSystemTime(now);
+      const commentAt = (id: string, elapsedMs: number): PreviewComment => ({
+        id, projectId: 'project-1', conversationId: 'conversation-1', filePath: 'preview.html',
+        elementId: id, selector: '[data-od-id="hero-copy"]', label: 'Hero copy', text: 'Hero copy',
+        htmlHint: '<p data-od-id="hero-copy">', position: { x: 0, y: 0, width: 1, height: 1 },
+        note: id, status: 'open', createdAt: now.getTime() - elapsedMs, updatedAt: now.getTime() - elapsedMs,
+      });
+      render(
+        <CommentSidePanel
+          comments={[
+            commentAt('seconds', 59_999), commentAt('minute', 60_000), commentAt('minutes', 59 * 60_000),
+            commentAt('hour', 60 * 60_000), commentAt('hours', 23 * 60 * 60_000),
+            commentAt('midnight', 59 * 60_000), commentAt('year', 59 * 60_000),
+          ]}
+          selectedIds={new Set()} activeCommentId={null} collapsed={false}
+          onCollapsedChange={() => {}} onToggleSelect={() => {}} onSelectAll={() => {}}
+          onClearSelection={() => {}} onReply={() => {}} onSendSelected={() => {}}
+          sending={false} t={t}
+        />,
+      );
+      const times = Array.from(document.querySelectorAll('.comment-side-time')).map((node) => node.textContent);
+      expect(times).toEqual([
+        'common.justNow', 'common.minutesAgo', 'common.minutesAgo', 'common.hoursAgo',
+        'common.hoursAgo', 'common.minutesAgo', 'common.minutesAgo',
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('lets the inspect panel shrink inside narrow preview layouts', () => {
