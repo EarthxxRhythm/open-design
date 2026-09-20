@@ -212,7 +212,7 @@ let codexThreadId = 'fake-codex-session';
 let codexTurnId = 'fake-codex-turn';
 let codexCwd = '';
 const { mkdir, writeFile: writeFileFs } = require('node:fs/promises');
-const { readFileSync, writeFileSync } = require('node:fs');
+const { existsSync, readFileSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 const protocolDeckCanaryHtml = ${JSON.stringify(PROTOCOL_DECK_CANARY_HTML)};
 const legacyTemplateDeckCanaryHtml = ${JSON.stringify(LEGACY_TEMPLATE_DECK_CANARY_HTML)};
@@ -351,12 +351,18 @@ async function emitRun(promptText) {
     emitEmptySuccess();
     return;
   }
-  if (promptText.includes('# OD Next native continuation — production')) {
+  // The daemon's automatic build round: a delta into the continued native
+  // session, or a fresh Bundle whose first prompt carries the same heading
+  // above the conversation so far. Checked before every planning marker
+  // because that transcript repeats the original request.
+  if (promptText.includes('# OD Next build round')) {
     await emitOdNextProductionRun(promptText);
     return;
   }
-  if (promptText.includes('# OD Next native continuation — clarification')) {
-    emitOdNextClarificationRun(promptText);
+  // The answered form comes back as the next user message and opens a new
+  // task, whose first round plans again.
+  if (promptText.includes('[form answers — od-next-canary-platform]')) {
+    emitOdNextPlanningRun(promptText);
     return;
   }
   if (promptText.includes('Create an OD Next clarification canary artifact')) {
@@ -425,7 +431,7 @@ async function emitRun(promptText) {
         process.exitCode = 1;
         return;
       }
-      emitOdNextPlanningRun(promptText, 'request', 'ppt', { legacyDeck: true });
+      emitOdNextPlanningRun(promptText, 'ppt', { legacyDeck: true });
     } else {
       await emitDeckProtocolCanaryRun(
         legacyTemplateDeckCanaryHtml,
@@ -509,7 +515,7 @@ async function emitRun(promptText) {
   const isSlowReload = promptText.includes('Create a slow reload deterministic smoke artifact');
   const isDelayed = promptText.includes('Create a delayed deterministic smoke artifact');
   if (isDelayed && promptText.includes('<recipe_identity ')) {
-    emitOdNextPlanningRun(promptText, 'request', undefined, { homeFirstRun: true });
+    emitOdNextPlanningRun(promptText, undefined, { homeFirstRun: true });
     return;
   }
   const isChunked = promptText.includes('Create a chunked deterministic smoke artifact');
@@ -597,7 +603,7 @@ function odNextPromptIdentity(promptText) {
   return JSON.parse(readFileSync(odNextIdentityPath, 'utf8'));
 }
 
-function emitOdNextPlanningRun(promptText, inputStage = 'request', taskTypeOverride, options = {}) {
+function emitOdNextPlanningRun(promptText, taskTypeOverride, options = {}) {
   const identity = odNextPromptIdentity(promptText);
   if (taskTypeOverride) {
     identity.taskType = taskTypeOverride;
@@ -608,46 +614,12 @@ function emitOdNextPlanningRun(promptText, inputStage = 'request', taskTypeOverr
     writeFileSync(odNextIdentityPath, JSON.stringify(identity), 'utf8');
   }
   const deliverableKind = identity.taskType === 'ppt' ? 'deck' : 'prototype';
-  const plan = {
-    schema: 'open-design.plan-contract/v2',
-    strategy: {
-      id: 'od-next-strategy', version: identity.version,
-      packageHash: identity.packageHash, snapshotId: identity.snapshotId,
-    },
-    taskProfile: {
-      schemaVersion: '2', taskType: identity.taskType, taskProfileVersion: identity.taskProfileVersion,
-      goal: 'Create an OD Next active canary artifact', contextAndAudience: 'Local rollout operators',
-      inputsAndReferences: ['request'], constraints: [],
-      canonicalDeliverable: { id: 'canary', kind: deliverableKind, format: 'html' },
-      requiredDeliverables: [{ id: 'canary', kind: deliverableKind }],
-      designSpec: { source: 'resolved-baseline', version: '1', decisions: { palette: 'neutral' } },
-      buildRequirements: [{ id: 'build', text: 'Build the local canary artifact.' }],
-      assumptions: [], risks: [], taskSpecific: {},
-    },
-    fullPlan: {
-      executionMode: 'simple',
-      steps: [{ id: 'build', objective: 'Build the canary.', outputs: ['canary'] }],
-      readinessArtifacts: [], buildPackages: [],
-    },
-    runManifest: {
-      selectedAgentId: agentId, capabilitySnapshotHash: '0'.repeat(64),
-      inputRefs: ['request'], productionRoutes: ['html'],
-      preflight: { intake: 'passed', execution: 'passed' },
-    },
-    decisionSummary: {
-      goal: 'Create an OD Next active canary artifact', deliverables: ['canary'],
-      keyConstraints: ['local synthetic canary'], assumptions: [], risks: [], openDecisions: [],
-    },
-  };
-  const state = {
-    schema: 'open-design.strategy-state/v2', route: 'full_plan', inputStage,
-    outcome: 'plan_ready', executionMode: 'simple', reasonCodes: [],
-  };
+  // The planning round writes nothing and asks nothing; the daemon answers
+  // with its one automatic build round.
   emitSuccess(
-    'The local canary plan is ready.\\n<open-design-plan-contract>\\n'
-      + JSON.stringify(plan) + '\\n</open-design-plan-contract>\\n'
-      + '<open-design-runtime-state>\\n' + JSON.stringify(state)
-      + '\\n</open-design-runtime-state>',
+    'The local canary plan is ready.\\n'
+      + 'Deliverable: ' + deliverableKind + ' od-next-active-canary.html for '
+      + identity.taskType + ' (strategy ' + identity.version + ').',
     false,
     false,
   );
@@ -657,49 +629,29 @@ function emitOdNextPlanningRun(promptText, inputStage = 'request', taskTypeOverr
 
 function emitOdNextClarificationRequest(promptText) {
   odNextPromptIdentity(promptText);
-  const state = {
-    schema: 'open-design.strategy-state/v2', route: 'full_plan', inputStage: 'request',
-    outcome: 'clarification_required', executionMode: null,
-    reasonCodes: ['od_next_clarification_required'],
-  };
   const form = '<question-form id="od-next-canary-platform" title="Choose platform">'
     + '{"questions":[{"id":"platform","label":"Target platform","type":"radio",'
     + '"options":[{"label":"Desktop web","value":"desktop"}],"required":true}]}'
     + '</question-form>';
-  emitSuccess(
-    'One platform choice is required.\\n' + form
-      + '\\n<open-design-runtime-state>\\n' + JSON.stringify(state)
-      + '\\n</open-design-runtime-state>',
-    false,
-    false,
-  );
+  emitSuccess('One platform choice is required.\\n' + form, false, false);
   process.exitCode = 0;
   exitSoon(0);
 }
 
-function emitOdNextClarificationRun(promptText) {
-  emitOdNextPlanningRun(promptText, 'clarification');
-}
-
+// A task only blocks when its physical Run fails or is interrupted; the
+// fixture guard therefore fails the Run outright.
 function emitOdNextBlockedRun() {
-  const state = {
-    schema: 'open-design.strategy-state/v2', route: 'full_plan', inputStage: 'request',
-    outcome: 'blocked', executionMode: null,
-    reasonCodes: ['od_next_canary_fixture_blocked'],
-  };
-  emitSuccess(
-    'The local canary was blocked by its fixture guard.\\n'
-      + '<open-design-runtime-state>\\n' + JSON.stringify(state)
-      + '\\n</open-design-runtime-state>',
-    false,
-    false,
-  );
-  process.exitCode = 0;
-  exitSoon(0);
+  process.stderr.write('The local canary was blocked by its fixture guard.\\n');
+  emitFailure();
 }
 
 async function emitOdNextProductionRun(promptText) {
-  const identity = odNextPromptIdentity(promptText);
+  // The planning round stored the identity together with the scenario flags
+  // it derived; a cold-start Bundle repeats the recipe identity but not the
+  // flags, so the stored copy wins whenever it exists.
+  const identity = existsSync(odNextIdentityPath)
+    ? JSON.parse(readFileSync(odNextIdentityPath, 'utf8'))
+    : odNextPromptIdentity(promptText);
   const legacyDeck = identity.legacyDeck === true;
   const homeFirstRun = identity.homeFirstRun === true;
   if (homeFirstRun) await new Promise((resolve) => setTimeout(resolve, 1200));
@@ -709,18 +661,12 @@ async function emitOdNextProductionRun(promptText) {
       : legacyDeck ? legacyTemplateDeckCanaryHtml : protocolDeckCanaryHtml,
     'utf8',
   );
-  const state = {
-    schema: 'open-design.strategy-state/v2', route: 'full_plan', inputStage: 'production',
-    outcome: 'completed', executionMode: 'simple', reasonCodes: [],
-  };
   emitSuccess(
-    (homeFirstRun
+    homeFirstRun
       ? 'I recovered the delayed reasoning path and will persist the artifact now.\\n'
       : legacyDeck
       ? 'Created the selected-template legacy deck canary.\\n'
-      : 'Created od-next-active-canary.html through the continued native session.\\n')
-      + '<open-design-runtime-state>\\n' + JSON.stringify(state)
-      + '\\n</open-design-runtime-state>',
+      : 'Created od-next-active-canary.html through the continued native session.\\n',
     false,
     false,
   );

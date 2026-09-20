@@ -297,7 +297,7 @@ for (const strategyMode of ['active', 'off'] as const) {
   });
 }
 
-test('[P0] local OD Next clarification canary preserves one taskExecutionId through the public form', async ({ page }) => {
+test('[P0] local OD Next clarification canary settles on the form and the answer opens a new task', async ({ page }) => {
   test.skip(
     process.env.OD_NEXT_STRATEGY_ROLLOUT !== 'active'
       || process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY !== '1',
@@ -311,25 +311,43 @@ test('[P0] local OD Next clarification canary preserves one taskExecutionId thro
     runId: string;
     taskExecutionId: string;
   };
+  // A round that asks settles its task: the daemon waits for the user rather
+  // than holding a task open across the answer.
   await expect.poll(async () => {
     const response = await page.request.get(`/api/runs/${created.runId}`);
-    return (await response.json() as { strategyTask?: { outcome: string } }).strategyTask?.outcome;
-  }, { timeout: 20_000 }).toBe('clarification_required');
+    return (await response.json() as {
+      strategyTask?: {
+        outcome: string;
+        terminal: boolean;
+        settlementReason?: string;
+        deliverableWritten: boolean;
+      };
+    }).strategyTask;
+  }, { timeout: 20_000 }).toMatchObject({
+    outcome: 'completed',
+    terminal: true,
+    settlementReason: 'question',
+    deliverableWritten: false,
+  });
 
   const form = page.locator('.question-form').first();
   await expect(form).toBeVisible();
   await form.getByText('Desktop web', { exact: true }).click();
-  const clarificationResponsePromise = page.waitForResponse(isCreateRunResponse);
-  await form.getByRole('button', { name: 'Send answers' }).click();
-  const clarificationResponse = await clarificationResponsePromise;
-  const clarificationText = await clarificationResponse.text();
-  expect(clarificationResponse.ok(), clarificationText).toBeTruthy();
-  const clarification = JSON.parse(clarificationText) as {
+  const answerResponsePromise = page.waitForResponse(isCreateRunResponse);
+  // The single-question form submits through its primary action, whose
+  // default label is the localized "Next".
+  await form.locator('.qf-primary-action').click();
+  const answerResponse = await answerResponsePromise;
+  const answerText = await answerResponse.text();
+  expect(answerResponse.ok(), answerText).toBeTruthy();
+  const answer = JSON.parse(answerText) as {
+    runId: string;
     taskExecutionId: string;
-    strategyTask?: { inputStage: string };
+    strategyTask?: { inputStage: string; terminal: boolean };
   };
-  expect(clarification.taskExecutionId).toBe(created.taskExecutionId);
-  expect(clarification.strategyTask?.inputStage).toBe('clarification');
+  // The answer is the next user message and opens its own task.
+  expect(answer.taskExecutionId).not.toBe(created.taskExecutionId);
+  expect(answer.strategyTask).toMatchObject({ inputStage: 'request', terminal: false });
 
   const { projectId } = await currentProjectContext(page);
   await expectProjectFilesToContain(page, projectId, [OD_NEXT_CANARY_FILE]);
@@ -337,14 +355,31 @@ test('[P0] local OD Next clarification canary preserves one taskExecutionId thro
     'Created od-next-active-canary.html through the continued native session.',
   ).last()).toBeVisible();
   await expect.poll(async () => {
-    const response = await page.request.get(`/api/runs/${created.runId}`);
+    const response = await page.request.get(`/api/runs/${answer.runId}`);
     return (await response.json() as {
-      strategyTask?: { taskExecutionId: string; outcome: string; terminal: boolean };
+      strategyTask?: {
+        taskExecutionId: string;
+        inputStage: string;
+        outcome: string;
+        terminal: boolean;
+        deliverableWritten: boolean;
+      };
     }).strategyTask;
   }, { timeout: 20_000 }).toMatchObject({
-    taskExecutionId: created.taskExecutionId,
+    taskExecutionId: answer.taskExecutionId,
+    inputStage: 'production',
     outcome: 'completed',
     terminal: true,
+    deliverableWritten: true,
+  });
+  // The first task stays settled on its question.
+  const first = await page.request.get(`/api/runs/${created.runId}`);
+  expect((await first.json() as {
+    strategyTask?: { taskExecutionId: string; outcome: string; settlementReason?: string };
+  }).strategyTask).toMatchObject({
+    taskExecutionId: created.taskExecutionId,
+    outcome: 'completed',
+    settlementReason: 'question',
   });
 });
 
