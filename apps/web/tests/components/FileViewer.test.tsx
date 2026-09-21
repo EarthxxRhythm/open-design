@@ -13483,6 +13483,35 @@ describe('FileViewer tweaks toolbar', () => {
     expect(rule).toContain('width: min(296px, calc(100% - 28px));');
   });
 
+  it('declares the authoritative shared comment-panel visual contract', () => {
+    const coreCss = readFileSync(join(process.cwd(), 'src/styles/viewer/core.css'), 'utf8');
+    const shellCss = readFileSync(join(process.cwd(), 'src/styles/shell.css'), 'utf8');
+    const rule = (css: string, selector: string) => {
+      const start = css.indexOf(`${selector} {`);
+      return start < 0 ? '' : css.slice(start, css.indexOf('}', start) + 1);
+    };
+    const coreRule = (selector: string) => rule(coreCss, selector);
+    const shellRule = (selector: string) => rule(shellCss, selector);
+
+    expect(coreRule('.comment-side-panel')).toContain('width: 320px;');
+    expect(coreRule('.comment-side-header')).toContain('height: 56px;');
+    expect(coreRule('.comment-side-header')).toContain('padding: 0 16px;');
+    expect(coreRule('.comment-side-list')).toContain('padding: 8px 12px;');
+    expect(coreRule('.comment-side-list')).toContain('gap: 6px;');
+    expect(coreRule('.comment-side-item')).toContain('padding: 6px 10px 6px 8px;');
+    expect(coreRule('.comment-side-item')).toContain('border-radius: 8px;');
+    expect(coreRule('.comment-side-time')).toContain('font-size: 10.5px;');
+    expect(coreRule('.comment-side-check')).toContain('border: 1px solid #CFCFCF;');
+    expect(coreRule('.comment-side-selectbar')).toContain('height: 40px;');
+    expect(coreRule('.comment-side-selectbar')).toContain('padding: 4px 14px 8px;');
+    expect(coreRule('.comment-side-selectbar .primary')).toContain('background: #202020;');
+    expect(shellRule('.comment-float-host')).toContain('width: min(320px, calc(100vw - 32px));');
+    expect(shellRule('.comment-float-host')).toContain('border: 1px solid #E6E6E6;');
+    expect(shellRule('.comment-float-host')).toContain('box-shadow: none;');
+    expect(shellCss).toContain('padding-right: max(0px, min(348px, calc(100% - 160px)));');
+    expect(shellRule('.comment-float-host .comment-side-header')).toContain('min-height: 56px;');
+  });
+
   it('reorders saved comments with the drag handle for send sequence', () => {
     const onReorder = vi.fn();
     const comments: PreviewComment[] = [
