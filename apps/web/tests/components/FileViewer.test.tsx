@@ -13045,6 +13045,83 @@ describe('FileViewer tweaks toolbar', () => {
     expect(screen.getByTestId('comment-side-selectbar').textContent).toContain('1 selected');
   });
 
+  it('keeps delivered external comments unhighlighted and sends them through the member send-to-chat path for a confirmed owner', async () => {
+    const comments: PreviewComment[] = [
+      {
+        id: 'external-comment', projectId: 'project-1', conversationId: 'conversation-1',
+        filePath: 'preview.html', elementId: 'external-anchor', selector: '[data-od-id="external-anchor"]',
+        label: 'External anchor', text: 'External target', htmlHint: '<p data-od-id="external-anchor">',
+        position: { x: 12, y: 24, width: 180, height: 40 }, note: 'External feedback.', status: 'open',
+        authorKind: 'user', authorAppUserId: 'share-user-1', authorDisplayName: 'Avery Visitor',
+        authorKey: 'share-user-key', createdAt: 10, updatedAt: 10,
+      },
+      {
+        id: 'member-comment', projectId: 'project-1', conversationId: 'conversation-1',
+        filePath: 'preview.html', elementId: 'member-anchor', selector: '[data-od-id="member-anchor"]',
+        label: 'Member anchor', text: 'Member target', htmlHint: '<p data-od-id="member-anchor">',
+        position: { x: 36, y: 48, width: 220, height: 52 }, note: 'Member feedback.', status: 'open',
+        authorKind: 'member', authorMemberId: 'member-2', authorDisplayName: 'Morgan Member',
+        authorKey: 'member-key', createdAt: 20, updatedAt: 20,
+      },
+    ];
+    const onSendBoardCommentAttachments = vi.fn().mockResolvedValue({
+      status: 'queued',
+      commentIds: comments.map((comment) => comment.id),
+    });
+    const ownerWorkspace = {
+      ...teamWorkspaceContext(),
+      role: 'owner' as const,
+      permissions: buildWorkspacePermissions({ role: 'owner', lifecycleState: 'active' }),
+    };
+    const ownerCollab: CollabContextValue = {
+      ...projectWorkspaceCollabValue(ownerWorkspace),
+      enabled: true,
+      member: { memberId: 'owner-member', name: 'Owner', role: 'owner' },
+      isOwner: true,
+      isEffectiveOwner: true,
+      writerAuthority: 'allowed',
+    };
+
+    render(
+      <CollabProvider value={ownerCollab}>
+        <FileViewer
+          projectId="project-1"
+          projectKind="prototype"
+          file={htmlPreviewFile()}
+          liveHtml='<html><body><p data-od-id="external-anchor">External target</p><p data-od-id="member-anchor">Member target</p></body></html>'
+          previewComments={comments}
+          onSendBoardCommentAttachments={onSendBoardCommentAttachments}
+        />
+      </CollabProvider>,
+    );
+
+    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
+    const rows = await screen.findAllByTestId('comment-side-item');
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row.className).not.toMatch(/highlight/i);
+    }
+
+    const selectButtons = screen.getAllByRole('button', { name: 'Select' });
+    expect(selectButtons).toHaveLength(2);
+    for (const button of selectButtons) fireEvent.click(button);
+    fireEvent.click(screen.getByTestId('comment-side-send-claude'));
+
+    await waitFor(() => expect(onSendBoardCommentAttachments).toHaveBeenCalledTimes(1));
+    expect(onSendBoardCommentAttachments.mock.calls[0]?.[0]).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'external-comment', comment: 'External feedback.', filePath: 'preview.html',
+        elementId: 'external-anchor', selector: '[data-od-id="external-anchor"]',
+        pagePosition: { x: 12, y: 24, width: 180, height: 40 },
+      }),
+      expect.objectContaining({
+        id: 'member-comment', comment: 'Member feedback.', filePath: 'preview.html',
+        elementId: 'member-anchor', selector: '[data-od-id="member-anchor"]',
+        pagePosition: { x: 36, y: 48, width: 220, height: 52 },
+      }),
+    ]));
+  });
+
   it('moves focus between comment side panel toggles when collapsing and expanding without a pre-focused click target', async () => {
     const onCollapseChange = vi.fn();
     const onSelectAll = vi.fn();
