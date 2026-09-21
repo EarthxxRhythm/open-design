@@ -57,6 +57,12 @@ export interface CollabCloudServiceDeps {
     filePath: string,
     context: WorkspaceCollabContext,
   ) => CommentRelayScope | null;
+  /** Exact active personal-publication files for this project's persisted creator.
+   * This must fail closed and must not consult the member directory. */
+  listPersonalCommentRelayFilePaths?: (
+    projectId: string,
+    context: WorkspaceCollabContext,
+  ) => ReadonlySet<string>;
   /** Local binding witness captured synchronously when the mutation commits. */
   resolveLocalProjectRelayBinding?: (projectId: string) => {
     workspaceId: string;
@@ -276,6 +282,35 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
       role: context.role,
       displayName: context.displayName?.trim() || memberId
     };
+  }
+
+  type PullIdentity = {
+    teamId: string;
+    memberId: string;
+    relayScope: 'team' | 'personal';
+    allowedFilePaths?: ReadonlySet<string>;
+  };
+
+  function personalPullIdentity(
+    projectId: string,
+    context: WorkspaceCollabContext,
+  ): PullIdentity | null {
+    if (
+      context.workspaceType !== 'personal'
+      || context.memberStatus !== 'active'
+      || context.lifecycleState === 'deleted'
+    ) return null;
+    const memberId = context.workspaceMemberId.trim();
+    const teamId = context.workspaceId.trim();
+    const allowedFilePaths = deps.listPersonalCommentRelayFilePaths?.(projectId, context);
+    if (!memberId || !teamId || !allowedFilePaths || allowedFilePaths.size === 0) return null;
+    return { teamId, memberId, relayScope: 'personal', allowedFilePaths };
+  }
+
+  function pullIdentity(projectId: string, context: WorkspaceCollabContext): PullIdentity | null {
+    const team = explicitTeamIdentity(context);
+    if (team) return { teamId: team.teamId, memberId: team.memberId, relayScope: 'team' };
+    return personalPullIdentity(projectId, context);
   }
 
   function relayIdentity(
@@ -681,9 +716,10 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
   /** Resolves `true` when a pull ran (even if it returned nothing new),
    *  `false` when there was no local conversation to merge into. */
   async function pollProject(
-    teamId: string,
+    identity: PullIdentity,
     scopeKey: string,
     projectId: string,
+    requestContext: WorkspaceCollabContext,
   ): Promise<boolean> {
     const conversationId = deps.resolveLocalConversationId(projectId);
     // No local conversation to attach to yet (e.g. a member who pulled the
@@ -692,15 +728,30 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
     const cursorKey = `${scopeKey}:${projectId}`;
     const sinceSeq = cursors.get(cursorKey) ?? 0;
     const result = await deps.client.pullComments(
-      teamId,
+      identity.teamId,
       projectId,
       sinceSeq,
       etags.get(cursorKey),
     );
+    // Personal relay eligibility is per published file. Re-check both the
+    // principal and active publication set after the async transport returns:
+    // an account/workspace switch or stop must never merge an in-flight reply.
+    let comments = result.comments;
+    if (identity.relayScope === 'personal') {
+      const freshContext = await deps.resolveProjectWorkspaceContext?.(projectId, { fresh: true }) ?? null;
+      const freshIdentity = freshContext ? personalPullIdentity(projectId, freshContext) : null;
+      if (
+        !freshIdentity
+        || freshContext!.workspaceId !== requestContext.workspaceId
+        || freshIdentity.memberId !== identity.memberId
+        || freshIdentity.teamId !== identity.teamId
+      ) return false;
+      comments = comments.filter((comment) => freshIdentity.allowedFilePaths!.has(comment.filePath));
+    }
     etags.set(cursorKey, result.etag);
     if (result.notModified) return true;
     let inserted = 0;
-    for (const comment of result.comments) {
+    for (const comment of comments) {
       if (deps.mergeComment({ projectId, conversationId, comment })) inserted += 1;
     }
     cursors.set(cursorKey, result.latestSeq);
@@ -710,10 +761,7 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
 
   function pullProjectSingleflight(
     context: WorkspaceCollabContext,
-    identity: {
-      teamId: string;
-      memberId: string;
-    },
+    identity: PullIdentity,
     projectId: string,
   ): Promise<boolean> {
     const scopeKey = `${context.workspaceId}:${identity.memberId}`;
@@ -726,7 +774,7 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
     const existing = inFlightPulls.get(inFlightKey);
     if (existing) return existing;
 
-    const request = pollProject(identity.teamId, scopeKey, projectId)
+    const request = pollProject(identity, scopeKey, projectId, context)
       .catch((error) => {
         deps.onError?.(error);
         return false;
@@ -744,7 +792,7 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
     projectId: string,
     context: WorkspaceCollabContext,
   ): Promise<boolean> {
-    const identity = explicitTeamIdentity(context);
+    const identity = pullIdentity(projectId, context);
     if (!identity) return false;
     return pullProjectSingleflight(context, identity, projectId);
   }
@@ -758,20 +806,25 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
       try {
         const context =
           await deps.resolveProjectWorkspaceContext?.(projectId) ?? null;
-        const identity = context ? explicitTeamIdentity(context) : null;
+        const identity = context ? pullIdentity(projectId, context) : null;
         if (!context || !identity) continue;
-        // Refresh the exact project's member directory entry only when its
-        // immutable workspace/member identity changes. Never borrow the
-        // daemon's ambient active workspace.
-        const identityKey =
-          `${context.workspaceId}:${identity.teamId}:${identity.memberId}:`
-          + `${identity.role}:${identity.displayName}`;
-        if (identityKey !== lastRegisteredKey) {
-          await deps.client.registerMember(identity.teamId, identity.memberId, {
-            displayName: identity.displayName,
-            role: identity.role,
-          });
-          lastRegisteredKey = identityKey;
+        // Team registration remains directory-only; personal publication pulls
+        // deliberately never fetch or synthesize a member directory identity.
+        if (identity.relayScope === 'team') {
+          const teamIdentity = explicitTeamIdentity(context)!;
+          // Refresh the exact project's member directory entry only when its
+          // immutable workspace/member identity changes. Never borrow the
+          // daemon's ambient active workspace.
+          const identityKey =
+            `${context.workspaceId}:${teamIdentity.teamId}:${teamIdentity.memberId}:`
+            + `${teamIdentity.role}:${teamIdentity.displayName}`;
+          if (identityKey !== lastRegisteredKey) {
+            await deps.client.registerMember(teamIdentity.teamId, teamIdentity.memberId, {
+              displayName: teamIdentity.displayName,
+              role: teamIdentity.role,
+            });
+            lastRegisteredKey = identityKey;
+          }
         }
         await pullProjectSingleflight(context, identity, projectId);
       } catch (error) {

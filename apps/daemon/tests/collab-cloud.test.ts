@@ -15,6 +15,7 @@ import {
   ensureProjectCommentAnchorConversation,
   getLatestConversationIdForProject,
   getProjectCommentAnchorConversationId,
+  getWorkspaceProjectByProjectId,
   insertConversation,
   insertProject,
   listConversations,
@@ -36,6 +37,8 @@ import {
   shouldUseVelaCliCollabTransport,
 } from '../src/collab/vela-cli-collab-client.js';
 import type { WorkspaceContextProvider } from '../src/collab/workspace-context.js';
+import { commentRelayScope } from '../src/collab/comment-relay-scope.js';
+import { createSqlitePublicFilePublicationStore } from '../src/collab/public-file-publication-store.js';
 
 let tempDir: string | null = null;
 
@@ -1239,5 +1242,71 @@ describe('VelaCliCollabClient', () => {
     await expect(client.listPresence('p1', 'team-1')).resolves.toEqual([
       { memberId: 'member-id-1' },
     ]);
+  });
+});
+
+
+describe('personal publication inbound relay', () => {
+  it('pulls only active published files into the local SQLite comment list', async () => {
+    const db = seededDb();
+    ensureProjectCommentAnchorConversation(db, 'p1', 1);
+    ensureWorkspaceProject(db, {
+      projectId: 'p1',
+      workspaceId: 'personal-ws',
+      visibility: 'personal',
+      createdByWorkspaceMemberId: 'creator-1',
+    });
+    const publications = createSqlitePublicFilePublicationStore(db, () => 100);
+    publications.set({
+      resourceTeamId: 'personal-ws', ownerMemberId: 'creator-1', projectId: 'p1', filePath: 'published.html',
+    }, { url: 'https://share.test/published', slug: 'published-slug', fileName: 'published.html' });
+    const personal = teamContext({
+      workspaceId: 'personal-ws', workspaceType: 'personal', workspaceMemberId: 'creator-1',
+    });
+    delete (personal as Partial<WorkspaceCollabContext>).teamId;
+    const pulls: string[] = [];
+    let stopBeforeResponse = false;
+    const service = createCollabCloudService({
+      client: {
+        pullComments: async (teamId: string) => {
+          pulls.push(teamId);
+          if (stopBeforeResponse) publications.delete({
+            resourceTeamId: 'personal-ws', ownerMemberId: 'creator-1', projectId: 'p1', filePath: 'published.html',
+          });
+          return {
+            comments: [
+              cloudComment('allowed', { filePath: 'published.html', seq: 1 }),
+              cloudComment('forbidden', { filePath: 'private.html', seq: 2 }),
+            ], latestSeq: 2, etag: 'personal-1', notModified: false,
+          };
+        },
+      } as unknown as CollabCloudClient,
+      listProjectIds: () => [],
+      resolveLocalConversationId: (projectId: string) => getProjectCommentAnchorConversationId(db, projectId),
+      mergeComment: ({ projectId, conversationId, comment }: {
+        projectId: string; conversationId: string; comment: CollabCloudComment;
+      }) => mergeSyncedPreviewComment(db, projectId, conversationId, comment),
+      commentRelayScope: (projectId: string, filePath: string, context: WorkspaceCollabContext) => commentRelayScope({
+        binding: getWorkspaceProjectByProjectId(db, projectId), context, projectId, filePath, publications,
+      }),
+      listPersonalCommentRelayFilePaths: (projectId: string, context: WorkspaceCollabContext) => new Set(
+        publications.listByProject({ resourceTeamId: context.workspaceId, ownerMemberId: context.workspaceMemberId, projectId })
+          .map((publication) => publication.filePath),
+      ),
+      resolveProjectWorkspaceContext: async () => personal,
+    });
+
+    await expect(service.pullProject('p1', personal)).resolves.toBe(true);
+    expect(pulls).toEqual(['personal-ws']);
+    const anchor = getProjectCommentAnchorConversationId(db, 'p1')!;
+    expect(listPreviewComments(db, 'p1', anchor).map((comment) => comment.id)).toEqual(['allowed']);
+
+    // The active publication is re-read after transport: a stop racing the
+    // response rejects the pull and leaves both local rows and cursor intact.
+    stopBeforeResponse = true;
+    await expect(service.pullProject('p1', personal)).resolves.toBe(false);
+    expect(pulls).toEqual(['personal-ws', 'personal-ws']);
+    expect(listPreviewComments(db, 'p1', anchor).map((comment) => comment.id)).toEqual(['allowed']);
+    service.dispose();
   });
 });

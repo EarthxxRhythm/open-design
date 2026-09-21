@@ -951,7 +951,7 @@ import { registerTeamResourceShareRoutes } from './routes/team-resource-share.js
 import { createCollabRuntime } from './collab/runtime.js';
 import { createSqlitePublicFilePublicationStore } from './collab/public-file-publication-store.js';
 import { resolveLocalProjectCommentWorkspaceContext } from './collab/project-comment-workspace-context.js';
-import { commentRelayScope } from './collab/comment-relay-scope.js';
+import { commentRelayScope, personalCommentRelayFilePaths } from './collab/comment-relay-scope.js';
 import {
   createActiveWorkspaceSelectionStore,
 } from './collab/active-workspace-selection.js';
@@ -4388,6 +4388,13 @@ export async function startServer({
           filePath,
           publications: publicFilePublicationStore,
         }),
+        listPersonalCommentRelayFilePaths: (projectId, context) =>
+          personalCommentRelayFilePaths({
+            binding: getWorkspaceProjectByProjectId(db, projectId),
+            context,
+            projectId,
+            publications: publicFilePublicationStore,
+          }),
         resolveLocalProjectRelayBinding: (projectId) => {
           const binding = getWorkspaceProjectByProjectId(db, projectId);
           const workspaceId = binding?.workspaceId?.trim() ?? '';

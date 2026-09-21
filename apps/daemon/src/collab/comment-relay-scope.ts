@@ -15,6 +15,34 @@ export interface CommentRelayScope {
  * an active publication for the comment's exact file; no commenter identity
  * and no member-directory lookup can widen that scope.
  */
+export function personalCommentRelayFilePaths(input: {
+  binding: LocalProjectCommentWorkspaceBinding | undefined;
+  context: WorkspaceCollabContext | null;
+  projectId: string;
+  publications: ProjectPublicFilePublicationStore;
+}): ReadonlySet<string> {
+  const { binding, context } = input;
+  const workspaceId = binding?.workspaceId?.trim() ?? '';
+  const ownerMemberId = binding?.createdByWorkspaceMemberId?.trim() ?? '';
+  if (
+    !context
+    || !workspaceId
+    || !ownerMemberId
+    || binding?.resourceState === 'deleted'
+    || binding?.visibility !== 'personal'
+    || context.workspaceType !== 'personal'
+    || context.workspaceId !== workspaceId
+    || context.workspaceMemberId !== ownerMemberId
+    || context.memberStatus !== 'active'
+    || context.lifecycleState === 'deleted'
+  ) return new Set();
+  return new Set(input.publications.listByProject({
+    resourceTeamId: workspaceId,
+    ownerMemberId,
+    projectId: input.projectId,
+  }).map((publication) => publication.filePath));
+}
+
 export function commentRelayScope(input: {
   binding: LocalProjectCommentWorkspaceBinding | undefined;
   context: WorkspaceCollabContext | null;
@@ -30,9 +58,6 @@ export function commentRelayScope(input: {
   if (binding?.visibility === 'team' && context.workspaceType === 'team') {
     return { workspaceId, teamId: context.teamId?.trim() || workspaceId, ownerMemberId, relayScope: 'team' };
   }
-  if (binding?.visibility !== 'personal' || context.workspaceType !== 'personal' || context.workspaceMemberId !== ownerMemberId) return null;
-  const publications = input.publications.listByProject({ resourceTeamId: workspaceId, ownerMemberId, projectId: input.projectId });
-  return publications.some((publication) => publication.filePath === input.filePath)
-    ? { workspaceId, teamId: workspaceId, ownerMemberId, relayScope: 'personal' }
-    : null;
+  if (!personalCommentRelayFilePaths(input).has(input.filePath)) return null;
+  return { workspaceId, teamId: workspaceId, ownerMemberId, relayScope: 'personal' };
 }
