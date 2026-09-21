@@ -2726,7 +2726,10 @@ test('[P1] repeated artifact cards anchor Share to the clicked turn and keep the
   await expect(anchoredMenu).toHaveAttribute('data-anchored-menu', secondAnchor!);
   const menu = anchoredMenu.locator('.share-menu-popover[role="menu"]');
   await expect(menu).toBeVisible();
-  await expect(menu).toContainText(/Quick Share/i);
+  const shareLink = menu.getByRole('menuitem', { name: 'Get a share link', exact: true });
+  await expect(shareLink).toBeVisible();
+  await expect(shareLink).toBeEnabled();
+  await expect(menu).not.toContainText(/Quick Share/i);
   await expect(menu).not.toContainText('Share project in workspace');
   await expect(menu).not.toContainText('Deploy to Vercel');
   await expect(menu).not.toContainText('Save as template');
