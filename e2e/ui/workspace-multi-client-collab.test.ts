@@ -753,7 +753,9 @@ test('[P0] two active clients converge when a member gains then loses admin acce
     // Member -> Admin is delivered to the already-open client and grants the
     // invite capability. The owner sees the same role in its live roster.
     await test.step('promote member and converge both clients', async () => {
+      const memberContextRefresh = waitForWorkspaceRoleResponse(memberPage, 'admin', true);
       hub.setMemberRole(MEMBER.memberId, 'admin');
+      await memberContextRefresh;
       await expectWorkspaceRole(memberPage, 'admin', true);
       await expectRosterRole(ownerPage, 'admin');
       await ensureRailOpen(memberPage);
@@ -766,7 +768,9 @@ test('[P0] two active clients converge when a member gains then loses admin acce
 
     // Admin -> Member revokes the affordance live in the already-open client.
     await test.step('demote admin and revoke the live affordance', async () => {
+      const memberContextRefresh = waitForWorkspaceRoleResponse(memberPage, 'member', false);
       hub.setMemberRole(MEMBER.memberId, 'member');
+      await memberContextRefresh;
       await expectWorkspaceRole(memberPage, 'member', false);
       await expectRosterRole(ownerPage, 'member');
       await ensureRailOpen(memberPage);
@@ -1123,6 +1127,26 @@ async function expectWorkspaceRole(
     },
     { timeout: T.long },
   ).toMatchObject({ role, permissions: { canInviteMembers } });
+}
+
+async function waitForWorkspaceRoleResponse(
+  page: Page,
+  role: 'admin' | 'member',
+  canInviteMembers: boolean,
+): Promise<void> {
+  await page.waitForResponse(
+    async (response) => {
+      if (new URL(response.url()).pathname !== '/api/workspace/context' || !response.ok()) {
+        return false;
+      }
+      const body = await response.json().catch(() => null) as {
+        context?: { role?: string; permissions?: { canInviteMembers?: boolean } } | null;
+      } | null;
+      return body?.context?.role === role
+        && body.context.permissions?.canInviteMembers === canInviteMembers;
+    },
+    { timeout: T.long },
+  );
 }
 
 async function expectRosterRole(page: Page, role: 'admin' | 'member'): Promise<void> {

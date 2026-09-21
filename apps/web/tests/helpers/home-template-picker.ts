@@ -17,7 +17,11 @@ export async function pickHomeTemplate(id: string): Promise<void> {
     return;
   }
   fireEvent.click(homeTemplateTrigger());
-  const option = screen.getByTestId('home-hero-template-menu').querySelector(`[data-chip="${id}"]`);
+  // The picker is conditionally mounted from React state. Under the full
+  // workspace shard that commit can land after fireEvent returns, so querying
+  // synchronously makes every consumer of this shared helper timing-sensitive.
+  const menu = await screen.findByTestId('home-hero-template-menu');
+  const option = menu.querySelector(`[data-chip="${id}"]`);
   expect(option, `creation type ${id} is available in the dropdown`).not.toBeNull();
   fireEvent.click(option!);
 }
