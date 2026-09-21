@@ -1154,8 +1154,10 @@ describe('VelaCliCollabClient', () => {
   it('uses vela collab commands for comments, directory, and presence', async () => {
     const calls: string[][] = [];
     const workspaces: Array<string | undefined> = [];
+    const inputs: Array<string | Buffer | undefined> = [];
     const client = createVelaCliCollabClient({
-      run: async (args, workspaceId) => {
+      run: async (args, workspaceId, options) => {
+        inputs.push(options?.input);
         calls.push(args);
         workspaces.push(workspaceId);
         if (args[0] === 'member' && args[1] === 'register') {
@@ -1212,7 +1214,8 @@ describe('VelaCliCollabClient', () => {
 
     expect(calls[0]).toEqual(['member', 'register', '--display-name', '麻薯', '--role', 'owner']);
     expect(calls[1]?.slice(0, 3)).toEqual(['comment', 'push', 'p1']);
-    expect(JSON.parse(calls[1]![4]!)).toMatchObject({ id: 'c1' });
+    expect(calls[1]?.slice(3)).toEqual(['--comment-file', '-']);
+    expect(JSON.parse(String(inputs[1]))).toMatchObject({ id: 'c1' });
     expect(calls[2]).toEqual(['comment', 'pull', 'p1', '--since-seq', '0']);
     expect(calls[3]).toEqual([
       'presence',

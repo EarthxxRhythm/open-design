@@ -7,12 +7,15 @@ import type {
 import { CollabCloudError } from '../integrations/collab-cloud.js';
 import {
   runVelaCommand,
+  velaCommandStdout,
+  type VelaCommandOptions,
   velaWorkspaceCommandOptions,
 } from '../integrations/vela-command.js';
 
 export type RunVelaCollab = (
   args: string[],
   workspaceId?: string,
+  options?: Pick<VelaCommandOptions, 'input'>,
 ) => Promise<string>;
 
 export interface VelaCliCollabClientOptions {
@@ -54,14 +57,14 @@ type PresenceActivity = Exclude<CollabPresenceMember['activity'], undefined>;
 export function createVelaCliCollabClient(options: VelaCliCollabClientOptions = {}) {
   const run = options.run ?? defaultRunVelaCollab;
 
-  async function runJson<T>(args: string[], workspaceId: string): Promise<T> {
+  async function runJson<T>(args: string[], workspaceId: string, commandOptions?: Pick<VelaCommandOptions, 'input'>): Promise<T> {
     const requestedWorkspaceId = workspaceId.trim();
     if (!requestedWorkspaceId) {
       throw new Error('explicit workspace scope is required');
     }
     let stdout: string;
     try {
-      stdout = await run(args, requestedWorkspaceId);
+      stdout = await run(args, requestedWorkspaceId, commandOptions);
     } catch (error) {
       throw collabCloudErrorFromVelaFailure(error) ?? error;
     }
@@ -102,9 +105,9 @@ export function createVelaCliCollabClient(options: VelaCliCollabClientOptions = 
         'comment',
         'push',
         projectId,
-        '--comment-json',
-        JSON.stringify(comment),
-      ], _teamId);
+        '--comment-file',
+        '-',
+      ], _teamId, { input: JSON.stringify(comment) });
       return { seq: typeof payload.seq === 'number' ? payload.seq : 0 };
     },
 
@@ -265,21 +268,43 @@ function isRole(value: unknown): value is CollabMemberRole {
  * spawns a CLI process); without a budget a wedged CLI piles up unbounded
  * children while the client keeps beating. Presence data is disposable — the
  * next beat re-establishes it — so a hung spawn is terminated rather than
- * awaited. Lower-frequency member/comment commands keep their existing
- * unbounded behavior.
+ * awaited. Member commands retain their existing behavior.
  */
 const PRESENCE_COMMAND_TIMEOUT_MS = 10_000;
 
-const defaultRunVelaCollab: RunVelaCollab = (args, workspaceId) =>
+// Comment transport deadlines are retryable failures, never share lifecycle signals.
+const COMMENT_COMMAND_TIMEOUT_MS = 30_000;
+
+/** Only a complete, validated CLI envelope may supply HTTP status/code. */
+function commentCommandError(error: unknown): unknown {
+  let payload: unknown;
+  try { payload = JSON.parse(velaCommandStdout(error)); } catch { return error; }
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return error;
+  const wire = payload as Record<string, unknown>;
+  if (typeof wire.error !== 'string' || !wire.error.trim() ||
+      typeof wire.status !== 'number' || !Number.isInteger(wire.status) ||
+      wire.status < 400 || wire.status > 599 ||
+      typeof wire.errorCode !== 'string' || !/^[A-Za-z0-9_-]+$/.test(wire.errorCode)) return error;
+  return Object.assign(new Error(wire.error, { cause: error }), {
+    status: wire.status, code: wire.errorCode,
+  });
+}
+
+const defaultRunVelaCollab: RunVelaCollab = (args, workspaceId, options) =>
   runVelaCommand(
     ['collab', ...args],
     {
       ...velaWorkspaceCommandOptions(workspaceId),
+      ...options,
       ...(args[0] === 'presence'
         ? { timeoutMs: PRESENCE_COMMAND_TIMEOUT_MS }
-        : {}),
+        : args[0] === 'comment' && (args[1] === 'push' || args[1] === 'pull')
+          ? { timeoutMs: COMMENT_COMMAND_TIMEOUT_MS }
+          : {}),
     },
-  );
+  ).catch((error: unknown) => {
+    throw args[0] === 'comment' && args[1] === 'push' ? commentCommandError(error) : error;
+  });
 
 export function shouldUseVelaCliCollabTransport(
   env: NodeJS.ProcessEnv = process.env,
