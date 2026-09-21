@@ -641,7 +641,7 @@ function emitOdNextPlanningRun(promptText, inputStage = 'request', taskTypeOverr
   };
   const state = {
     schema: 'open-design.strategy-state/v2', route: 'full_plan', inputStage,
-    outcome: 'plan_ready', executionMode: 'simple', reasonCodes: [],
+    outcome: 'plan_ready', executionMode: 'simple', executionIntent: 'produce', reasonCodes: [],
   };
   emitSuccess(
     'The local canary plan is ready.\\n<open-design-plan-contract>\\n'
@@ -711,7 +711,7 @@ async function emitOdNextProductionRun(promptText) {
   );
   const state = {
     schema: 'open-design.strategy-state/v2', route: 'full_plan', inputStage: 'production',
-    outcome: 'completed', executionMode: 'simple', reasonCodes: [],
+    outcome: 'completed', executionMode: 'simple', executionIntent: 'produce', reasonCodes: [],
   };
   emitSuccess(
     (homeFirstRun

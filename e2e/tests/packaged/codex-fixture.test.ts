@@ -113,6 +113,7 @@ describe('packaged Codex fixture transport', () => {
           expect(session.completedSuccessfully()).toBe(true);
           const text = events.filter((event) => event.type === 'text_delta').map((event) => event.delta).join('');
           if (index === 0) {
+            expect(text).toContain('"executionIntent":"produce"');
             const contract = text.match(/<open-design-plan-contract>\s*([\s\S]*?)\s*<\/open-design-plan-contract>/)?.[1];
             expect(contract).toBeTruthy();
             // The packaged daemon admits the built-in request input. A fake
@@ -122,6 +123,7 @@ describe('packaged Codex fixture transport', () => {
           } else {
             expect(text).toContain(PACKAGED_HOME_FIRST_RUN_OUTPUT);
             expect(text).toContain('"outcome":"completed"');
+            expect(text).toContain('"executionIntent":"produce"');
             expect(await readFile(join(root, 'od-next-active-canary.html'), 'utf8')).toContain('Delayed Daemon Smoke');
           }
         } finally {
