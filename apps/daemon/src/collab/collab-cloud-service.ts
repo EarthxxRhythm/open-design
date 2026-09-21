@@ -291,6 +291,16 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
     allowedFilePaths?: ReadonlySet<string>;
   };
 
+  // Personal pulls share one remote project stream, but each publication set
+  // sees only a subset of it. Keep their validators and high-water marks apart:
+  // advancing a global cursor after filtering would permanently acknowledge a
+  // comment for a file published (or resumed) later.
+  function pullCursorKey(scopeKey: string, projectId: string, identity: PullIdentity): string {
+    if (identity.relayScope === 'team') return `${scopeKey}:${projectId}`;
+    const filePaths = [...(identity.allowedFilePaths ?? [])].sort();
+    return `${scopeKey}:${projectId}:personal:${JSON.stringify(filePaths)}`;
+  }
+
   function personalPullIdentity(
     projectId: string,
     context: WorkspaceCollabContext,
@@ -725,18 +735,19 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
     // No local conversation to attach to yet (e.g. a member who pulled the
     // project but has not opened a chat) — nothing to merge into.
     if (!conversationId) return false;
-    const cursorKey = `${scopeKey}:${projectId}`;
-    const sinceSeq = cursors.get(cursorKey) ?? 0;
+    const requestCursorKey = pullCursorKey(scopeKey, projectId, identity);
+    const sinceSeq = cursors.get(requestCursorKey) ?? 0;
     const result = await deps.client.pullComments(
       identity.teamId,
       projectId,
       sinceSeq,
-      etags.get(cursorKey),
+      etags.get(requestCursorKey),
     );
     // Personal relay eligibility is per published file. Re-check both the
     // principal and active publication set after the async transport returns:
     // an account/workspace switch or stop must never merge an in-flight reply.
     let comments = result.comments;
+    let responseIdentity = identity;
     if (identity.relayScope === 'personal') {
       const freshContext = await deps.resolveProjectWorkspaceContext?.(projectId, { fresh: true }) ?? null;
       const freshIdentity = freshContext ? personalPullIdentity(projectId, freshContext) : null;
@@ -746,15 +757,24 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
         || freshIdentity.memberId !== identity.memberId
         || freshIdentity.teamId !== identity.teamId
       ) return false;
+      responseIdentity = freshIdentity;
       comments = comments.filter((comment) => freshIdentity.allowedFilePaths!.has(comment.filePath));
     }
-    etags.set(cursorKey, result.etag);
-    if (result.notModified) return true;
+    // Commit the result under the freshly-authoritative publication scope.
+    // If the set changed while a conditional request was in flight, a 304 is
+    // only valid for the old scope. Leave the new scope uncached so its next
+    // poll replays from zero instead of treating hidden comments as seen.
+    const responseCursorKey = pullCursorKey(scopeKey, projectId, responseIdentity);
+    if (result.notModified) {
+      if (responseCursorKey === requestCursorKey) etags.set(responseCursorKey, result.etag);
+      return true;
+    }
     let inserted = 0;
     for (const comment of comments) {
       if (deps.mergeComment({ projectId, conversationId, comment })) inserted += 1;
     }
-    cursors.set(cursorKey, result.latestSeq);
+    etags.set(responseCursorKey, result.etag);
+    cursors.set(responseCursorKey, result.latestSeq);
     if (inserted > 0) deps.onMerged?.({ projectId, inserted });
     return true;
   }

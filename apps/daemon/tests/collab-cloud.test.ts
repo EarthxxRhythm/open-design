@@ -39,6 +39,7 @@ import {
 import type { WorkspaceContextProvider } from '../src/collab/workspace-context.js';
 import { commentRelayScope } from '../src/collab/comment-relay-scope.js';
 import { createSqlitePublicFilePublicationStore } from '../src/collab/public-file-publication-store.js';
+import { createCommentRelayOutboxStore } from '../src/collab/comment-relay-outbox.js';
 
 let tempDir: string | null = null;
 
@@ -1308,5 +1309,48 @@ describe('personal publication inbound relay', () => {
     expect(pulls).toEqual(['personal-ws', 'personal-ws']);
     expect(listPreviewComments(db, 'p1', anchor).map((comment) => comment.id)).toEqual(['allowed']);
     service.dispose();
+  });
+
+  it('replays old comments when a newly published file expands the personal scope', async () => {
+    const db = seededDb(); const anchor = ensureProjectCommentAnchorConversation(db, 'p1', 1)!.conversationId;
+    ensureWorkspaceProject(db, { projectId: 'p1', workspaceId: 'personal-ws', visibility: 'personal', createdByWorkspaceMemberId: 'creator-1' });
+    const publications = createSqlitePublicFilePublicationStore(db, () => 100);
+    const scope = (filePath: string) => ({ resourceTeamId: 'personal-ws', ownerMemberId: 'creator-1', projectId: 'p1', filePath });
+    publications.set(scope('a.html'), { url: 'https://share.test/a', slug: 'a-slug', fileName: 'a.html' });
+    const personal = teamContext({ workspaceId: 'personal-ws', workspaceType: 'personal', workspaceMemberId: 'creator-1' }); delete (personal as Partial<WorkspaceCollabContext>).teamId;
+    const remote = [cloudComment('a-comment', { filePath: 'a.html', seq: 1 }), cloudComment('b-comment', { filePath: 'b.html', seq: 2 })];
+    const pulls: Array<{ sinceSeq: number; etag: string | null | undefined }> = []; const mergedEvents: number[] = [];
+    const service = createCollabCloudService({
+      client: { pullComments: async (_teamId: string, _projectId: string, sinceSeq: number, etag?: string | null) => { pulls.push({ sinceSeq, etag }); if (etag === 'etag-2') return { comments: [], latestSeq: 2, etag: 'etag-2', notModified: true }; return { comments: remote.filter((comment) => comment.seq > sinceSeq), latestSeq: 2, etag: 'etag-2', notModified: false }; } } as unknown as CollabCloudClient,
+      commentOutbox: createCommentRelayOutboxStore(db), listProjectIds: () => [], resolveLocalConversationId: () => anchor,
+      mergeComment: ({ projectId, conversationId, comment }) => mergeSyncedPreviewComment(db, projectId, conversationId, comment),
+      listPersonalCommentRelayFilePaths: (projectId, context) => new Set(publications.listByProject({ resourceTeamId: context.workspaceId, ownerMemberId: context.workspaceMemberId, projectId }).map((publication) => publication.filePath)), resolveProjectWorkspaceContext: async () => personal, onMerged: ({ inserted }) => mergedEvents.push(inserted),
+    });
+    await service.pullProject('p1', personal); publications.set(scope('b.html'), { url: 'https://share.test/b', slug: 'b-slug', fileName: 'b.html' }); await service.pullProject('p1', personal);
+    expect(pulls).toEqual([{ sinceSeq: 0, etag: undefined }, { sinceSeq: 0, etag: undefined }]);
+    expect(listPreviewComments(db, 'p1', anchor).map((comment) => comment.id).sort()).toEqual(['a-comment', 'b-comment']); expect(mergedEvents).toEqual([1, 1]); expect(createCommentRelayOutboxStore(db).count()).toBe(0); service.dispose();
+  });
+
+  it('filters a stopped file from an in-flight response and replays it after resume', async () => {
+    const db = seededDb(); const anchor = ensureProjectCommentAnchorConversation(db, 'p1', 1)!.conversationId;
+    ensureWorkspaceProject(db, { projectId: 'p1', workspaceId: 'personal-ws', visibility: 'personal', createdByWorkspaceMemberId: 'creator-1' });
+    const publications = createSqlitePublicFilePublicationStore(db, () => 100); const scope = (filePath: string) => ({ resourceTeamId: 'personal-ws', ownerMemberId: 'creator-1', projectId: 'p1', filePath });
+    for (const filePath of ['a.html', 'b.html']) publications.set(scope(filePath), { url: 'https://share.test/' + filePath, slug: filePath + '-slug', fileName: filePath });
+    const personal = teamContext({ workspaceId: 'personal-ws', workspaceType: 'personal', workspaceMemberId: 'creator-1' }); delete (personal as Partial<WorkspaceCollabContext>).teamId;
+    const remote = [cloudComment('a-comment', { filePath: 'a.html', seq: 1 }), cloudComment('b-comment', { filePath: 'b.html', seq: 2 })];
+    let release!: (value: { comments: CollabCloudComment[]; latestSeq: number; etag: string; notModified: boolean }) => void; const pending = new Promise<{ comments: CollabCloudComment[]; latestSeq: number; etag: string; notModified: boolean }>((resolve) => { release = resolve; }); let calls = 0;
+    const service = createCollabCloudService({ client: { pullComments: async () => { calls += 1; return calls === 1 ? pending : { comments: remote, latestSeq: 2, etag: 'etag-2', notModified: false }; } } as unknown as CollabCloudClient, commentOutbox: createCommentRelayOutboxStore(db), listProjectIds: () => [], resolveLocalConversationId: () => anchor, mergeComment: ({ projectId, conversationId, comment }) => mergeSyncedPreviewComment(db, projectId, conversationId, comment), listPersonalCommentRelayFilePaths: (projectId, context) => new Set(publications.listByProject({ resourceTeamId: context.workspaceId, ownerMemberId: context.workspaceMemberId, projectId }).map((publication) => publication.filePath)), resolveProjectWorkspaceContext: async () => personal });
+    const pull = service.pullProject('p1', personal); publications.delete(scope('b.html')); release({ comments: remote, latestSeq: 2, etag: 'etag-2', notModified: false }); await pull;
+    expect(listPreviewComments(db, 'p1', anchor).map((comment) => comment.id)).toEqual(['a-comment']); publications.set(scope('b.html'), { url: 'https://share.test/b', slug: 'b-resumed', fileName: 'b.html' }); await service.pullProject('p1', personal);
+    expect(listPreviewComments(db, 'p1', anchor).map((comment) => comment.id).sort()).toEqual(['a-comment', 'b-comment']); service.dispose();
+  });
+
+  it('rejects a same-workspace member switch without advancing the personal cursor', async () => {
+    const db = seededDb(); const anchor = ensureProjectCommentAnchorConversation(db, 'p1', 1)!.conversationId;
+    const original = teamContext({ workspaceId: 'personal-ws', workspaceType: 'personal', workspaceMemberId: 'creator-1' }); const switched = teamContext({ workspaceId: 'personal-ws', workspaceType: 'personal', workspaceMemberId: 'creator-2' }); delete (original as Partial<WorkspaceCollabContext>).teamId; delete (switched as Partial<WorkspaceCollabContext>).teamId;
+    let fresh: WorkspaceCollabContext = switched; const calls: Array<{ sinceSeq: number; etag: string | null | undefined }> = [];
+    const service = createCollabCloudService({ client: { pullComments: async (_teamId: string, _projectId: string, sinceSeq: number, etag?: string | null) => { calls.push({ sinceSeq, etag }); return { comments: [cloudComment('a-comment', { filePath: 'a.html', seq: 1 })], latestSeq: 1, etag: 'etag-1', notModified: false }; } } as unknown as CollabCloudClient, listProjectIds: () => [], resolveLocalConversationId: () => anchor, mergeComment: ({ projectId, conversationId, comment }) => mergeSyncedPreviewComment(db, projectId, conversationId, comment), listPersonalCommentRelayFilePaths: () => new Set(['a.html']), resolveProjectWorkspaceContext: async () => fresh });
+    await expect(service.pullProject('p1', original)).resolves.toBe(false); fresh = original; await expect(service.pullProject('p1', original)).resolves.toBe(true);
+    expect(calls).toEqual([{ sinceSeq: 0, etag: undefined }, { sinceSeq: 0, etag: undefined }]); expect(listPreviewComments(db, 'p1', anchor).map((comment) => comment.id)).toEqual(['a-comment']); service.dispose();
   });
 });
