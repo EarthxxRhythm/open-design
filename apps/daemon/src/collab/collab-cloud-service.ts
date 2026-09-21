@@ -399,6 +399,20 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
       : null;
   };
 
+  const personalBatchIdentityMatches = (
+    context: WorkspaceCollabContext,
+    record: CommentRelayOutboxRecord,
+  ): { teamId: string; memberId: string } | null => {
+    const memberId = context.workspaceMemberId.trim();
+    return context.memberStatus === 'active'
+      && context.lifecycleState !== 'deleted'
+      && context.workspaceId === record.workspaceId
+      && memberId === record.workspaceMemberId
+      && record.teamId === record.workspaceId
+      ? { teamId: record.teamId, memberId }
+      : null;
+  };
+
   async function pushOutboxRecord(
     record: CommentRelayOutboxRecord,
     identity: { teamId: string; memberId: string },
@@ -528,19 +542,34 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
       for (const record of eligible) deferOutboxRecord(record, error);
       return;
     }
-    const identity = context ? relayIdentityMatches(context, representative) : null;
+    const identity = context
+      ? representative.relayScope === 'personal'
+        ? personalBatchIdentityMatches(context, representative)
+        : relayIdentityMatches(context, representative)
+      : null;
     if (!context || !identity) {
       const error = new Error('comment relay delivery authority is unavailable or changed');
       for (const record of eligible) deferOutboxRecord(record, error);
       return;
     }
 
-    // Personal publication records have already been proven against the local
-    // creator + exact active-file publication by relayIdentityMatches above.
-    // They are not Team catalog resources, so querying that catalog would turn
-    // a valid personal delivery into a silent cancellation.
+    // A durable identity batch can span files and projects. For personal
+    // publications, each record must re-prove its creator-scoped, exact-file
+    // publication after fresh authority resolves and immediately before it is
+    // scheduled. Local binding only proves a project record still belongs here;
+    // it does not prove that this file remains published.
     if (representative.relayScope === 'personal') {
-      await pushOutboxProjectLanes(eligible, identity);
+      const deliverable: CommentRelayOutboxRecord[] = [];
+      for (const record of eligible) {
+        if (relayIdentityMatches(context, record)) deliverable.push(record);
+        else {
+          deferOutboxRecord(
+            record,
+            new Error('comment relay personal publication authority is unavailable or changed'),
+          );
+        }
+      }
+      await pushOutboxProjectLanes(deliverable, identity);
       return;
     }
 

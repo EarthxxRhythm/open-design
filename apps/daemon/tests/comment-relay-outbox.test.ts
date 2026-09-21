@@ -15,7 +15,7 @@ import {
   insertProject,
   openDatabase,
 } from '../src/db.js';
-import { createCollabCloudService } from '../src/collab/collab-cloud-service.js';
+import { createCollabCloudService, previewCommentToCloud } from '../src/collab/collab-cloud-service.js';
 import { commentRelayScope } from '../src/collab/comment-relay-scope.js';
 import { createSqlitePublicFilePublicationStore } from '../src/collab/public-file-publication-store.js';
 import {
@@ -155,12 +155,19 @@ describe('durable Team comment relay outbox', () => {
     expect(firstOutbox.count()).toBe(1);
     first.dispose();
 
+    // A real restart closes the SQLite handle. Reopen both the durable outbox
+    // and publication witness rather than merely constructing another service.
+    closeDatabase();
+    const reopened = openDatabase(tempDir!);
+    const restartedPublications = createSqlitePublicFilePublicationStore(reopened, () => 100);
+    const restartedScope = (projectId: string, filePath: string, current: WorkspaceCollabContext) =>
+      commentRelayScope({ binding, context: current, projectId, filePath, publications: restartedPublications });
     const pushed: Array<{ teamId: string; projectId: string }> = [];
-    const restartedOutbox = createCommentRelayOutboxStore(db, () => 100);
+    const restartedOutbox = createCommentRelayOutboxStore(reopened, () => 100);
     const restarted = createCollabCloudService({
       client: clientWithPush(async (teamId, projectId) => { pushed.push({ teamId, projectId }); return { seq: 9 }; }),
       commentOutbox: restartedOutbox,
-      commentRelayScope: scope,
+      commentRelayScope: restartedScope,
       resolveLocalProjectRelayBinding: () => ({ workspaceId: owner.workspaceId, ownerMemberId: owner.workspaceMemberId }),
       validateCommentRelayProjectBinding: (record) => commentRelayLocalBindingMatches(record, binding),
       resolveCommentRelayWorkspaceContext: async () => owner,
@@ -207,6 +214,114 @@ describe('durable Team comment relay outbox', () => {
     freshIdentity = { ...owner, workspaceMemberId: 'switched-account' };
     await service.flushPendingComments();
     expect(pushes).toBe(0);
+    expect(outbox.count()).toBe(1);
+    service.dispose();
+  });
+
+  it.each([
+    ['active file first', ['index.html', 'stopped.html']],
+    ['stopped file first', ['stopped.html', 'index.html']],
+  ] as const)('validates every personal publication in a mixed identity batch (%s)', async (_order, filePaths) => {
+    const db = seededDb();
+    const owner = context('owner', {
+      workspaceId: 'workspace-personal',
+      workspaceType: 'personal',
+      workspaceMemberId: 'personal-owner',
+      teamId: '',
+    });
+    const binding: CommentRelayLocalProjectBinding = {
+      workspaceId: owner.workspaceId,
+      visibility: 'personal',
+      resourceState: 'active',
+      createdByWorkspaceMemberId: owner.workspaceMemberId,
+    };
+    const publications = createSqlitePublicFilePublicationStore(db, () => 100);
+    for (const filePath of filePaths) {
+      publications.set({
+        resourceTeamId: owner.workspaceId,
+        ownerMemberId: owner.workspaceMemberId,
+        projectId: 'p1',
+        filePath,
+      }, { url: `https://example.test/${filePath}`, slug: filePath, fileName: filePath });
+    }
+    const scope = (projectId: string, filePath: string, current: WorkspaceCollabContext) =>
+      commentRelayScope({ binding, context: current, projectId, filePath, publications });
+    const pushed: string[] = [];
+    const outbox = createCommentRelayOutboxStore(db, () => 100);
+    const service = createCollabCloudService({
+      client: clientWithPush(async (_teamId, _projectId, payload) => {
+        pushed.push(payload.filePath);
+        return { seq: pushed.length };
+      }),
+      commentOutbox: outbox,
+      commentRelayScope: scope,
+      resolveLocalProjectRelayBinding: () => ({ workspaceId: owner.workspaceId, ownerMemberId: owner.workspaceMemberId }),
+      validateCommentRelayProjectBinding: (record) => commentRelayLocalBindingMatches(record, binding),
+      resolveCommentRelayWorkspaceContext: async () => owner,
+      listRemoteProjectRelayBindings: async () => [],
+      listProjectIds: () => [], resolveLocalConversationId: () => 'conv-local', mergeComment: () => false,
+      now: () => 100, retryDelayMs: () => 0,
+    });
+    for (const [index, filePath] of filePaths.entries()) {
+      expect(service.enqueueComment(comment({ id: `comment-${index}`, filePath, authorMemberId: owner.workspaceMemberId }), owner)).toBe(true);
+    }
+    // This is deliberately after enqueue: the records share one durable owner
+    // identity batch, but only the active publication may cross the relay.
+    publications.delete({
+      resourceTeamId: owner.workspaceId,
+      ownerMemberId: owner.workspaceMemberId,
+      projectId: 'p1',
+      filePath: 'stopped.html',
+    });
+
+    await service.flushPendingComments();
+
+    expect(pushed).toEqual(['index.html']);
+    expect(outbox.count()).toBe(1);
+    service.dispose();
+  });
+
+  it('does not let a stale different-creator project block a valid personal project in the same identity batch', async () => {
+    const db = seededDb();
+    const owner = context('owner', { workspaceId: 'workspace-personal', workspaceType: 'personal', workspaceMemberId: 'personal-owner', teamId: '' });
+    const otherCreator = 'another-creator';
+    let freshIdentity = owner;
+    const bindings = new Map<string, CommentRelayLocalProjectBinding>([
+      ['p1', { workspaceId: owner.workspaceId, visibility: 'personal', resourceState: 'active', createdByWorkspaceMemberId: owner.workspaceMemberId }],
+      ['p2', { workspaceId: owner.workspaceId, visibility: 'personal', resourceState: 'active', createdByWorkspaceMemberId: otherCreator }],
+    ]);
+    const publications = createSqlitePublicFilePublicationStore(db, () => 100);
+    for (const [projectId, creator] of [['p1', owner.workspaceMemberId], ['p2', otherCreator]] as const) {
+      publications.set({ resourceTeamId: owner.workspaceId, ownerMemberId: creator, projectId, filePath: 'index.html' }, { url: `https://example.test/${projectId}`, slug: projectId, fileName: 'index.html' });
+    }
+    const scope = (projectId: string, filePath: string, current: WorkspaceCollabContext) =>
+      commentRelayScope({ binding: bindings.get(projectId), context: current, projectId, filePath, publications });
+    const pushed: string[] = [];
+    const outbox = createCommentRelayOutboxStore(db, () => 100);
+    const service = createCollabCloudService({
+      client: clientWithPush(async (_teamId, projectId) => { pushed.push(projectId); return { seq: pushed.length }; }),
+      commentOutbox: outbox, commentRelayScope: scope,
+      resolveLocalProjectRelayBinding: (projectId) => {
+        const binding = bindings.get(projectId);
+        return binding ? { workspaceId: binding.workspaceId!, ownerMemberId: binding.createdByWorkspaceMemberId! } : null;
+      },
+      validateCommentRelayProjectBinding: (record) => commentRelayLocalBindingMatches(record, bindings.get(record.projectId)),
+      resolveCommentRelayWorkspaceContext: async () => freshIdentity,
+      listRemoteProjectRelayBindings: async () => [], listProjectIds: () => [], resolveLocalConversationId: () => 'conv-local', mergeComment: () => false,
+      now: () => 100, retryDelayMs: () => 0,
+    });
+    expect(service.enqueueComment(comment({ id: 'valid-p1', projectId: 'p1', authorMemberId: owner.workspaceMemberId }), owner)).toBe(true);
+    // Simulate a row queued before p2's creator changed: it retains the same
+    // durable principal batch, but its current creator scope is no longer ours.
+    outbox.enqueue({ workspaceId: owner.workspaceId, workspaceMemberId: owner.workspaceMemberId, teamId: owner.workspaceId, relayScope: 'personal', projectId: 'p2', expectedOwnerMemberId: otherCreator, comment: previewCommentToCloud(comment({ id: 'stale-p2', projectId: 'p2' }), owner.workspaceMemberId) });
+
+    await service.flushPendingComments();
+    expect(pushed).toEqual(['p1']);
+    expect(outbox.count()).toBe(1);
+
+    freshIdentity = { ...owner, workspaceMemberId: 'switched-account' };
+    await service.flushPendingComments();
+    expect(pushed).toEqual(['p1']);
     expect(outbox.count()).toBe(1);
     service.dispose();
   });
