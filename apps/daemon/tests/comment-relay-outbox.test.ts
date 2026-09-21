@@ -23,6 +23,7 @@ import {
 import { createCollabCloudService, previewCommentToCloud } from '../src/collab/collab-cloud-service.js';
 import { commentRelayScope } from '../src/collab/comment-relay-scope.js';
 import {
+  createInMemoryPublicFilePublicationStore,
   createSqlitePublicFilePublicationStore,
   migratePublicFilePublications,
 } from '../src/collab/public-file-publication-store.js';
@@ -127,6 +128,32 @@ async function waitForCondition(predicate: () => boolean): Promise<void> {
 }
 
 describe('durable Team comment relay outbox', () => {
+  it('keeps a materialized team member relay-eligible when the local mirror has no creator', () => {
+    const teamMember = context('member', {
+      workspaceId: 'ws-multi-client',
+      teamId: 'ws-multi-client',
+      workspaceMemberId: 'mem-multi-viewer',
+    });
+
+    expect(commentRelayScope({
+      binding: {
+        workspaceId: 'ws-multi-client',
+        visibility: 'team',
+        resourceState: 'active',
+        createdByWorkspaceMemberId: null,
+      },
+      context: teamMember,
+      projectId: 'project-1',
+      filePath: 'index.html',
+      publications: createInMemoryPublicFilePublicationStore(),
+    })).toMatchObject({
+      workspaceId: 'ws-multi-client',
+      teamId: 'ws-multi-client',
+      ownerMemberId: 'mem-multi-viewer',
+      relayScope: 'team',
+    });
+  });
+
   it('backfills legacy personal file paths idempotently without touching malformed or unrelated rows', () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'od-comment-relay-legacy-'));
     const dbPath = path.join(tempDir, 'app.sqlite');
