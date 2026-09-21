@@ -576,6 +576,17 @@ function migrate(db: SqliteDb): void {
   if (!previewCommentAuthorCols.some((c: DbRow) => c.name === 'author_key')) {
     db.exec(`ALTER TABLE preview_comments ADD COLUMN author_key TEXT`);
   }
+  // Read markers are project-scoped; the viewer filters its current file.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS project_comment_read_state (
+      project_id TEXT NOT NULL,
+      viewer_scope TEXT NOT NULL,
+      last_read_at INTEGER NOT NULL,
+      PRIMARY KEY (project_id, viewer_scope),
+      FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+    );
+  `);
+
   const deploymentCols = db.prepare(`PRAGMA table_info(deployments)`).all() as DbRow[];
   if (!deploymentCols.some((c: DbRow) => c.name === 'status')) {
     db.exec(`ALTER TABLE deployments ADD COLUMN status TEXT NOT NULL DEFAULT 'ready'`);
@@ -4336,6 +4347,26 @@ export function mergeSyncedPreviewComment(
       createdAt,
     );
   return result.changes > 0;
+}
+
+export function getProjectCommentReadState(
+  db: SqliteDb, projectId: string, viewerScope: string,
+): { projectId: string; lastReadAt?: number } {
+  const stored = db.prepare(`SELECT last_read_at AS lastReadAt FROM project_comment_read_state
+    WHERE project_id = ? AND viewer_scope = ?`).get(projectId, viewerScope) as DbRow | undefined;
+  const lastReadAt = stored?.lastReadAt;
+  return { projectId, ...(Number.isFinite(lastReadAt) ? { lastReadAt } : {}) };
+}
+
+/** Advance, never rewind, a trusted viewer's project-level read marker. */
+export function markProjectCommentsRead(
+  db: SqliteDb, projectId: string, viewerScope: string, readAt: number,
+): { projectId: string; lastReadAt?: number } {
+  db.prepare(`INSERT INTO project_comment_read_state (project_id, viewer_scope, last_read_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(project_id, viewer_scope) DO UPDATE SET
+      last_read_at = MAX(project_comment_read_state.last_read_at, excluded.last_read_at)`).run(projectId, viewerScope, readAt);
+  return getProjectCommentReadState(db, projectId, viewerScope);
 }
 
 export function getPreviewComment(db: SqliteDb, projectId: string, conversationId: string, id: string) {

@@ -18,6 +18,8 @@ import {
 } from './comment-send-result';
 import {
   buildSocialSharePayload,
+  hasUnreadComments,
+  type ProjectCommentReadState,
   OPEN_DESIGN_GITHUB_REPO_URL,
   workspaceContextHasTeamIdentity,
   type CollabCloudMemberDirectoryEntry,
@@ -8328,6 +8330,35 @@ function HtmlViewer({
   const [urlPreviewFirstLoadPending, setUrlPreviewFirstLoadPending] = useState(false);
   const [boardMode, setBoardMode] = useState(false);
   const [commentPanelOpen, setCommentPanelOpen] = useState(false);
+  const [commentReadState, setCommentReadState] = useState<ProjectCommentReadState | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setCommentReadState(null);
+    void fetch(`/api/projects/${encodeURIComponent(projectId)}/comments/read`, {
+      headers: workspaceContext ? workspaceProjectHeaders(workspaceContext) : undefined,
+    }).then(async (response) => {
+      if (!response.ok || cancelled) return;
+      const state = await response.json() as ProjectCommentReadState;
+      if (!cancelled && state.projectId === projectId) setCommentReadState(state);
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [projectId, workspaceContext]);
+  useEffect(() => {
+    if (!commentPanelOpen) return;
+    let cancelled = false;
+    const readAt = Date.now();
+    setCommentReadState({ projectId, lastReadAt: readAt });
+    void fetch(`/api/projects/${encodeURIComponent(projectId)}/comments/read`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', ...(workspaceContext ? workspaceProjectHeaders(workspaceContext) : {}) },
+      body: JSON.stringify({ readAt }),
+    }).then(async (response) => {
+      if (!response.ok || cancelled) return;
+      const state = await response.json() as ProjectCommentReadState;
+      if (!cancelled && state.projectId === projectId) setCommentReadState(state);
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [commentPanelOpen, projectId, workspaceContext]);
   const commentPanelToggleRef = useRef<HTMLButtonElement | null>(null);
   const commentPanelReturnFocusRef = useRef<HTMLElement | null>(null);
   const pendingCommentPanelFocusRef = useRef<HTMLElement | null>(null);
@@ -15784,6 +15815,20 @@ function HtmlViewer({
       ),
     [creationSortedSideComments],
   );
+  // Do not fabricate an authorKey from a member id. The trusted workspace
+  // identity excludes locally-authored member comments before applying the
+  // frozen authorKey predicate to external comments.
+  const unreadSideComments = useMemo(() => visibleSideComments.filter((comment) => (
+    comment.authorMemberId !== workspaceContext?.workspaceMemberId
+  )), [visibleSideComments, workspaceContext?.workspaceMemberId]);
+  const hasUnreadSideComments = hasUnreadComments({
+    readState: commentReadState,
+    comments: unreadSideComments.map((comment) => ({
+      createdAt: comment.createdAt,
+      author: { authorKey: comment.authorKey },
+    })),
+    viewerAuthorKey: null,
+  });
   const activeSideCommentId = activePreviewCommentId;
   const activeCommentTargetVisible = commentTargetIntersectsPreview(
     activeCommentTarget,
@@ -16690,6 +16735,7 @@ function HtmlViewer({
               >
                 <RemixIcon name="message-3-line" size={15} />
                 <span className="viewer-comment-count" aria-hidden>{visibleSideComments.length}</span>
+                {hasUnreadSideComments ? <span aria-label="Unread comments" style={{ background: '#e5484d', borderRadius: '50%', height: 7, width: 7, position: 'absolute', right: 2, top: 2 }} /> : null}
               </button>
               {source !== null && mode === 'preview' ? (
                 <div className="zoom-menu viewer-toolbar-zoom" ref={zoomMenuRef}>

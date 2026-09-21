@@ -1,12 +1,18 @@
 import type { Express, Request } from 'express';
 import type {
   PreviewComment,
+  ProjectCommentReadRequest,
   WorkspaceCollabContext,
 } from '@open-design/contracts';
 import { projectKindFromMetadataToTrackingOrLegacyDefault } from '@open-design/contracts/analytics';
 import type { RouteDeps } from '../../server-context.js';
 import type { BoundWorkspaceResourceMutationGate } from '../../collab/workspace-resource-mutation.js';
-import { getProject, isProjectCommentAnchorConversationId } from '../../db.js';
+import {
+  getProject,
+  getProjectCommentReadState,
+  isProjectCommentAnchorConversationId,
+  markProjectCommentsRead,
+} from '../../db.js';
 
 export type ProjectCommentWorkspaceContextResolution =
   | { ok: true; context: WorkspaceCollabContext | null }
@@ -370,6 +376,34 @@ export function registerProjectCommentRoutes(app: Express, ctx: RegisterProjectC
     }
     return false;
   }
+
+  // Read state is project-scoped by the frozen DTO. The workspace identity is
+  // resolved by the existing request authority and is never taken from authorKey.
+  const viewerScopeFor = (context: WorkspaceCollabContext | null): string => {
+    const workspaceId = context?.workspaceId?.trim();
+    const memberId = context?.workspaceMemberId?.trim();
+    return workspaceId && memberId ? `${workspaceId}:${memberId}` : 'local';
+  };
+
+  app.get('/api/projects/:id/comments/read', async (req, res) => {
+    if (!getProject(db, req.params.id)) return res.status(404).json({ error: 'project not found' });
+    const resolution = await resolveReadRequestWorkspaceContext(req, req.params.id);
+    if (!resolution.ok) return sendWorkspaceResolutionError(res, resolution);
+    return res.json(getProjectCommentReadState(db, req.params.id, viewerScopeFor(resolution.context)));
+  });
+
+  app.put('/api/projects/:id/comments/read', async (req, res) => {
+    if (!getProject(db, req.params.id)) return res.status(404).json({ error: 'project not found' });
+    const resolution = await resolveRequestWorkspaceContext(req, req.params.id);
+    if (!resolution.ok) return sendWorkspaceResolutionError(res, resolution);
+    const body = req.body as Partial<ProjectCommentReadRequest> | undefined;
+    if (!Number.isFinite(body?.readAt)) {
+      return res.status(400).json({ error: 'readAt must be a finite number' });
+    }
+    // A future client clock must not hide comments that have not arrived yet.
+    const readAt = Math.min(body!.readAt!, Date.now());
+    return res.json(markProjectCommentsRead(db, req.params.id, viewerScopeFor(resolution.context), readAt));
+  });
 
   // ---- Preview comments ----------------------------------------------------
 

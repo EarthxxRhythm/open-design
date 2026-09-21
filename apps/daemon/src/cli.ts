@@ -321,7 +321,7 @@ const SHARE_BOOLEAN_FLAGS = new Set([
   'help', 'h', 'json',
 ]);
 const COMMENT_STRING_FLAGS = new Set([
-  'daemon-url', 'workspace', 'workspace-member', 'prompt', 'prompt-file', 'target', 'status',
+  'daemon-url', 'workspace', 'workspace-member', 'prompt', 'prompt-file', 'target', 'status', 'read-at',
 ]);
 const COMMENT_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
 // Defined near the top because `runFigma` is reachable through the
@@ -443,6 +443,7 @@ function printCommentHelp() {
   od comment update <projectId> <conversationId> <commentId> --target <json> (--prompt <text> | --prompt-file <path|->) [--json]
   od comment status <projectId> <conversationId> <commentId> --status <open|attached|applying|needs_review|resolved|failed> [--json]
   od comment delete <projectId> <conversationId> <commentId> [--json]
+  od comment read <projectId> [--read-at <epoch-ms>] [--json]
 
 Manage comments through the same daemon HTTP API as the workspace UI.
 
@@ -452,6 +453,7 @@ Options:
   --prompt-file <path|->      Read the comment body from a file or stdin; mutually exclusive with --prompt.
   --workspace <id>            Exact Workspace for bound project requests.
   --workspace-member <id>     Exact caller membership for bound project requests.
+  --read-at <epoch-ms>        Mark comments read at this time (defaults to now; server clamps).
   --daemon-url <url>          Override daemon URL.
   --json                      Emit the daemon response as JSON.`);
 }
@@ -493,14 +495,34 @@ async function runComment(args) {
   }
   const positional = positionalArgs(rest, COMMENT_STRING_FLAGS);
   const [projectId, conversationId, commentId] = positional;
-  if (!['list', 'create', 'update', 'status', 'delete'].includes(sub)) {
+  if (!['list', 'create', 'update', 'status', 'delete', 'read'].includes(sub)) {
     commentUsageError(`unknown subcommand: od comment ${sub}`);
   }
-  if (!projectId || !conversationId || ((sub === 'update' || sub === 'status' || sub === 'delete') && !commentId)) {
+  if (!projectId || (sub !== 'read' && (!conversationId || ((sub === 'update' || sub === 'status' || sub === 'delete') && !commentId)))) {
     commentUsageError(`od comment ${sub} requires projectId, conversationId${sub === 'update' || sub === 'status' || sub === 'delete' ? ', and commentId' : ''}`);
   }
   const workspaceHeaders = workspaceHeadersFromExplicitFlags(flags) ?? {};
   const base = await cliDaemonBaseUrl(flags);
+  if (sub === 'read') {
+    const readAt = flags['read-at'] === undefined ? Date.now() : Number(flags['read-at']);
+    if (!Number.isFinite(readAt)) commentUsageError('--read-at must be a finite epoch milliseconds value');
+    let response;
+    try {
+      response = await fetch(`${base}/api/projects/${encodeURIComponent(projectId)}/comments/read`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', ...workspaceHeaders },
+        body: JSON.stringify({ readAt }),
+      });
+    } catch (error) {
+      surfaceFetchError(error, base);
+      process.exit(3);
+    }
+    if (!response.ok) return structuredHttpFailure(response);
+    const payload = await response.json();
+    if (flags.json) return process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    console.log(`[comment] read ${payload.projectId}`);
+    return;
+  }
   const collectionPath = `/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/comments`;
   let path = collectionPath;
   let method = 'GET';

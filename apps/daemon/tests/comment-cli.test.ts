@@ -128,6 +128,17 @@ describe('od comment CLI', () => {
     expect(result.stdout).toContain('--prompt-file <path|->');
   });
 
+  it('marks a project read through the frozen PUT endpoint', async () => {
+    stub = await startStubServer();
+    const result = await runCli([
+      'comment', 'read', 'project-1', '--read-at', '123', '--daemon-url', stub.baseUrl, '--json',
+    ]);
+    expect(result.code).toBe(0);
+    expect(stub.requests).toHaveLength(1);
+    expect(stub.requests[0]).toMatchObject({ method: 'PUT', url: '/api/projects/project-1/comments/read' });
+    expect(JSON.parse(stub.requests[0]!.body)).toEqual({ readAt: 123 });
+  });
+
   it('uses the existing comment HTTP API for list, create, update, status, and delete', async () => {
     stub = await startStubServer();
     const common = ['--workspace', 'ws-1', '--workspace-member', 'member-1', '--daemon-url', stub.baseUrl, '--json'];
