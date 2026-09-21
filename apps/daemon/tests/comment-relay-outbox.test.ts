@@ -208,14 +208,34 @@ describe('durable Team comment relay outbox', () => {
     publications.delete({ resourceTeamId: owner.workspaceId, ownerMemberId: owner.workspaceMemberId, projectId: 'p1', filePath: 'index.html' });
     await service.flushPendingComments();
     expect(pushes).toBe(0);
-    expect(outbox.count()).toBe(1);
+    // A missing exact-file publication in the durable local store is an
+    // authoritative unpublish, not a temporary delivery-authority outage.
+    expect(outbox.count()).toBe(0);
 
-    publications.set({ resourceTeamId: owner.workspaceId, ownerMemberId: owner.workspaceMemberId, projectId: 'p1', filePath: 'index.html' }, { url: 'https://example.test/share', slug: 'new-slug', fileName: 'index.html' });
-    freshIdentity = { ...owner, workspaceMemberId: 'switched-account' };
-    await service.flushPendingComments();
-    expect(pushes).toBe(0);
-    expect(outbox.count()).toBe(1);
     service.dispose();
+    // A stable alias can be republished after process restart, but the old
+    // canceled payload must not be reconstructed from the durable outbox.
+    closeDatabase();
+    const reopened = openDatabase(tempDir!);
+    const restartedPublications = createSqlitePublicFilePublicationStore(reopened, () => 100);
+    restartedPublications.set({ resourceTeamId: owner.workspaceId, ownerMemberId: owner.workspaceMemberId, projectId: 'p1', filePath: 'index.html' }, { url: 'https://example.test/share', slug: 'public-slug', fileName: 'index.html' });
+    const restartedScope = (projectId: string, filePath: string, current: WorkspaceCollabContext) =>
+      commentRelayScope({ binding, context: current, projectId, filePath, publications: restartedPublications });
+    const restartedOutbox = createCommentRelayOutboxStore(reopened, () => 100);
+    const restarted = createCollabCloudService({
+      client: clientWithPush(async () => { pushes += 1; return { seq: 1 }; }),
+      commentOutbox: restartedOutbox, commentRelayScope: restartedScope,
+      resolveLocalProjectRelayBinding: () => ({ workspaceId: owner.workspaceId, ownerMemberId: owner.workspaceMemberId }),
+      validateCommentRelayProjectBinding: (record) => commentRelayLocalBindingMatches(record, binding),
+      resolveCommentRelayWorkspaceContext: async () => owner,
+      listRemoteProjectRelayBindings: async () => [],
+      listProjectIds: () => [], resolveLocalConversationId: () => 'conv-local', mergeComment: () => false,
+      now: () => 100, retryDelayMs: () => 0,
+    });
+    await restarted.flushPendingComments();
+    expect(pushes).toBe(0);
+    expect(restartedOutbox.count()).toBe(0);
+    restarted.dispose();
   });
 
   it.each([
@@ -277,7 +297,7 @@ describe('durable Team comment relay outbox', () => {
     await service.flushPendingComments();
 
     expect(pushed).toEqual(['index.html']);
-    expect(outbox.count()).toBe(1);
+    expect(outbox.count()).toBe(0);
     service.dispose();
   });
 
@@ -317,8 +337,11 @@ describe('durable Team comment relay outbox', () => {
 
     await service.flushPendingComments();
     expect(pushed).toEqual(['p1']);
-    expect(outbox.count()).toBe(1);
+    expect(outbox.count()).toBe(0);
 
+    // A later login/principal transition is not proof of an unpublish; it
+    // leaves a newly queued active-file row deferred for retry.
+    expect(service.enqueueComment(comment({ id: 'deferred-p1', projectId: 'p1', authorMemberId: owner.workspaceMemberId }), owner)).toBe(true);
     freshIdentity = { ...owner, workspaceMemberId: 'switched-account' };
     await service.flushPendingComments();
     expect(pushed).toEqual(['p1']);

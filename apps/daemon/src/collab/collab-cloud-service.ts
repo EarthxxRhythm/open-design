@@ -608,10 +608,13 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
       for (const record of eligible) {
         if (relayIdentityMatches(context, record)) deliverable.push(record);
         else {
-          deferOutboxRecord(
-            record,
-            new Error('comment relay personal publication authority is unavailable or changed'),
-          );
+          // Fresh workspace authority is already proven for this identity
+          // batch. A failed exact-file scope check therefore means the local
+          // durable publication witness was removed (or its creator binding
+          // changed), not that login/workspace resolution is temporarily down.
+          // Do not let a stopped publication revive from SQLite after restart.
+          deps.commentOutbox?.acknowledge(record);
+          deps.onError?.(new Error('comment relay personal publication stopped or creator changed; canceled'));
         }
       }
       await pushOutboxProjectLanes(deliverable, identity);
