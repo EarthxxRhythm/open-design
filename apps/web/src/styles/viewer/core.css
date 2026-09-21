@@ -1656,25 +1656,36 @@
   z-index: 2;
   left: 0;
   top: 0;
-  width: 42px;
-  height: 42px;
+  box-sizing: border-box;
+  width: 20px;
+  height: 20px;
   padding: 0;
-  border: 3px solid #fff;
-  border-radius: 50% 50% 50% 10px;
-  background: #d96a46;
-  color: white;
-  font-size: 18px;
-  font-weight: 700;
-  line-height: 36px;
-  text-align: center;
-  box-shadow: 0 10px 22px rgba(33, 24, 18, 0.22);
+  border: 0;
+  border-radius: 50% 50% 50% 4px;
+  background: #282828;
+  color: #FFFFFF;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 0 2px #FFFFFF;
   pointer-events: auto;
   transform: translate(-50%, -50%);
 }
 .comment-saved-pin:hover,
 .comment-active-pin:hover {
-  background: #c95e3e;
-  transform: translate(-50%, calc(-50% - 1px));
+  background: #282828;
+  transform: translate(-50%, -50%);
+}
+/* The lost marker keeps the exact same geometry as the resolved pin while
+   making the fallback explicit without changing anchor resolution. */
+.comment-saved-marker--lost .comment-saved-pin {
+  border: 1px dashed #888888;
+  background: #FFFFFF;
+  color: #666666;
+  box-shadow: none;
 }
 .comment-active-pin {
   pointer-events: none;
@@ -2413,6 +2424,14 @@
   line-height: 20px;
   word-break: break-word;
   white-space: pre-wrap;
+}
+/* Cross-slide deck comments remain in the list; this is a status line, not a
+   navigation control, so clicking it follows the item's existing no-flip path. */
+.comment-side-slide {
+  padding-left: 28px;
+  color: #8A5A12;
+  font-size: 12px;
+  line-height: 18px;
 }
 .comment-side-attachments {
   display: flex;

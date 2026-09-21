@@ -12083,8 +12083,10 @@ describe('FileViewer tweaks toolbar', () => {
 
     const rows = screen.getAllByTestId('comment-side-item');
     expect(rows).toHaveLength(3);
-    expect(within(rows.find((row) => row.dataset.commentId === 'comment-slide-one')!).getByText('Slide 1 / 18')).toBeTruthy();
-    expect(within(rows.find((row) => row.dataset.commentId === 'comment-slide-four')!).getByText('Slide 4 / 18')).toBeTruthy();
+    const firstSlideRow = rows.find((row) => row.dataset.commentId === 'comment-slide-one')!;
+    const fourthSlideRow = rows.find((row) => row.dataset.commentId === 'comment-slide-four')!;
+    expect(within(firstSlideRow).getByText('Slide 1 / 18').className).toBe('comment-side-slide');
+    expect(within(fourthSlideRow).getByText('Slide 4 / 18').className).toBe('comment-side-slide');
     expect(within(rows.find((row) => row.dataset.commentId === 'comment-without-slide')!).queryByText(/Slide \d+ \/ 18/)).toBeNull();
 
     const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
@@ -15031,6 +15033,16 @@ describe('LiveArtifactRefreshHistoryPanel', () => {
     }
 
     const marker = await screen.findByTestId(`comment-saved-marker-${elementId}`);
-    expect(marker.querySelector('button')?.getAttribute('title')).toContain(expected);
+    const pin = marker.querySelector('button');
+    expect(marker).toHaveClass(`comment-saved-marker--${_state}`);
+    expect(pin).toHaveClass('comment-saved-pin');
+    expect(pin).toHaveAttribute('title', expect.stringContaining(expected));
+  });
+
+  it('keeps D1–D4 marker and deck-page presentation on the rendered selectors', () => {
+    const css = readFileSync(join(process.cwd(), 'src/styles/viewer/core.css'), 'utf8');
+    expect(css).toMatch(/\.comment-saved-pin,\s*\.comment-active-pin[\s\S]*?width: 20px;[\s\S]*?height: 20px;[\s\S]*?border: 0;[\s\S]*?border-radius: 50% 50% 50% 4px;[\s\S]*?background: #282828;[\s\S]*?font-size: 10px;[\s\S]*?font-weight: 600;[\s\S]*?box-shadow: 0 0 0 2px #FFFFFF;/);
+    expect(css).toMatch(/\.comment-saved-marker--lost \.comment-saved-pin[\s\S]*?border: 1px dashed #888888;[\s\S]*?background: #FFFFFF;[\s\S]*?color: #666666;[\s\S]*?box-shadow: none;/);
+    expect(css).toMatch(/\.comment-side-slide[\s\S]*?padding-left: 28px;[\s\S]*?color: #8A5A12;[\s\S]*?font-size: 12px;[\s\S]*?line-height: 18px;/);
   });
 });

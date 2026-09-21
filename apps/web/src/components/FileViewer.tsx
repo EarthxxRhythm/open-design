@@ -4871,11 +4871,6 @@ export function CommentSidePanel({
                   displayNumber={displayCommentNumber(comment, index)}
                   t={t}
                 />
-                {typeof comment.slideIndex === 'number' && deckSlideCount && deckSlideCount > 0 ? (
-                  <span className="comment-side-slide">
-                    {t('fileViewer.speakerNotesSlide', { current: comment.slideIndex + 1, total: deckSlideCount })}
-                  </span>
-                ) : null}
                 <span className="comment-side-time">{formatCommentTime(commentActivityAt(comment), t)}</span>
                 {sendable ? (
                   <button
@@ -4893,6 +4888,11 @@ export function CommentSidePanel({
                 ) : null}
               </div>
               <div className="comment-side-body">{comment.note}</div>
+              {typeof comment.slideIndex === 'number' && deckSlideCount && deckSlideCount > 0 ? (
+                <span className="comment-side-slide">
+                  {t('fileViewer.speakerNotesSlide', { current: comment.slideIndex + 1, total: deckSlideCount })}
+                </span>
+              ) : null}
               {projectId && comment.attachments && comment.attachments.length > 0 ? (
                 <div className="comment-side-attachments">
                   {comment.attachments.map((attachment) => {
