@@ -3427,6 +3427,7 @@ export const zhTW: Dict = {
   "fileViewer.workspaceAccessPrivate": "只有自己",
   "fileViewer.workspaceAccessMembers": "工作空間成員",
   "fileViewer.publishSingleFileTitle": "產生分享連結",
+  "fileViewer.generateAndCopyLink": "產生並複製連結",
   "fileViewer.publishSingleFileDescription": "任何取得連結的人都可以線上查看。目前僅支援分享單一檔案，內嵌圖片等本地資源暫不支援。",
   "fileViewer.openFileRequired": "打开文件后可用。",
   "fileViewer.publishFile": "發布檔案",
@@ -3439,6 +3440,7 @@ export const zhTW: Dict = {
 
   "fileViewer.publishFileRequiresTeam": "發布公開連結需要團隊工作區。請切換到團隊工作區，或使用「部署」發布此檔案。",
   "fileViewer.publishFileRequiresWorkspace": "產生分享連結需要登入工作區。請登入 OpenDesign Cloud，或改用「部署」分享此檔案。",
+  "fileViewer.publishFileTooLarge": "專案超過 20 MiB 分享上限。請減小 HTML 和引用資源的總大小後重試。",
   "fileViewer.publishFileFailed": "產生分享連結失敗，請稍後重試，或改用下方的部署方式。",
   "fileViewer.workspaceShareSuccess": "已分享給工作空間成員",
   "fileViewer.workspaceShareFailed": "分享到工作空間失敗",

@@ -3246,6 +3246,7 @@ export const ru: Dict = {
   'fileViewer.workspaceAccessPrivate': 'Only me',
   'fileViewer.workspaceAccessMembers': 'Workspace members',
   'fileViewer.publishSingleFileTitle': 'Получить ссылку для доступа',
+  "fileViewer.generateAndCopyLink": "Создать и скопировать ссылку",
   'fileViewer.publishSingleFileDescription': 'Любой, у кого есть ссылка, может открыть её онлайн. Пока можно поделиться только одним файлом — встроенные локальные ресурсы, например изображения, ещё не поддерживаются.',
   'fileViewer.openFileRequired': 'Open a file to use this.',
   'fileViewer.publishFile': 'Publish file',
@@ -3258,6 +3259,7 @@ export const ru: Dict = {
 
   'fileViewer.publishFileRequiresTeam': 'Для публикации общедоступной ссылки нужно командное рабочее пространство. Переключитесь на командное пространство или опубликуйте файл через «Развернуть».',
   'fileViewer.publishFileRequiresWorkspace': 'Для ссылки нужен вход в рабочее пространство. Войдите в OpenDesign Cloud или поделитесь файлом через деплой.',
+  'fileViewer.publishFileTooLarge': "Проект превышает лимит публикации 20 MiB. Уменьшите размер HTML и связанных ресурсов и повторите попытку.",
   'fileViewer.publishFileFailed': 'Не удалось создать ссылку. Повторите попытку или используйте вариант деплоя ниже.',
   'fileViewer.workspaceShareSuccess': 'Shared with workspace members',
   'fileViewer.workspaceShareFailed': 'Could not share with workspace',

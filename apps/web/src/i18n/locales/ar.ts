@@ -3246,6 +3246,7 @@ export const ar: Dict = {
   'fileViewer.workspaceAccessPrivate': 'Only me',
   'fileViewer.workspaceAccessMembers': 'Workspace members',
   'fileViewer.publishSingleFileTitle': 'إنشاء رابط مشاركة',
+  "fileViewer.generateAndCopyLink": "إنشاء الرابط ونسخه",
   'fileViewer.publishSingleFileDescription': 'يمكن لأي شخص لديه الرابط عرضه عبر الإنترنت. حاليًا يمكن مشاركة ملف واحد فقط — الموارد المحلية المضمّنة مثل الصور غير مدعومة بعد.',
   'fileViewer.openFileRequired': 'Open a file to use this.',
   'fileViewer.publishFile': 'Publish file',
@@ -3258,6 +3259,7 @@ export const ar: Dict = {
 
   'fileViewer.publishFileRequiresTeam': 'يتطلب نشر رابط عام مساحة عمل جماعية. بدّل إلى مساحة عمل جماعية، أو استخدم النشر لإتاحة هذا الملف.',
   'fileViewer.publishFileRequiresWorkspace': 'يتطلب رابط المشاركة مساحة عمل مسجّلة الدخول. سجّل الدخول إلى OpenDesign Cloud أو شارك هذا الملف عبر النشر.',
+  'fileViewer.publishFileTooLarge': "يتجاوز هذا المشروع حد المشاركة البالغ 20 MiB. قلّل حجم HTML والموارد المشار إليها، ثم أعد المحاولة.",
   'fileViewer.publishFileFailed': 'تعذّر إنشاء رابط المشاركة. حاول مجددًا أو استخدم خيار نشر أدناه.',
   'fileViewer.workspaceShareSuccess': 'Shared with workspace members',
   'fileViewer.workspaceShareFailed': 'Could not share with workspace',

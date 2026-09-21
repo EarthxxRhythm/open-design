@@ -6756,8 +6756,8 @@ describe('FileViewer SVG artifacts', () => {
     // no save/template authoring controls.
     expect(await screen.findByRole('menu')).toBeTruthy();
     expect(screen.getByText('Share project in workspace')).toBeTruthy();
-    expect(await screen.findByText('Get a share link')).toBeTruthy();
-    expect(screen.getByRole('menuitem', { name: /Get a share link/i })).toBeTruthy();
+    expect(await screen.findByText('Generate and copy link')).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: /Generate and copy link/i })).toBeTruthy();
     expect(screen.getByText('SHARE ON YOUR OWN HOSTING')).toBeTruthy();
     expect(screen.getByRole('menuitem', { name: /Deploy to Vercel/i })).toBeTruthy();
     expect(screen.getByRole('menuitem', { name: /Deploy to Cloudflare Pages/i })).toBeTruthy();
@@ -6838,8 +6838,8 @@ describe('FileViewer SVG artifacts', () => {
       context,
     );
 
-    expect(await screen.findByText('Get a share link')).toBeTruthy();
-    expect(screen.getByRole('menuitem', { name: /Get a share link/i })).toBeTruthy();
+    expect(await screen.findByText('Generate and copy link')).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: /Generate and copy link/i })).toBeTruthy();
     expect(screen.queryByText('Share project in workspace')).toBeNull();
     expect(screen.queryByText('SHARE ON YOUR OWN HOSTING')).toBeNull();
     expect(screen.queryByRole('menuitem', { name: /Deploy to Vercel/i })).toBeNull();
@@ -6894,8 +6894,8 @@ describe('FileViewer SVG artifacts', () => {
     expect(await screen.findByRole('menu')).toBeTruthy();
     // The single-file publish card — the thing the dogfood report said was
     // missing — is back for a personal workspace.
-    expect(await screen.findByText('Get a share link')).toBeTruthy();
-    expect(screen.getByRole('menuitem', { name: /Get a share link/i })).toBeTruthy();
+    expect(await screen.findByText('Generate and copy link')).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: /Generate and copy link/i })).toBeTruthy();
     // "Share project in workspace" is TEAM project sharing, which a personal
     // workspace has no team to receive — see the dedicated test below
     // (recvq5bM78HWCE) for the card's own gating.
@@ -6939,7 +6939,7 @@ describe('FileViewer SVG artifacts', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /share/i }));
     expect(await screen.findByRole('menu')).toBeTruthy();
-    fireEvent.click(await screen.findByRole('menuitem', { name: /Get a share link/i }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Generate and copy link/i }));
 
     await waitFor(() => expect(calls.some((call) => call.url.includes('publish-public'))).toBe(true));
     const publishCall = calls.find((call) => call.url.includes('publish-public'));
@@ -7002,14 +7002,14 @@ describe('FileViewer SVG artifacts', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: /share/i }));
-    fireEvent.click(await screen.findByRole('menuitem', { name: /Get a share link/i }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Generate and copy link/i }));
 
     expect(await screen.findByText(publicUrl)).toBeTruthy();
     const stopSharing = screen.getByRole('button', { name: /Stop sharing/i });
     fireEvent.click(stopSharing);
 
     await waitFor(() => expect(unpublishBodies).toEqual([{ slug: 'manual-revoke-slug' }]));
-    expect(await screen.findByRole('menuitem', { name: /Get a share link/i })).toBeTruthy();
+    expect(await screen.findByRole('menuitem', { name: /Generate and copy link/i })).toBeTruthy();
   });
 
   // Reading the help must never publish. The publish row's trailing "?" carries
@@ -7084,7 +7084,7 @@ describe('FileViewer SVG artifacts', () => {
       await waitFor(() => expect(screen.getByRole('menu')).toBeTruthy());
       expect(publishCalls).toEqual([]);
       // The publish row is still sitting there unactivated.
-      expect(screen.getByRole('menuitem', { name: /Get a share link/i })).toBeTruthy();
+      expect(screen.getByRole('menuitem', { name: label === 'HtmlViewer' ? /Generate and copy link/i : /Get a share link/i })).toBeTruthy();
     });
   }
 
@@ -7158,7 +7158,7 @@ describe('FileViewer SVG artifacts', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /share/i }));
     expect(await screen.findByRole('menu')).toBeTruthy();
-    await screen.findByText('Get a share link');
+    await screen.findByText('Generate and copy link');
     expect(screen.queryByText('Share project in workspace')).toBeNull();
   });
 
@@ -7185,7 +7185,7 @@ describe('FileViewer SVG artifacts', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /share/i }));
     expect(await screen.findByRole('menu')).toBeTruthy();
-    await screen.findByText('Get a share link');
+    await screen.findByText('Generate and copy link');
     expect(screen.queryByText('Nothing to share yet')).toBeNull();
     expect(screen.queryByText('No team to share with yet')).toBeNull();
     expect(screen.queryByRole('link', { name: /create team/i })).toBeNull();
@@ -7230,8 +7230,8 @@ describe('FileViewer SVG artifacts', () => {
     expect(await screen.findByRole('menu')).toBeTruthy();
     // Gone, not merely disabled — a signed-out caller has no id to publish
     // under and the daemon answers 409 WORKSPACE_IDENTITY_REQUIRED.
-    expect(screen.queryByText('Get a share link')).toBeNull();
-    expect(screen.queryByRole('menuitem', { name: /Get a share link/i })).toBeNull();
+    expect(screen.queryByText('Generate and copy link')).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: /Generate and copy link/i })).toBeNull();
     expect(screen.queryByText('Share project in workspace')).toBeNull();
     // recvqgif6Xa7Wb: the "no team to share with yet" bridge card that used to
     // fill this gap was product-ruled out entirely (never a designed surface —
