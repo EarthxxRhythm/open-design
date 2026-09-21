@@ -223,9 +223,9 @@ export function ShareTab({
                           </div>
                         </div>
                       ) : (
-                        <button
+                        <Button
                           type="button"
-                          className="share-menu-item"
+                          className={styles.copyButton}
                           role="menuitem"
                           disabled={streaming || viewerOnly || publishingPublicFile}
                           aria-busy={publishingPublicFile}
@@ -234,19 +234,30 @@ export function ShareTab({
                             void publishCurrentFilePublic();
                           }}
                         >
-                          <span className="share-menu-icon">
-                            <RemixIcon
-                              name={publishingPublicFile ? 'loader-4-line' : 'upload-cloud-2-line'}
-                              size={15}
-                              className={publishingPublicFile ? 'icon-spin' : undefined}
-                            />
-                          </span>
+                          {publishingPublicFile ? (
+                            <RemixIcon name="loader-4-line" size={15} className="icon-spin" />
+                          ) : (
+                            <svg
+                              width="13"
+                              height="13"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="1.8"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              aria-hidden="true"
+                              focusable="false"
+                            >
+                              <path d="M12 15V4m-4 4 4-4 4 4M5 20h14" />
+                            </svg>
+                          )}
                           <span>{publishingPublicFile
                             ? t('fileViewer.publishingFile')
                             : publishFailureKey === 'fileViewer.publishFileFailed' || publishFailureKey === 'fileViewer.publishFileTooLarge'
                               ? t('preview.retry')
-                              : t('fileViewer.publishSingleFileTitle')}</span>
-                        </button>
+                              : t('fileViewer.generateAndCopyLink')}</span>
+                        </Button>
                       ) }
                       {publishFailureKey ? (
                         <p className="chrome-publish-error" role="status">

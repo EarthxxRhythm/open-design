@@ -3246,6 +3246,7 @@ export const ru: Dict = {
   'fileViewer.workspaceAccessPrivate': 'Only me',
   'fileViewer.workspaceAccessMembers': 'Workspace members',
   'fileViewer.publishSingleFileTitle': 'Получить ссылку для доступа',
+  "fileViewer.generateAndCopyLink": "Создать и скопировать ссылку",
   'fileViewer.publishSingleFileDescription': 'Любой, у кого есть ссылка, может открыть её онлайн. Пока можно поделиться только одним файлом — встроенные локальные ресурсы, например изображения, ещё не поддерживаются.',
   'fileViewer.openFileRequired': 'Open a file to use this.',
   'fileViewer.publishFile': 'Publish file',

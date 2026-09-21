@@ -3246,6 +3246,7 @@ export const ptBR: Dict = {
   'fileViewer.workspaceAccessPrivate': 'Only me',
   'fileViewer.workspaceAccessMembers': 'Workspace members',
   'fileViewer.publishSingleFileTitle': 'Obter link de compartilhamento',
+  "fileViewer.generateAndCopyLink": "Gerar e copiar link",
   'fileViewer.publishSingleFileDescription': 'Qualquer pessoa com o link pode vê-lo online. Por enquanto só é possível compartilhar um único arquivo — recursos locais incorporados, como imagens, ainda não são suportados.',
   'fileViewer.openFileRequired': 'Open a file to use this.',
   'fileViewer.publishFile': 'Publish file',

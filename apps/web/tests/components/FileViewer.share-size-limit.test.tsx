@@ -164,7 +164,7 @@ async function setup(options: Parameters<typeof stubFetch>[0] = { publishBody: p
   const fetch = stubFetch(options);
   const view = renderProjectFileViewer(teamWorkspaceContext(), props);
   fireEvent.click(await screen.findByRole('button', { name: /^share$/i }));
-  await screen.findByRole('menuitem', { name: /get a share link/i });
+  await screen.findByRole('menuitem', { name: /generate and copy link/i });
   vi.useFakeTimers();
   return { fetch, view };
 }
@@ -172,7 +172,7 @@ it('keeps publish inspectable but inert while streaming and restores it after co
   const fetch = stubFetch({ publishBody: publication });
   const view = renderProjectFileViewer(teamWorkspaceContext(), { ...props, streaming: true });
   fireEvent.click(await screen.findByRole('button', { name: /^share$/i }));
-  const action = await screen.findByRole('menuitem', { name: /get a share link/i }) as HTMLButtonElement;
+  const action = await screen.findByRole('menuitem', { name: /generate and copy link/i }) as HTMLButtonElement;
   expect(action.disabled).toBe(true);
   fireEvent.click(action);
   expect(posts(fetch)).toHaveLength(0);
@@ -208,7 +208,7 @@ it('does not auto-copy a pending publication when generation has resumed', async
 
 async function publish() {
   await act(async () => {
-    fireEvent.click(screen.getByRole('menuitem', { name: /get a share link/i }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /generate and copy link/i }));
   });
 }
 async function tick(ms: number) {

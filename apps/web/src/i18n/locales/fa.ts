@@ -3253,6 +3253,7 @@ export const fa: Dict = {
   'fileViewer.workspaceAccessPrivate': 'Only me',
   'fileViewer.workspaceAccessMembers': 'Workspace members',
   'fileViewer.publishSingleFileTitle': 'ایجاد پیوند اشتراک‌گذاری',
+  "fileViewer.generateAndCopyLink": "ایجاد و کپی پیوند",
   'fileViewer.publishSingleFileDescription': 'هر کسی که پیوند را داشته باشد می‌تواند آن را آنلاین ببیند. در حال حاضر فقط یک فایل قابل اشتراک‌گذاری است — منابع محلی جاسازی‌شده مانند تصاویر هنوز پشتیبانی نمی‌شوند.',
   'fileViewer.openFileRequired': 'Open a file to use this.',
   'fileViewer.publishFile': 'Publish file',

@@ -3246,6 +3246,7 @@ export const id: Dict = {
   'fileViewer.workspaceAccessPrivate': 'Only me',
   'fileViewer.workspaceAccessMembers': 'Workspace members',
   'fileViewer.publishSingleFileTitle': 'Dapatkan tautan berbagi',
+  "fileViewer.generateAndCopyLink": "Buat dan salin tautan",
   'fileViewer.publishSingleFileDescription': 'Siapa pun dengan tautan dapat melihatnya secara online. Saat ini hanya satu file yang dapat dibagikan — aset lokal tersemat seperti gambar belum didukung.',
   'fileViewer.openFileRequired': 'Open a file to use this.',
   'fileViewer.publishFile': 'Publish file',

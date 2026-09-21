@@ -3246,6 +3246,7 @@ export const th: Dict = {
   'fileViewer.workspaceAccessPrivate': 'Only me',
   'fileViewer.workspaceAccessMembers': 'Workspace members',
   'fileViewer.publishSingleFileTitle': 'สร้างลิงก์แชร์',
+  "fileViewer.generateAndCopyLink": "สร้างและคัดลอกลิงก์",
   'fileViewer.publishSingleFileDescription': 'ทุกคนที่มีลิงก์สามารถดูออนไลน์ได้ ขณะนี้แชร์ได้ครั้งละไฟล์เดียวเท่านั้น ยังไม่รองรับทรัพยากรในเครื่องที่ฝังอยู่ เช่น รูปภาพ',
   'fileViewer.openFileRequired': 'Open a file to use this.',
   'fileViewer.publishFile': 'Publish file',

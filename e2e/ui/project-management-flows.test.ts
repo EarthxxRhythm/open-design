@@ -2726,9 +2726,21 @@ test('[P1] repeated artifact cards anchor Share to the clicked turn and keep the
   await expect(anchoredMenu).toHaveAttribute('data-anchored-menu', secondAnchor!);
   const menu = anchoredMenu.locator('.share-menu-popover[role="menu"]');
   await expect(menu).toBeVisible();
-  const shareLink = menu.getByRole('menuitem', { name: 'Get a share link', exact: true });
+  const shareLink = menu.getByRole('menuitem', { name: 'Generate and copy link', exact: true });
   await expect(shareLink).toBeVisible();
   await expect(shareLink).toBeEnabled();
+  // S1's local button seam must survive the real shared/global CSS cascade.
+  for (const [property, value] of Object.entries({
+    height: '32px', 'border-radius': '6px', 'padding-top': '0px', 'padding-right': '8px',
+    'padding-bottom': '0px', 'padding-left': '8px', gap: '5px',
+    'background-color': 'rgb(41, 41, 43)', color: 'rgb(255, 255, 255)',
+    'font-size': '12px', 'font-weight': '500', 'line-height': '18px', 'border-top-width': '0px',
+  })) {
+    await expect(shareLink).toHaveCSS(property, value);
+  }
+  await expect(shareLink.locator('svg')).toHaveAttribute('width', '13');
+  await expect(shareLink.locator('svg')).toHaveAttribute('height', '13');
+  await expect(shareLink.locator('svg path')).toHaveAttribute('d', 'M12 15V4m-4 4 4-4 4 4M5 20h14');
   await expect(menu).not.toContainText(/Quick Share/i);
   await expect(menu).not.toContainText('Share project in workspace');
   await expect(menu).not.toContainText('Deploy to Vercel');

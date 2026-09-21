@@ -3246,6 +3246,7 @@ export const ko: Dict = {
   'fileViewer.workspaceAccessPrivate': 'Only me',
   'fileViewer.workspaceAccessMembers': 'Workspace members',
   'fileViewer.publishSingleFileTitle': '공유 링크 만들기',
+  "fileViewer.generateAndCopyLink": "링크 생성 및 복사",
   'fileViewer.publishSingleFileDescription': '링크가 있는 사람은 누구나 온라인으로 볼 수 있습니다. 현재는 단일 파일만 공유할 수 있으며, 이미지 등 내장 로컬 리소스는 아직 지원되지 않습니다.',
   'fileViewer.openFileRequired': 'Open a file to use this.',
   'fileViewer.publishFile': 'Publish file',
