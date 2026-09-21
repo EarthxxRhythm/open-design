@@ -4591,6 +4591,7 @@ export function CommentSidePanel({
   renderCreateForm = true,
   t,
   composer,
+  deckSlideCount,
 }: {
   comments: PreviewComment[];
   projectId?: string;
@@ -4623,6 +4624,8 @@ export function CommentSidePanel({
   renderCreateForm?: boolean;
   t: TranslateFn;
   composer?: ReactNode;
+  /** Total deck slides, when the sidebar is attached to a deck preview. */
+  deckSlideCount?: number;
 }) {
   const { workspaceContext } = useProjectCollabContext();
   const [newCommentDraft, setNewCommentDraft] = useState('');
@@ -4867,6 +4870,11 @@ export function CommentSidePanel({
                   displayNumber={displayCommentNumber(comment, index)}
                   t={t}
                 />
+                {typeof comment.slideIndex === 'number' && deckSlideCount && deckSlideCount > 0 ? (
+                  <span className="comment-side-slide">
+                    {t('fileViewer.speakerNotesSlide', { current: comment.slideIndex + 1, total: deckSlideCount })}
+                  </span>
+                ) : null}
                 <span className="comment-side-time">{formatCommentTime(commentActivityAt(comment), t)}</span>
                 {sendable ? (
                   <button
@@ -5076,6 +5084,7 @@ function CommentSideDock({
   renderCreateForm = true,
   t,
   composer,
+  deckSlideCount,
 }: {
   comments: PreviewComment[];
   projectId?: string;
@@ -5104,6 +5113,7 @@ function CommentSideDock({
   renderCreateForm?: boolean;
   t: TranslateFn;
   composer?: ReactNode;
+  deckSlideCount?: number;
 }) {
   return (
     <div
@@ -5135,6 +5145,7 @@ function CommentSideDock({
         renderCreateForm={renderCreateForm}
         t={t}
         composer={composer}
+        deckSlideCount={deckSlideCount}
       />
     </div>
   );
@@ -16475,6 +16486,7 @@ function HtmlViewer({
     <CommentSideDock
       comments={visibleSideComments}
       projectId={projectId}
+      deckSlideCount={effectiveDeck ? slideState?.count : undefined}
       selectedIds={selectedSideCommentIds}
       activeCommentId={activeSideCommentId}
       // The panel used to be pinned open whenever it was portaled (it docked

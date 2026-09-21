@@ -11973,17 +11973,18 @@ describe('FileViewer tweaks toolbar', () => {
     expect(screen.queryByTestId('comment-saved-marker-hero')).toBeNull();
   });
 
-  it('keeps comment marker numbers global across deck slides', async () => {
+  it('isolates deck overlay pins by slide while retaining labeled cross-slide comments in the sidebar', async () => {
     const slideOneComment: PreviewComment = {
       id: 'comment-slide-one',
       projectId: 'project-1',
       conversationId: 'conversation-1',
       filePath: 'deck.html',
-      elementId: 'slide-one-title',
-      selector: '[data-od-id="slide-one-title"]',
+      // A reused selector/id across slides must not leak this pin onto slide four.
+      elementId: 'shared-title',
+      selector: '[data-od-id="shared-title"]',
       label: 'Slide one title',
       text: 'Slide one',
-      htmlHint: '<h1 data-od-id="slide-one-title">Slide one</h1>',
+      htmlHint: '<h1 data-od-id="shared-title">Slide one</h1>',
       position: { x: 8, y: 12, width: 120, height: 48 },
       note: 'First slide note',
       status: 'open',
@@ -11994,16 +11995,27 @@ describe('FileViewer tweaks toolbar', () => {
     const slideFourComment: PreviewComment = {
       ...slideOneComment,
       id: 'comment-slide-four',
-      elementId: 'slide-four-title',
-      selector: '[data-od-id="slide-four-title"]',
+      elementId: 'shared-title',
+      selector: '[data-od-id="shared-title"]',
       label: 'Slide four title',
       text: 'Slide four',
-      htmlHint: '<h1 data-od-id="slide-four-title">Slide four</h1>',
+      htmlHint: '<h1 data-od-id="shared-title">Slide four</h1>',
       position: { x: 24, y: 32, width: 140, height: 52 },
       note: 'Fourth slide note',
       createdAt: 20,
       updatedAt: 20,
       slideIndex: 3,
+    };
+    const legacyComment: PreviewComment = {
+      ...slideOneComment,
+      id: 'comment-without-slide',
+      elementId: 'legacy-title',
+      selector: '[data-od-id="legacy-title"]',
+      label: 'Legacy title',
+      note: 'Legacy slide-agnostic note',
+      createdAt: 30,
+      updatedAt: 30,
+      slideIndex: undefined,
     };
 
     render(
@@ -12026,7 +12038,7 @@ describe('FileViewer tweaks toolbar', () => {
         })}
         isDeck
         liveHtml={'<html><body><section class="slide">one</section><section class="slide">two</section></body></html>'}
-        previewComments={[slideOneComment, slideFourComment]}
+        previewComments={[slideOneComment, slideFourComment, legacyComment]}
       />,
     );
 
@@ -12041,21 +12053,44 @@ describe('FileViewer tweaks toolbar', () => {
       data: {
         type: 'od:comment-targets',
         targets: [{
-          elementId: 'slide-four-title',
-          selector: '[data-od-id="slide-four-title"]',
+          elementId: 'shared-title',
+          selector: '[data-od-id="shared-title"]',
           label: 'Slide four title',
           text: 'Slide four',
           position: { x: 24, y: 32, width: 140, height: 52 },
-          htmlHint: '<h1 data-od-id="slide-four-title">Slide four</h1>',
+          htmlHint: '<h1 data-od-id="shared-title">Slide four</h1>',
           slideIndex: 3,
+        }, {
+          elementId: 'legacy-title',
+          selector: '[data-od-id="legacy-title"]',
+          label: 'Legacy title',
+          text: 'Legacy slide-agnostic target',
+          position: { x: 12, y: 18, width: 100, height: 36 },
+          htmlHint: '<h1 data-od-id="legacy-title">Legacy</h1>',
         }],
       },
     }));
 
     await waitFor(() => {
-      expect(screen.getByTestId('comment-saved-marker-slide-four-title').textContent).toBe('2');
+      expect(screen.getByTestId('comment-saved-marker-shared-title').textContent).toBe('2');
     });
-    expect(screen.queryByTestId('comment-saved-marker-slide-one-title')).toBeNull();
+    // Null slideIndex retains its slide-agnostic legacy behavior.
+    expect(screen.getByTestId('comment-saved-marker-legacy-title').textContent).toBe('3');
+
+    const rows = screen.getAllByTestId('comment-side-item');
+    expect(rows).toHaveLength(3);
+    expect(within(rows.find((row) => row.dataset.commentId === 'comment-slide-one')!).getByText('Slide 1 / 18')).toBeTruthy();
+    expect(within(rows.find((row) => row.dataset.commentId === 'comment-slide-four')!).getByText('Slide 4 / 18')).toBeTruthy();
+    expect(within(rows.find((row) => row.dataset.commentId === 'comment-without-slide')!).queryByText(/Slide \d+ \/ 18/)).toBeNull();
+
+    const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
+    postMessage.mockClear();
+    fireEvent.click(rows.find((row) => row.dataset.commentId === 'comment-slide-one')!);
+
+    // Cross-slide sidebar selection edits the comment, never the deck state.
+    expect(postMessage).not.toHaveBeenCalledWith({ type: 'od:slide', action: 'go', index: 0 }, '*');
+    expect(rows.find((row) => row.dataset.commentId === 'comment-slide-one')!.textContent).toContain('First slide note');
+    expect(screen.getByTestId('comment-saved-marker-shared-title').textContent).toBe('2');
   });
 
   it('orders side comments by creation time (newest first) while keeping activity timestamps', () => {
