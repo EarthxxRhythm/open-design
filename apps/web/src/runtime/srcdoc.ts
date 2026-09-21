@@ -1435,7 +1435,7 @@ function injectBeforeHeadEnd(doc: string, payload: string): string {
   if (typeof DOMParser !== 'undefined') {
     try {
       const parsed = new DOMParser().parseFromString(doc, 'text/html');
-      if (parsed.head) parsed.head.insertAdjacentHTML('beforeend', payload);
+      if (parsed.head) parsed.head.append(parsed.createRange().createContextualFragment(payload));
       return serializeHtmlDocument(parsed);
     } catch { /* fall through to prepend */ }
   }
@@ -1451,7 +1451,7 @@ function injectBeforeBodyEnd(doc: string, payload: string): string {
   if (typeof DOMParser !== 'undefined') {
     try {
       const parsed = new DOMParser().parseFromString(doc, 'text/html');
-      if (parsed.body) parsed.body.insertAdjacentHTML('beforeend', payload);
+      if (parsed.body) parsed.body.append(parsed.createRange().createContextualFragment(payload));
       return serializeHtmlDocument(parsed);
     } catch { /* fall through to append */ }
   }
