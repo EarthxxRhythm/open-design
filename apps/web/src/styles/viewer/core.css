@@ -2348,14 +2348,29 @@
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: #0a0a0a;
-  color: #fff;
   font-size: 12px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-weight: 600;
+  font-weight: 500;
   flex-shrink: 0;
+}
+.viewer-comment-unread-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #E5484D;
+  color: #FFFFFF;
+  font-size: 10px;
+  font-weight: 700;
+  box-shadow: 0 0 0 1.5px #FFFFFF;
 }
 .comment-side-time {
   font-size: 12px;

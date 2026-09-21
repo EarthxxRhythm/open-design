@@ -63,12 +63,14 @@ vi.mock('../../src/state/projects', async () => {
 });
 
 import {
+  COMMENT_AUTHOR_AVATAR_COLORS,
   CommentSidePanel,
   FileViewer,
   LiveArtifactViewer,
   LiveArtifactRefreshHistoryPanel,
   SvgViewer,
   applyInspectOverridesToSource,
+  commentAuthorAvatarColor,
   commentPreviewCanvasSize,
   computeReorderedSortKey,
   desktopPreviewAutoFitZoomPercent,
@@ -11038,7 +11040,9 @@ describe('FileViewer tweaks toolbar', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     render(<FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()} liveHtml="<html><body /></html>" previewComments={comments} />);
-    await screen.findByTestId('comment-unread-dot');
+    const unreadBadge = await screen.findByTestId('comment-unread-dot');
+    expect(unreadBadge).toHaveTextContent('3');
+    expect(unreadBadge).toHaveClass('viewer-comment-unread-badge');
     expect(screen.getByTestId('comment-panel-toggle').getAttribute('aria-label')).toBe('Comments (3)');
     fireEvent.click(screen.getByTestId('comment-panel-toggle'));
     await waitFor(() => expect(screen.queryByTestId('comment-unread-dot')).toBeNull());
@@ -13385,6 +13389,23 @@ describe('FileViewer tweaks toolbar', () => {
     expect(within(item).queryByText(/Open Design 用户/)).toBeNull();
   });
 
+  it('uses the exact 30 foreground/background author swatches with stable hash selection', () => {
+    expect(COMMENT_AUTHOR_AVATAR_COLORS).toEqual([
+      { bg: '#7DB7FF', fg: '#144582' }, { bg: '#FFB86B', fg: '#803D12' }, { bg: '#B19AFF', fg: '#482D80' },
+      { bg: '#6DDDB1', fg: '#155C40' }, { bg: '#FF92BC', fg: '#7D234C' }, { bg: '#F7D45B', fg: '#75560C' },
+      { bg: '#69D5F0', fg: '#155365' }, { bg: '#FF9B85', fg: '#733526' }, { bg: '#8DE56C', fg: '#285728' },
+      { bg: '#D58FFF', fg: '#5A2C6D' }, { bg: '#91A9FF', fg: '#283F75' }, { bg: '#FFC76B', fg: '#634E28' },
+      { bg: '#68DEC9', fg: '#1C5C53' }, { bg: '#FF8BC7', fg: '#702D48' }, { bg: '#BDE66A', fg: '#445D20' },
+      { bg: '#B78AFF', fg: '#442C64' }, { bg: '#5ED9B3', fg: '#1B5349' }, { bg: '#FF939D', fg: '#6E342E' },
+      { bg: '#78C7FF', fg: '#2E516A' }, { bg: '#F5CF63', fg: '#6B5118' }, { bg: '#9AE883', fg: '#375C38' },
+      { bg: '#EA8AD7', fg: '#563450' }, { bg: '#6EDA94', fg: '#274E38' }, { bg: '#9E9BFF', fg: '#363861' },
+      { bg: '#FFA277', fg: '#6C3F1D' }, { bg: '#ABE779', fg: '#3D6030' }, { bg: '#68D4E6', fg: '#285567' },
+      { bg: '#D99AFA', fg: '#63365A' }, { bg: '#FFD17C', fg: '#625034' }, { bg: '#6CDCD9', fg: '#33585E' },
+    ]);
+    expect(commentAuthorAvatarColor('external-author')).toEqual({ bg: '#D99AFA', fg: '#63365A' });
+    expect(commentAuthorAvatarColor('external-author')).toBe(commentAuthorAvatarColor('external-author'));
+  });
+
   it('renders a user author from its trusted snapshot without querying the member directory', async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL) => new Response(
       JSON.stringify({ members: [] }),
@@ -13414,7 +13435,8 @@ describe('FileViewer tweaks toolbar', () => {
     const item = await screen.findByTestId('comment-side-item');
     const avatar = item.querySelector<HTMLElement>('.comment-side-avatar');
     expect(avatar?.textContent).toBe('A');
-    expect(avatar?.style.background).toBe('rgb(202, 138, 4)');
+    expect(avatar?.style.background).toBe('rgb(105, 213, 240)');
+    expect(avatar?.style.color).toBe('rgb(21, 83, 101)');
     expect(within(item).getByText(/Avery Visitor/)).toBeTruthy();
     expect(within(item).getByText(/comment.authorRole.sharePage/)).toBeTruthy();
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/api/workspace/members'))).toBe(false);
