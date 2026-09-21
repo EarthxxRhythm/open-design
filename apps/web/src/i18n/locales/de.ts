@@ -3246,6 +3246,7 @@ export const de: Dict = {
   'fileViewer.workspaceAccessPrivate': 'Only me',
   'fileViewer.workspaceAccessMembers': 'Workspace members',
   'fileViewer.publishSingleFileTitle': 'Freigabelink erstellen',
+  "fileViewer.generateAndCopyLink": "Link erstellen und kopieren",
   'fileViewer.publishSingleFileDescription': 'Jeder mit dem Link kann sie online ansehen. Derzeit kann nur eine einzelne Datei geteilt werden — eingebettete lokale Assets wie Bilder werden noch nicht unterstützt.',
   'fileViewer.openFileRequired': 'Open a file to use this.',
   'fileViewer.publishFile': 'Publish file',

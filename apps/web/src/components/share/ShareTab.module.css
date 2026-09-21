@@ -1,4 +1,4 @@
-/* Copy-only seam: outrank the shared Button base without changing stop/deploy. */
+/* Publish/copy seam: outrank the shared Button base without changing stop/deploy. */
 button.copyButton {
   box-sizing: border-box;
   width: 100%;

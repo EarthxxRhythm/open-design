@@ -3246,6 +3246,7 @@ export const ja: Dict = {
   'fileViewer.workspaceAccessPrivate': 'Only me',
   'fileViewer.workspaceAccessMembers': 'Workspace members',
   'fileViewer.publishSingleFileTitle': '共有リンクを作成',
+  "fileViewer.generateAndCopyLink": "リンクを作成してコピー",
   'fileViewer.publishSingleFileDescription': 'リンクを知っている人は誰でもオンラインで閲覧できます。現在は単一ファイルのみ共有でき、画像などの埋め込みローカルアセットには未対応です。',
   'fileViewer.openFileRequired': 'Open a file to use this.',
   'fileViewer.publishFile': 'Publish file',

@@ -223,7 +223,7 @@ describe('G4 · retired HTML publishing section label', () => {
       ? { shareRequest: { nonce: 401, anchorId: 'g4-card' } } : {});
     expect(toolbarAction('Share')).toBeEnabled();
     if (origin === 'toolbar') fireEvent.click(toolbarAction('Share'));
-    const publish = await screen.findByRole('menuitem', { name: /Get a share link/i });
+    const publish = await screen.findByRole('menuitem', { name: /Generate and copy link/i });
     // Actual English rendering of fileViewer.shareMenuPublishViaOd, not a mocked t().
     expect(screen.queryByText('QUICK SHARE · OPENDESIGN')).toBeNull();
     expect(document.querySelectorAll('.chrome-unified-panel--share')).toHaveLength(1);
@@ -263,7 +263,7 @@ describe('G4 · retired HTML publishing section label', () => {
     fireEvent.click(copy);
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(url));
     fireEvent.click(stop);
-    await screen.findByRole('menuitem', { name: /Get a share link/i });
+    await screen.findByRole('menuitem', { name: /Generate and copy link/i });
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/projects/project-1/files/index.html/publish-public',
       expect.objectContaining({ method: 'DELETE', body: JSON.stringify({ slug: 'stable-slug' }) }),
@@ -294,7 +294,7 @@ describe('S12 · HTML share menu', () => {
   it('keeps artifact-card Share limited to quick publishing', async () => {
     stubFetch();
     renderViewer(teamContext(), { shareRequest: { nonce: 123, anchorId: 's12-card' } });
-    await screen.findByRole('menuitem', { name: /Get a share link/i });
+    await screen.findByRole('menuitem', { name: /Generate and copy link/i });
     expect(screen.queryByRole('menuitem', { name: /Deploy to/i })).toBeNull();
     expect(document.querySelector('.social-share-grid')).toBeNull();
     expect(document.querySelector('.chrome-access-trigger')).toBeNull();

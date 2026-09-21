@@ -3246,6 +3246,7 @@ export const tr: Dict = {
   'fileViewer.workspaceAccessPrivate': 'Only me',
   'fileViewer.workspaceAccessMembers': 'Workspace members',
   'fileViewer.publishSingleFileTitle': 'Paylaşım bağlantısı al',
+  "fileViewer.generateAndCopyLink": "Bağlantı oluştur ve kopyala",
   'fileViewer.publishSingleFileDescription': 'Bağlantıya sahip olan herkes çevrimiçi görüntüleyebilir. Şimdilik yalnızca tek bir dosya paylaşılabilir; görseller gibi gömülü yerel kaynaklar henüz desteklenmiyor.',
   'fileViewer.openFileRequired': 'Open a file to use this.',
   'fileViewer.publishFile': 'Publish file',

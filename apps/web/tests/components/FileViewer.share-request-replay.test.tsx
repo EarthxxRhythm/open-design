@@ -103,7 +103,7 @@ function viewerWithActionRequest({
  * `data-testid` —— 按 testid 查会**恒为 null**,那样每一条断言都会「绿」得毫无
  * 意义(第一版就是这么假绿的)。改认菜单里那一行只在展开时才存在的 `menuitem`。
  */
-const menu = () => screen.queryByRole('menuitem', { name: /Get a share link|Deploy to Cloudflare Pages/i });
+const menu = () => screen.queryByRole('menuitem', { name: /Generate and copy link|Deploy to Cloudflare Pages/i });
 const exportMenu = () => screen.queryByRole('menuitem', { name: /Export as PDF/i });
 const anchoredMenu = () => document.querySelector('[data-anchored-menu]');
 

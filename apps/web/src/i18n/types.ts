@@ -4154,6 +4154,7 @@ export interface Dict {
   'fileViewer.workspaceAccessPrivate': string;
   'fileViewer.workspaceAccessMembers': string;
   'fileViewer.publishSingleFileTitle': string;
+  'fileViewer.generateAndCopyLink': string;
   'fileViewer.publishSingleFileDescription': string;
   'fileViewer.openFileRequired': string;
   'fileViewer.publishFile': string;

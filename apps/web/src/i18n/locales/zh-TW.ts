@@ -3427,6 +3427,7 @@ export const zhTW: Dict = {
   "fileViewer.workspaceAccessPrivate": "只有自己",
   "fileViewer.workspaceAccessMembers": "工作空間成員",
   "fileViewer.publishSingleFileTitle": "產生分享連結",
+  "fileViewer.generateAndCopyLink": "產生並複製連結",
   "fileViewer.publishSingleFileDescription": "任何取得連結的人都可以線上查看。目前僅支援分享單一檔案，內嵌圖片等本地資源暫不支援。",
   "fileViewer.openFileRequired": "打开文件后可用。",
   "fileViewer.publishFile": "發布檔案",

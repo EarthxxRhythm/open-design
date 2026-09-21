@@ -3246,6 +3246,7 @@ export const hu: Dict = {
   'fileViewer.workspaceAccessPrivate': 'Only me',
   'fileViewer.workspaceAccessMembers': 'Workspace members',
   'fileViewer.publishSingleFileTitle': 'Megosztási link létrehozása',
+  "fileViewer.generateAndCopyLink": "Link létrehozása és másolása",
   'fileViewer.publishSingleFileDescription': 'A linkkel bárki megtekintheti online. Egyelőre csak egyetlen fájl osztható meg — a beágyazott helyi erőforrások, például képek, még nem támogatottak.',
   'fileViewer.openFileRequired': 'Open a file to use this.',
   'fileViewer.publishFile': 'Publish file',

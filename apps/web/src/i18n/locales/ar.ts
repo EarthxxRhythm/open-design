@@ -3246,6 +3246,7 @@ export const ar: Dict = {
   'fileViewer.workspaceAccessPrivate': 'Only me',
   'fileViewer.workspaceAccessMembers': 'Workspace members',
   'fileViewer.publishSingleFileTitle': 'إنشاء رابط مشاركة',
+  "fileViewer.generateAndCopyLink": "إنشاء الرابط ونسخه",
   'fileViewer.publishSingleFileDescription': 'يمكن لأي شخص لديه الرابط عرضه عبر الإنترنت. حاليًا يمكن مشاركة ملف واحد فقط — الموارد المحلية المضمّنة مثل الصور غير مدعومة بعد.',
   'fileViewer.openFileRequired': 'Open a file to use this.',
   'fileViewer.publishFile': 'Publish file',

@@ -3418,6 +3418,7 @@ export const zhCN: Dict = {
   "fileViewer.workspaceAccessPrivate": "仅自己",
   "fileViewer.workspaceAccessMembers": "工作空间成员",
   "fileViewer.publishSingleFileTitle": "生成分享链接",
+  "fileViewer.generateAndCopyLink": "生成并复制链接",
   "fileViewer.publishSingleFileDescription": "任何拿到链接的人都可在线查看。目前仅支持分享单个文件，内嵌图片等本地资源暂不支持。",
   "fileViewer.openFileRequired": "打开文件后可用。",
   "fileViewer.publishFile": "发布文件",
