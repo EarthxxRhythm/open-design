@@ -16,6 +16,8 @@ import {
   openDatabase,
 } from '../src/db.js';
 import { createCollabCloudService } from '../src/collab/collab-cloud-service.js';
+import { commentRelayScope } from '../src/collab/comment-relay-scope.js';
+import { createSqlitePublicFilePublicationStore } from '../src/collab/public-file-publication-store.js';
 import {
   commentRelayLocalBindingMatches,
   createCommentRelayOutboxStore,
@@ -113,6 +115,102 @@ async function waitForCondition(predicate: () => boolean): Promise<void> {
 }
 
 describe('durable Team comment relay outbox', () => {
+  it('delivers an active personal owner publication through a durable outbox after restart', async () => {
+    const db = seededDb();
+    const owner = context('owner', {
+      workspaceId: 'workspace-personal',
+      workspaceType: 'personal',
+      workspaceMemberId: 'personal-owner',
+      teamId: '',
+    });
+    const binding: CommentRelayLocalProjectBinding = {
+      workspaceId: owner.workspaceId,
+      visibility: 'personal',
+      resourceState: 'active',
+      createdByWorkspaceMemberId: owner.workspaceMemberId,
+    };
+    const publications = createSqlitePublicFilePublicationStore(db, () => 100);
+    publications.set({
+      resourceTeamId: owner.workspaceId,
+      ownerMemberId: owner.workspaceMemberId,
+      projectId: 'p1',
+      filePath: 'index.html',
+    }, { url: 'https://example.test/share', slug: 'public-slug', fileName: 'index.html' });
+    const scope = (projectId: string, filePath: string, current: WorkspaceCollabContext) =>
+      commentRelayScope({ binding, context: current, projectId, filePath, publications });
+    const firstOutbox = createCommentRelayOutboxStore(db, () => 100);
+    const first = createCollabCloudService({
+      client: clientWithPush(async () => { throw new Error('offline'); }),
+      commentOutbox: firstOutbox,
+      commentRelayScope: scope,
+      resolveLocalProjectRelayBinding: () => ({ workspaceId: owner.workspaceId, ownerMemberId: owner.workspaceMemberId }),
+      validateCommentRelayProjectBinding: (record) => commentRelayLocalBindingMatches(record, binding),
+      resolveCommentRelayWorkspaceContext: async () => owner,
+      listRemoteProjectRelayBindings: async () => [],
+      listProjectIds: () => [], resolveLocalConversationId: () => 'conv-local', mergeComment: () => false,
+      now: () => 100, retryDelayMs: () => 0,
+    });
+    expect(first.enqueueComment(comment({ authorMemberId: owner.workspaceMemberId }), owner)).toBe(true);
+    await first.flushPendingComments();
+    expect(firstOutbox.count()).toBe(1);
+    first.dispose();
+
+    const pushed: Array<{ teamId: string; projectId: string }> = [];
+    const restartedOutbox = createCommentRelayOutboxStore(db, () => 100);
+    const restarted = createCollabCloudService({
+      client: clientWithPush(async (teamId, projectId) => { pushed.push({ teamId, projectId }); return { seq: 9 }; }),
+      commentOutbox: restartedOutbox,
+      commentRelayScope: scope,
+      resolveLocalProjectRelayBinding: () => ({ workspaceId: owner.workspaceId, ownerMemberId: owner.workspaceMemberId }),
+      validateCommentRelayProjectBinding: (record) => commentRelayLocalBindingMatches(record, binding),
+      resolveCommentRelayWorkspaceContext: async () => owner,
+      listRemoteProjectRelayBindings: async () => [],
+      listProjectIds: () => [], resolveLocalConversationId: () => 'conv-local', mergeComment: () => false,
+      now: () => 100, retryDelayMs: () => 0,
+    });
+    await restarted.flushPendingComments();
+    expect(pushed).toEqual([{ teamId: owner.workspaceId, projectId: 'p1' }]);
+    expect(restartedOutbox.count()).toBe(0);
+    restarted.dispose();
+  });
+  it('fails closed for no publication, a different file, stopped publication, and a switched personal identity', async () => {
+    const db = seededDb();
+    const owner = context('owner', { workspaceId: 'workspace-personal', workspaceType: 'personal', workspaceMemberId: 'personal-owner', teamId: '' });
+    const binding: CommentRelayLocalProjectBinding = { workspaceId: owner.workspaceId, visibility: 'personal', resourceState: 'active', createdByWorkspaceMemberId: owner.workspaceMemberId };
+    const publications = createSqlitePublicFilePublicationStore(db);
+    const scope = (projectId: string, filePath: string, current: WorkspaceCollabContext) =>
+      commentRelayScope({ binding, context: current, projectId, filePath, publications });
+    expect(scope('p1', 'index.html', owner)).toBeNull();
+    publications.set({ resourceTeamId: owner.workspaceId, ownerMemberId: owner.workspaceMemberId, projectId: 'p1', filePath: 'index.html' }, { url: 'https://example.test/share', slug: 'public-slug', fileName: 'index.html' });
+    expect(scope('p1', 'other.html', owner)).toBeNull();
+
+    const outbox = createCommentRelayOutboxStore(db, () => 100);
+    let freshIdentity = owner;
+    let pushes = 0;
+    const service = createCollabCloudService({
+      client: clientWithPush(async () => { pushes += 1; return { seq: 1 }; }),
+      commentOutbox: outbox, commentRelayScope: scope,
+      resolveLocalProjectRelayBinding: () => ({ workspaceId: owner.workspaceId, ownerMemberId: owner.workspaceMemberId }),
+      validateCommentRelayProjectBinding: (record) => commentRelayLocalBindingMatches(record, binding),
+      resolveCommentRelayWorkspaceContext: async () => freshIdentity,
+      listRemoteProjectRelayBindings: async () => [],
+      listProjectIds: () => [], resolveLocalConversationId: () => 'conv-local', mergeComment: () => false,
+      now: () => 100, retryDelayMs: () => 0,
+    });
+    expect(service.enqueueComment(comment({ authorMemberId: owner.workspaceMemberId }), owner)).toBe(true);
+    publications.delete({ resourceTeamId: owner.workspaceId, ownerMemberId: owner.workspaceMemberId, projectId: 'p1', filePath: 'index.html' });
+    await service.flushPendingComments();
+    expect(pushes).toBe(0);
+    expect(outbox.count()).toBe(1);
+
+    publications.set({ resourceTeamId: owner.workspaceId, ownerMemberId: owner.workspaceMemberId, projectId: 'p1', filePath: 'index.html' }, { url: 'https://example.test/share', slug: 'new-slug', fileName: 'index.html' });
+    freshIdentity = { ...owner, workspaceMemberId: 'switched-account' };
+    await service.flushPendingComments();
+    expect(pushes).toBe(0);
+    expect(outbox.count()).toBe(1);
+    service.dispose();
+  });
+
   it.each<CollabMemberRole>(['owner', 'admin', 'member'])(
     'delivers %s comments under the exact queued Workspace identity',
     async (role) => {

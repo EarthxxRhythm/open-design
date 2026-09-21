@@ -16,6 +16,7 @@ import type {
 } from '@open-design/contracts';
 import type { CollabCloudClient } from '../integrations/collab-cloud.js';
 import type { WorkspaceContextProvider } from './workspace-context.js';
+import type { CommentRelayScope } from './comment-relay-scope.js';
 import type {
   CommentRelayOutboxIdentity,
   CommentRelayOutboxRecord,
@@ -50,6 +51,12 @@ export interface CollabCloudServiceDeps {
   ) => Promise<WorkspaceCollabContext | null>;
   /** Cheap local binding witness applied per queued record in a batch. */
   validateCommentRelayProjectBinding?: (record: CommentRelayOutboxRecord) => boolean;
+  /** Separate creator-scoped eligibility for active public personal projects. */
+  commentRelayScope?: (
+    projectId: string,
+    filePath: string,
+    context: WorkspaceCollabContext,
+  ) => CommentRelayScope | null;
   /** Local binding witness captured synchronously when the mutation commits. */
   resolveLocalProjectRelayBinding?: (projectId: string) => {
     workspaceId: string;
@@ -267,8 +274,25 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
       teamId,
       memberId,
       role: context.role,
-      displayName: context.displayName?.trim() || memberId,
+      displayName: context.displayName?.trim() || memberId
     };
+  }
+
+  function relayIdentity(
+    context: WorkspaceCollabContext,
+    projectId: string,
+    filePath: string,
+  ): { teamId: string; memberId: string; role: 'owner' | 'admin' | 'member'; displayName: string; relayScope: 'team' | 'personal' } | null {
+    const scoped = deps.commentRelayScope?.(projectId, filePath, context);
+    if (!scoped) {
+      if (deps.commentRelayScope) return null;
+      const team = explicitTeamIdentity(context);
+      return team ? { ...team, relayScope: 'team' } : null;
+    }
+    if (context.memberStatus !== 'active' || context.lifecycleState === 'deleted') return null;
+    const memberId = context.workspaceMemberId.trim();
+    if (!memberId || context.workspaceId !== scoped.workspaceId) return null;
+    return { teamId: scoped.teamId, memberId, role: context.role, displayName: context.displayName?.trim() || memberId, relayScope: scoped.relayScope };
   }
 
   async function registerSelf(
@@ -286,7 +310,7 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
     comment: PreviewComment,
     context: WorkspaceCollabContext,
   ): Promise<{ seq: number } | null> {
-    const identity = explicitTeamIdentity(context);
+    const identity = relayIdentity(context, comment.projectId, comment.filePath);
     if (!identity) return null;
     const cloud = previewCommentToCloud(comment, identity.memberId);
     const result = await deps.client.pushComment(identity.teamId, comment.projectId, cloud);
@@ -297,7 +321,7 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
     comment: PreviewComment,
     context: WorkspaceCollabContext,
   ): Promise<void> {
-    const identity = explicitTeamIdentity(context);
+    const identity = relayIdentity(context, comment.projectId, comment.filePath);
     if (!identity) return;
     const cloud = previewCommentToCloud(comment, identity.memberId);
     cloud.deleted = true;
@@ -313,7 +337,7 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
     deleted: boolean,
   ): boolean {
     if (!deps.commentOutbox) return false;
-    const identity = explicitTeamIdentity(context);
+    const identity = relayIdentity(context, comment.projectId, comment.filePath);
     if (!identity) return false;
     const localBinding = deps.resolveLocalProjectRelayBinding?.(comment.projectId) ?? null;
     const expectedOwnerMemberId = localBinding?.ownerMemberId?.trim() || null;
@@ -331,6 +355,7 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
         workspaceId: context.workspaceId,
         workspaceMemberId: identity.memberId,
         teamId: identity.teamId,
+        relayScope: identity.relayScope,
         projectId: comment.projectId,
         expectedOwnerMemberId,
         comment: cloud,
@@ -358,14 +383,15 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
   }
 
   const relayIdentityKey = (record: CommentRelayOutboxIdentity): string =>
-    JSON.stringify([record.workspaceId, record.workspaceMemberId, record.teamId]);
+    JSON.stringify([record.workspaceId, record.workspaceMemberId, record.teamId, record.relayScope]);
 
   const relayIdentityMatches = (
     context: WorkspaceCollabContext,
-    record: CommentRelayOutboxIdentity,
-  ): ReturnType<typeof explicitTeamIdentity> => {
-    const identity = explicitTeamIdentity(context);
+    record: CommentRelayOutboxRecord,
+  ) => {
+    const identity = relayIdentity(context, record.projectId, record.comment.filePath);
     return identity
+      && identity.relayScope === record.relayScope
       && context.workspaceId === record.workspaceId
       && identity.memberId === record.workspaceMemberId
       && identity.teamId === record.teamId
@@ -375,7 +401,7 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
 
   async function pushOutboxRecord(
     record: CommentRelayOutboxRecord,
-    identity: NonNullable<ReturnType<typeof explicitTeamIdentity>>,
+    identity: { teamId: string; memberId: string },
   ): Promise<void> {
     try {
       const result = await deps.client.pushComment(
@@ -400,7 +426,7 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
 
   async function pushOutboxProjectLanes(
     records: CommentRelayOutboxRecord[],
-    identity: NonNullable<ReturnType<typeof explicitTeamIdentity>>,
+    identity: { teamId: string; memberId: string },
   ): Promise<void> {
     const lanes = new Map<string, CommentRelayOutboxRecord[]>();
     for (const record of records) {
@@ -506,6 +532,15 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
     if (!context || !identity) {
       const error = new Error('comment relay delivery authority is unavailable or changed');
       for (const record of eligible) deferOutboxRecord(record, error);
+      return;
+    }
+
+    // Personal publication records have already been proven against the local
+    // creator + exact active-file publication by relayIdentityMatches above.
+    // They are not Team catalog resources, so querying that catalog would turn
+    // a valid personal delivery into a silent cancellation.
+    if (representative.relayScope === 'personal') {
+      await pushOutboxProjectLanes(eligible, identity);
       return;
     }
 

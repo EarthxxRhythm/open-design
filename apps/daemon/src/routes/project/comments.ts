@@ -133,6 +133,12 @@ export interface RegisterProjectCommentRoutesDeps extends RouteDeps<'db' | 'proj
     comment: PreviewComment,
     context: WorkspaceCollabContext | null,
   ) => boolean | void;
+  /** Production relay eligibility, including creator-scoped public shares. */
+  isCommentRelayEligible?: (
+    projectId: string,
+    filePath: string,
+    context: WorkspaceCollabContext | null,
+  ) => boolean;
   /**
    * Fired when the comment list is read. The hub push channel marks closed
    * projects comment-dirty instead of pulling eagerly; the first read after
@@ -308,9 +314,13 @@ export function registerProjectCommentRoutes(app: Express, ctx: RegisterProjectC
 
   function isLocalTeamRelayCandidate(
     projectId: string,
+    filePath: string,
     context: WorkspaceCollabContext | null,
     callbackConfigured: boolean,
   ): boolean {
+    if (ctx.isCommentRelayEligible) {
+      return callbackConfigured && ctx.isCommentRelayEligible(projectId, filePath, context);
+    }
     if (!ctx.resolveWorkspaceContext) return callbackConfigured;
     if (
       !callbackConfigured
@@ -495,6 +505,7 @@ export function registerProjectCommentRoutes(app: Express, ctx: RegisterProjectC
       // edit branch, so computing it here for an edit-via-POST is harmless.
       const syncEnabled = isLocalTeamRelayCandidate(
         req.params.id,
+        body.target?.filePath ?? existing?.filePath ?? '',
         workspaceContext,
         Boolean(ctx.onCommentCreated),
       );
@@ -608,6 +619,7 @@ export function registerProjectCommentRoutes(app: Express, ctx: RegisterProjectC
         }
         const syncEnabled = isLocalTeamRelayCandidate(
           req.params.id,
+          existing.filePath,
           workspaceContext,
           Boolean(ctx.onCommentUpdated),
         );
@@ -763,6 +775,7 @@ export function registerProjectCommentRoutes(app: Express, ctx: RegisterProjectC
       }
       const syncEnabled = isLocalTeamRelayCandidate(
         req.params.id,
+        existing.filePath,
         workspaceContext,
         Boolean(ctx.onCommentDeleted),
       );

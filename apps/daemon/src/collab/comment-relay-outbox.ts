@@ -16,6 +16,8 @@ export interface CommentRelayOutboxIdentity {
   workspaceId: string;
   workspaceMemberId: string;
   teamId: string;
+  /** Internal durable discriminator; existing rows default to team. */
+  relayScope: 'team' | 'personal';
 }
 
 export interface CommentRelayOutboxRecord extends CommentRelayOutboxIdentity {
@@ -56,7 +58,7 @@ export function commentRelayLocalBindingMatches(
 ): boolean {
   if (
     binding?.workspaceId?.trim() !== record.workspaceId
-    || binding.visibility !== 'team'
+    || (record.relayScope === 'team' ? binding.visibility !== 'team' : binding.visibility !== 'personal')
     || binding.resourceState === 'deleted'
   ) return false;
   const currentOwnerMemberId = binding.createdByWorkspaceMemberId?.trim() || null;
@@ -69,6 +71,7 @@ export function migrateCommentRelayOutbox(db: SqliteDb): void {
       workspace_id TEXT NOT NULL,
       workspace_member_id TEXT NOT NULL,
       team_id TEXT NOT NULL,
+      relay_scope TEXT NOT NULL DEFAULT 'team',
       project_id TEXT NOT NULL,
       comment_id TEXT NOT NULL,
       expected_owner_member_id TEXT,
@@ -85,6 +88,8 @@ export function migrateCommentRelayOutbox(db: SqliteDb): void {
     CREATE INDEX IF NOT EXISTS idx_comment_relay_outbox_due
       ON comment_relay_outbox(next_attempt_at, updated_at);
   `);
+  // Compatible with rows written before personal publication relay existed.
+  try { db.exec("ALTER TABLE comment_relay_outbox ADD COLUMN relay_scope TEXT NOT NULL DEFAULT 'team'"); } catch { /* already migrated */ }
 }
 
 function parseRecord(row: Record<string, unknown>): CommentRelayOutboxRecord | null {
@@ -95,6 +100,7 @@ function parseRecord(row: Record<string, unknown>): CommentRelayOutboxRecord | n
       typeof row.workspaceId !== 'string'
       || typeof row.workspaceMemberId !== 'string'
       || typeof row.teamId !== 'string'
+      || (row.relayScope !== 'team' && row.relayScope !== 'personal')
       || typeof row.projectId !== 'string'
       || typeof row.commentId !== 'string'
       || (row.expectedOwnerMemberId !== null && typeof row.expectedOwnerMemberId !== 'string')
@@ -105,6 +111,7 @@ function parseRecord(row: Record<string, unknown>): CommentRelayOutboxRecord | n
       workspaceId: row.workspaceId,
       workspaceMemberId: row.workspaceMemberId,
       teamId: row.teamId,
+      relayScope: row.relayScope,
       projectId: row.projectId,
       commentId: row.commentId,
       expectedOwnerMemberId: row.expectedOwnerMemberId as string | null,
@@ -124,14 +131,15 @@ export function createCommentRelayOutboxStore(
 ): CommentRelayOutboxStore {
   const enqueueRow = db.prepare(`
     INSERT INTO comment_relay_outbox
-      (workspace_id, workspace_member_id, team_id, project_id, comment_id,
+      (workspace_id, workspace_member_id, team_id, relay_scope, project_id, comment_id,
        expected_owner_member_id,
        payload_json, revision, attempt_count, next_attempt_at, last_error,
        created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, NULL, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, NULL, ?, ?)
     ON CONFLICT(workspace_id, workspace_member_id, project_id, comment_id)
     DO UPDATE SET
       team_id = excluded.team_id,
+      relay_scope = excluded.relay_scope,
       expected_owner_member_id = excluded.expected_owner_member_id,
       payload_json = excluded.payload_json,
       revision = comment_relay_outbox.revision + 1,
@@ -144,6 +152,7 @@ export function createCommentRelayOutboxStore(
     SELECT workspace_id AS workspaceId,
            workspace_member_id AS workspaceMemberId,
            team_id AS teamId,
+           relay_scope AS relayScope,
            project_id AS projectId,
            comment_id AS commentId,
            expected_owner_member_id AS expectedOwnerMemberId,
@@ -185,6 +194,7 @@ export function createCommentRelayOutboxStore(
         input.workspaceId,
         input.workspaceMemberId,
         input.teamId,
+        input.relayScope,
         input.projectId,
         input.comment.id,
         input.expectedOwnerMemberId,

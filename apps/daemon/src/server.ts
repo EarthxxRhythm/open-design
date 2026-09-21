@@ -951,6 +951,7 @@ import { registerTeamResourceShareRoutes } from './routes/team-resource-share.js
 import { createCollabRuntime } from './collab/runtime.js';
 import { createSqlitePublicFilePublicationStore } from './collab/public-file-publication-store.js';
 import { resolveLocalProjectCommentWorkspaceContext } from './collab/project-comment-workspace-context.js';
+import { commentRelayScope } from './collab/comment-relay-scope.js';
 import {
   createActiveWorkspaceSelectionStore,
 } from './collab/active-workspace-selection.js';
@@ -4331,6 +4332,7 @@ export async function startServer({
   void backfillDesignSystemWorkspaceResources(db, USER_DESIGN_SYSTEMS_DIR).catch((error) => {
     console.warn('[od] design-system workspace-resource backfill failed:', error);
   });
+  const publicFilePublicationStore = createSqlitePublicFilePublicationStore(db);
   const collabCloudClient = velaCliCollabClient ?? createCollabCloudClientFromEnv();
   const resolveBoundProjectWorkspaceContext = async (
     projectId: string,
@@ -4354,7 +4356,6 @@ export async function startServer({
     const membership = directory.items.find(
       (item) =>
         item.workspaceId === workspaceId
-        && item.workspaceType === 'team'
         && item.memberStatus === 'active'
         && item.lifecycleState !== 'deleted',
     );
@@ -4380,13 +4381,20 @@ export async function startServer({
     ? createCollabCloudService({
         client: collabCloudClient,
         commentOutbox: createCommentRelayOutboxStore(db),
+        commentRelayScope: (projectId, filePath, context) => commentRelayScope({
+          binding: getWorkspaceProjectByProjectId(db, projectId),
+          context,
+          projectId,
+          filePath,
+          publications: publicFilePublicationStore,
+        }),
         resolveLocalProjectRelayBinding: (projectId) => {
           const binding = getWorkspaceProjectByProjectId(db, projectId);
           const workspaceId = binding?.workspaceId?.trim() ?? '';
           const ownerMemberId = binding?.createdByWorkspaceMemberId?.trim() || null;
           if (
             !workspaceId
-            || binding?.visibility !== 'team'
+            || (binding?.visibility !== 'team' && binding?.visibility !== 'personal')
             || binding?.resourceState === 'deleted'
           ) return null;
           return { workspaceId, ownerMemberId };
@@ -4397,16 +4405,16 @@ export async function startServer({
             getWorkspaceProjectByProjectId(db, record.projectId),
           ),
         resolveCommentRelayWorkspaceContext: async (queuedIdentity) => {
-          const context = await resolveAuthoritativeTeamWorkspaceContext(
-            queuedIdentity.workspaceId,
-            { fresh: true, backgroundFresh: true },
+          const context = await resolveBoundProjectWorkspaceContext(
+            queuedIdentity.projectId,
+            { fresh: true },
           );
-          const principal = contextToResourceHubPrincipal(context);
           if (
             !context
-            || !principal
-            || principal.memberId !== queuedIdentity.workspaceMemberId
-            || principal.teamId !== queuedIdentity.teamId
+            || context.workspaceMemberId !== queuedIdentity.workspaceMemberId
+            // Public-file publication scopes use the persisted workspace id as
+            // their resource-team id; relay scope independently proves it.
+            || context.workspaceId !== queuedIdentity.workspaceId
           ) return null;
           return context;
         },
@@ -5099,7 +5107,7 @@ export async function startServer({
   ): Promise<void> => {};
   const collabSyncRoutes = registerCollabSyncRoutes(app, {
     collab,
-    publicFilePublicationStore: createSqlitePublicFilePublicationStore(db),
+    publicFilePublicationStore,
     verifyWorkspaceRequest: verifiedWorkspaceContextForRequest,
     verifyWorkspaceReadRequest: verifiedWorkspaceReadContextForRequest,
     verifyWorkspaceScope: verifiedTeamMirrorScope,
@@ -8637,6 +8645,13 @@ export async function startServer({
         workspaceMemberId: context.workspaceMemberId,
       });
     },
+    isCommentRelayEligible: (projectId, filePath, context) => Boolean(commentRelayScope({
+      binding: getWorkspaceProjectByProjectId(db, projectId),
+      context,
+      projectId,
+      filePath,
+      publications: publicFilePublicationStore,
+    })),
     isSharedProject: async (projectId, context) => {
       if (!context || context.workspaceType !== 'team') return false;
       return Boolean(
