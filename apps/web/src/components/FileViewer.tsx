@@ -8067,6 +8067,11 @@ function HtmlViewer({
     if (!deployMenuOpen) setShareAccessMenuOpen(false);
   }, [deployMenuOpen]);
 
+  // Sharing actions require complete content; inspecting the menu does not.
+  // Async publish completions must also observe the current streaming state.
+  const shareContentStreamingRef = useRef(streaming);
+  shareContentStreamingRef.current = streaming;
+
   // Owned by the viewer: closing ShareTab neither cancels nor restarts a publish.
   const [publishProgress, setPublishProgress] = useState<number | null>(null);
   const publicFileProgressTimerRef = useRef<number | null>(null);
@@ -8203,7 +8208,7 @@ function HtmlViewer({
   };
 
   async function publishCurrentFilePublic() {
-    if (viewerOnly || publishingPublicFile) return;
+    if (streaming || viewerOnly || publishingPublicFile) return;
     const requestProjectId = projectId;
     const requestFileName = file.name;
     const requestSeq = ++publicFileRequestSeqRef.current;
@@ -8327,6 +8332,7 @@ function HtmlViewer({
   }
 
   async function copyPublicFileUrl(url: string) {
+    if (shareContentStreamingRef.current) return;
     invalidatePublicFileCopy();
     const copySeq = publicFileCopySeqRef.current;
     const requestSeq = publicFileRequestSeqRef.current;
@@ -17178,7 +17184,7 @@ function HtmlViewer({
                     aria-haspopup="menu"
                     aria-expanded={deployMenuOpen && unifiedActionTab === 'share'}
                     aria-label={shareMenuLabel}
-                    disabled={viewerOnly || !rawCanShare || streaming}
+                    disabled={viewerOnly || !rawCanShare}
                     title={viewerOnly ? viewerOnlyDisabledTitle : !rawCanShare || streaming ? shareUnavailableHint : undefined}
                     onClick={openShareMenu}
                   >

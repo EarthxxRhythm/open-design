@@ -209,6 +209,8 @@ export function ShareTab({
                               <button
                                 type="button"
                                 className="chrome-publish-button"
+                                disabled={streaming}
+                                title={streaming ? t('fileViewer.shareAfterGenerationComplete') : undefined}
                                 onClick={() => {
                                   void copyPublishedFileLink();
                                 }}
@@ -237,9 +239,9 @@ export function ShareTab({
                           type="button"
                           className="share-menu-item"
                           role="menuitem"
-                          disabled={viewerOnly || publishingPublicFile}
+                          disabled={streaming || viewerOnly || publishingPublicFile}
                           aria-busy={publishingPublicFile}
-                          title={viewerOnly ? viewerOnlyDisabledTitle : undefined}
+                          title={viewerOnly ? viewerOnlyDisabledTitle : streaming ? t('fileViewer.shareAfterGenerationComplete') : undefined}
                           onClick={() => {
                             void publishCurrentFilePublic();
                           }}

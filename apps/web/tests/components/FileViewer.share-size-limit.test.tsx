@@ -168,6 +168,44 @@ async function setup(options: Parameters<typeof stubFetch>[0] = { publishBody: p
   vi.useFakeTimers();
   return { fetch, view };
 }
+it('keeps publish inspectable but inert while streaming and restores it after completion', async () => {
+  const fetch = stubFetch({ publishBody: publication });
+  const view = renderProjectFileViewer(teamWorkspaceContext(), { ...props, streaming: true });
+  fireEvent.click(await screen.findByRole('button', { name: /^share$/i }));
+  const action = await screen.findByRole('menuitem', { name: /get a share link/i }) as HTMLButtonElement;
+  expect(action.disabled).toBe(true);
+  fireEvent.click(action);
+  expect(posts(fetch)).toHaveLength(0);
+  expect(write).not.toHaveBeenCalled();
+  vi.useFakeTimers();
+  view.rerenderWith({ ...props, streaming: false });
+  expect(action.disabled).toBe(false);
+  await publish();
+  expect(posts(fetch)).toHaveLength(1);
+  expect(write).toHaveBeenCalledWith(publication.url);
+  await tick(1800);
+  view.rerenderWith({ ...props, streaming: true });
+  const copy = screen.getByRole('button', { name: /copy share link/i }) as HTMLButtonElement;
+  expect(copy.disabled).toBe(true);
+  fireEvent.click(copy);
+  expect(write).toHaveBeenCalledTimes(1);
+  view.rerenderWith({ ...props, streaming: false });
+  expect(copy.disabled).toBe(false);
+  await act(async () => { fireEvent.click(copy); });
+  expect(write).toHaveBeenCalledTimes(2);
+});
+
+it('does not auto-copy a pending publication when generation has resumed', async () => {
+  const pending = deferred<Response>();
+  const { fetch, view } = await setup();
+  fetch.mockImplementationOnce(() => pending.promise);
+  await publish();
+  view.rerenderWith({ ...props, streaming: true });
+  await act(async () => { pending.resolve(new Response(JSON.stringify(publication), { status: 200 })); });
+  expect(write).not.toHaveBeenCalled();
+  expect((screen.getByRole('button', { name: /copy share link/i }) as HTMLButtonElement).disabled).toBe(true);
+});
+
 async function publish() {
   await act(async () => {
     fireEvent.click(screen.getByRole('menuitem', { name: /get a share link/i }));
