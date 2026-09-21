@@ -727,6 +727,7 @@ test('[P0] two active clients converge when a member gains then loses admin acce
     const memberPage = cluster.clients.member!.page;
     await test.step('configure isolated workspace clients', async () => {
       await applyStandardMocks(memberPage);
+      await mockInviteableWorkspaceCapacity(memberPage);
       await Promise.all([
         pinWorkspace(ownerPage, OWNER.memberId),
         pinWorkspace(memberPage, MEMBER.memberId),
@@ -1069,8 +1070,16 @@ async function pinWorkspace(page: Page, workspaceMemberId: string): Promise<void
 }
 
 async function openHome(page: Page): Promise<void> {
+  // The upstream hub subscriber can be ready before the browser's EventSource
+  // has reached its daemon. Waiting for the request (rather than the streaming
+  // response) closes that race without depending on the first SSE chunk.
+  const workspaceEventsRequest = page.waitForRequest(
+    (request) => new URL(request.url()).pathname === '/api/workspace/events',
+    { timeout: T.xlong },
+  );
   await page.bringToFront();
   await page.goto('/', { waitUntil: 'domcontentloaded', timeout: T.xlong * 2 });
+  await workspaceEventsRequest;
   await expect(page.getByText('Loading OpenDesign…')).toHaveCount(0, {
     timeout: T.xlong,
   });
@@ -1085,6 +1094,38 @@ async function openHome(page: Page): Promise<void> {
       .getByRole('button', { name: /I get it|not now|got it|don't share/i })
       .click();
   }
+}
+
+async function mockInviteableWorkspaceCapacity(page: Page): Promise<void> {
+  await page.route('**/api/workspace/context', async (route) => {
+    const response = await route.fetch();
+    const body = await response.json() as {
+      context?: Record<string, unknown> | null;
+    };
+    if (!body.context) {
+      await route.fulfill({ response, json: body });
+      return;
+    }
+    // Directory-backed fake workspaces intentionally default to an unknown
+    // 0/0 seat budget. This scenario isolates live role propagation, so give
+    // the browser an available seat; full-seat invite gating is covered by its
+    // dedicated workspace tests.
+    await route.fulfill({
+      response,
+      json: {
+        ...body,
+        context: {
+          ...body.context,
+          seatSummary: {
+            seatLimit: 5,
+            usedSeats: 2,
+            availableSeats: 3,
+            isSeatFull: false,
+          },
+        },
+      },
+    });
+  });
 }
 
 async function registerWorkspaceEventInterest(
