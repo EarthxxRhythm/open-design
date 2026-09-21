@@ -71,9 +71,12 @@ function htmlFile(): ProjectFile {
 }
 
 /** 分享面板挂上之后才发的那几个请求;不喂它们 `canShare` 永远为假,按钮压根不出现。 */
-function stubFetch() {
+function stubFetch(published = false) {
   vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
     const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+    // Keep the production local social payload fallback instead of returning a malformed payload.
+    if (url.includes('/social-share')) return new Response('{}', { status: 503 });
+    if (url.includes('publish-public')) return new Response(JSON.stringify({ publication: published ? { url: 'https://open-design.ai/artifact/project-1/stable-slug', slug: 'stable-slug', fileName: 'index.html' } : null }), { status: 200 });
     if (url.includes('/deployments')) return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
     if (url.includes('/deploy/config')) return new Response(JSON.stringify({ providerId: 'cloudflare-pages', configured: false }), { status: 200 });
     return new Response(JSON.stringify({}), { status: 200 });
@@ -121,14 +124,20 @@ function collabValue(workspaceContext: WorkspaceCollabContext | null): CollabCon
   };
 }
 
-function renderViewer(workspaceContext: WorkspaceCollabContext | null) {
+function renderViewer(workspaceContext: WorkspaceCollabContext | null, options: { streaming?: boolean; viewerOnly?: boolean; shareRequest?: { nonce: number; anchorId: string } } = {}) {
   const viewer = (
+    <>
+    {options.shareRequest ? <button data-artifact-anchor={options.shareRequest.anchorId}>Card Share</button> : null}
     <FileViewer
       projectId="project-1"
       projectKind="prototype"
       file={htmlFile()}
       liveHtml="<html><body><h1>Hello</h1></body></html>"
+      streaming={options.streaming}
+      viewerOnly={options.viewerOnly}
+      shareRequest={options.shareRequest}
     />
+    </>
   );
   if (!workspaceContext) return render(viewer);
   return render(<CollabProvider value={collabValue(workspaceContext)}>{viewer}</CollabProvider>);
@@ -197,6 +206,49 @@ describe('Z11a · ShareTab 搬动前的 DOM 基线', () => {
       '两枚按钮被拆到了不同的外壳里',
     ).toBe(toolbarAction('Export').parentElement);
     expect(bar!.closest('.share-menu'), '按钮外壳脱离了 .share-menu').not.toBeNull();
+  });
+});
+
+describe('S12 · HTML share menu', () => {
+  it.each(['streaming', 'viewerOnly'] as const)('keeps provider actions disabled while %s', async (restriction) => {
+    stubFetch();
+    renderViewer(teamContext(), { [restriction]: true });
+    if (restriction === 'viewerOnly') {
+      expect(toolbarAction('Share')).toBeDisabled();
+      fireEvent.click(toolbarAction('Share'));
+      expect(screen.queryByRole('menuitem', { name: /Deploy to/i })).toBeNull();
+      return;
+    }
+    fireEvent.click(toolbarAction('Share'));
+    for (const name of [/Deploy to Vercel/i, /Deploy to Cloudflare Pages/i]) {
+      const provider = await screen.findByRole('menuitem', { name });
+      expect(provider).toBeDisabled();
+      expect(provider).toHaveAttribute('title');
+      fireEvent.click(provider);
+    }
+    expect(screen.queryByRole('combobox', { name: /Provider/i })).toBeNull();
+  });
+
+  it('keeps artifact-card Share limited to quick publishing', async () => {
+    stubFetch();
+    renderViewer(teamContext(), { shareRequest: { nonce: 123, anchorId: 's12-card' } });
+    await screen.findByRole('menuitem', { name: /Get a share link/i });
+    expect(screen.queryByRole('menuitem', { name: /Deploy to/i })).toBeNull();
+    expect(document.querySelector('.social-share-grid')).toBeNull();
+    expect(document.querySelector('.chrome-access-trigger')).toBeNull();
+  });
+
+  it('keeps deployment providers but excludes social sharing after publication', async () => {
+    stubFetch(true);
+    renderViewer(teamContext());
+    fireEvent.click(toolbarAction('Share'));
+    await screen.findByRole('button', { name: /stop sharing/i });
+    const panel = document.querySelector<HTMLElement>('.chrome-unified-panel--share')!;
+    expect(panel.querySelector('.chrome-publish-url')?.textContent).toBe('https://open-design.ai/artifact/project-1/stable-slug');
+    expect(screen.getByRole('menuitem', { name: /Deploy to Vercel/i })).toBeEnabled();
+    expect(screen.getByRole('menuitem', { name: /Deploy to Cloudflare Pages/i })).toBeEnabled();
+    expect(panel.querySelector('.social-share-grid')).toBeNull();
+    expect(panel.querySelectorAll('.social-share-button')).toHaveLength(0);
   });
 });
 
