@@ -65,6 +65,7 @@ import {
   MANUAL_EDIT_SOURCE_PATH_ATTR,
 } from '../edit-mode/bridge';
 import { isApprovedFontStylesheetHref } from './deck-thumbnail-parser';
+import { ANNOTATED_SELECTOR_HELPERS } from './annotated-selector';
 
 export type SrcdocOptions = {
   deck?: boolean;
@@ -2017,11 +2018,7 @@ function injectSelectionBridge(
       };
     } catch (_) { return null; }
   }
-  function annotatedSelectorFor(el){
-    var id = el.getAttribute('data-od-id') || el.getAttribute('data-screen-label');
-    if (!id) return null;
-    return el.hasAttribute('data-od-id') ? '[data-od-id="' + esc(id) + '"]' : '[data-screen-label="' + esc(id) + '"]';
-  }
+${ANNOTATED_SELECTOR_HELPERS}
   function domSelectorFor(el){
     if (!el || !el.tagName || el === document.documentElement || el === document.body) return null;
     var parts = [];
@@ -2109,9 +2106,9 @@ function meaningfulDomFallbackTarget(el) {
     return id === 'path-0' && el && el.parentElement === document.body && el.id === 'root';
   }
   function targetFrom(el, allowDomFallback, clickedEl, clickPoint){
-    var id = el.getAttribute('data-od-id') || el.getAttribute('data-screen-label');
+    var id = annotatedElementIdFor(el);
     if (allowDomFallback && id && generatedRootAnnotation(el, id)) return null;
-    var selector = annotatedSelectorFor(el);
+    var selector = annotatedSelectorFor(el, esc);
     if (!id && allowDomFallback && meaningfulDomFallbackTarget(el)) {
       selector = domSelectorFor(el);
       if (selector) id = 'dom:' + selector;

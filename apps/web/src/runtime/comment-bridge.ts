@@ -1,4 +1,5 @@
 import { findRealTagOffset, HTML_TAG_PATTERNS } from '@open-design/contracts/runtime/html-injection-points';
+import { ANNOTATED_SELECTOR_HELPERS } from './annotated-selector';
 
 /**
  * Share-safe comment selection bridge. It deliberately owns only the comment
@@ -11,8 +12,9 @@ export function injectCommentBridge(doc: string, initialCommentMode = false): st
   var drawing = false;
   var stroke = [];
   function visible(el){ try { var r=el.getBoundingClientRect(); return r.width >= 1 && r.height >= 1; } catch (_) { return false; } }
-  function selectorFor(el){ var id=el.getAttribute('data-od-id') || el.getAttribute('data-screen-label'); return id ? (el.hasAttribute('data-od-id') ? '[data-od-id="' + String(id).replace(/"/g, '\\"') + '"]' : '[data-screen-label="' + String(id).replace(/"/g, '\\"') + '"]') : null; }
-  function targetFrom(el){ var id=el && (el.getAttribute('data-od-id') || el.getAttribute('data-screen-label')); var selector=el && selectorFor(el); if(!id || !selector || !visible(el)) return null; var rect=el.getBoundingClientRect(); return { type:'od:comment-target', elementId:id, selector:selector, label:(el.tagName || 'element').toLowerCase(), text:(el.textContent || '').replace(/\s+/g,' ').trim().slice(0,160), position:{x:Math.round(rect.x),y:Math.round(rect.y),width:Math.round(rect.width),height:Math.round(rect.height)}, htmlHint:(el.outerHTML || '').replace(/\s+/g,' ').match(/^<[^>]+>/)?.[0]?.slice(0,180) || '', style:null }; }
+  function esc(value){ return String(value).replace(/"/g, String.fromCharCode(92) + '"'); }
+${ANNOTATED_SELECTOR_HELPERS}
+  function targetFrom(el){ var id=el && annotatedElementIdFor(el); var selector=el && annotatedSelectorFor(el, esc); if(!id || !selector || !visible(el)) return null; var rect=el.getBoundingClientRect(); return { type:'od:comment-target', elementId:id, selector:selector, label:(el.tagName || 'element').toLowerCase(), text:(el.textContent || '').replace(/\s+/g,' ').trim().slice(0,160), position:{x:Math.round(rect.x),y:Math.round(rect.y),width:Math.round(rect.width),height:Math.round(rect.height)}, htmlHint:(el.outerHTML || '').replace(/\s+/g,' ').match(/^<[^>]+>/)?.[0]?.slice(0,180) || '', style:null }; }
   function allTargets(){ var nodes=document.querySelectorAll('[data-od-id], [data-screen-label]'); var targets=[]; for(var i=0;i<nodes.length;i++){ var target=targetFrom(nodes[i]); if(target) targets.push(target); } return targets; }
   function postTargets(){ if(commentEnabled) window.parent.postMessage({type:'od:comment-targets',targets:allTargets()},'*'); }
   function postScroll(){ var el=document.querySelector('.design-canvas') || document.scrollingElement || document.documentElement; var frame=document.scrollingElement || document.documentElement; window.parent.postMessage({type:'od:preview-scroll',canvasLeft:Math.round(el.scrollLeft||0),canvasTop:Math.round(el.scrollTop||0),frameLeft:Math.round(frame.scrollLeft||0),frameTop:Math.round(frame.scrollTop||0)},'*'); }
