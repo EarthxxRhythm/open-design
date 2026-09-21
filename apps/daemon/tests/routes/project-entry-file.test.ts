@@ -277,6 +277,32 @@ describe('PUT /api/projects/:id/entry-file', () => {
     expect(await previewFile(projectId)).toMatchObject({ status: 200, file: 'index.html' });
   });
 
+  it('keeps a selection made while a rename was in flight', async () => {
+    // The rename route loads the project, awaits filesystem work, then
+    // carries the entry. A `PUT /entry-file` that lands inside that window
+    // must win: the carry judges the entry the project records at that
+    // moment, not the snapshot the route started from, so it neither
+    // overwrites the newer choice with the renamed old one nor loses it.
+    const projectId = await createProjectWithFiles('race', {
+      'a.html': '<!doctype html><title>A</title>',
+      'b.html': '<!doctype html><title>B</title>',
+    });
+    expect((await putEntry(projectId, 'a.html')).status).toBe(200);
+
+    const rename = fetch(`${baseUrl}/api/projects/${projectId}/files/rename`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: 'a.html', to: 'a2.html' }),
+    });
+    const select = putEntry(projectId, 'b.html');
+    const [renamed, selected] = await Promise.all([rename, select]);
+    expect(renamed.status).toBe(200);
+    expect(selected.status).toBe(200);
+    // Whichever order the two landed in, the user's newer selection stands.
+    expect(await readEntry(projectId)).toBe('b.html');
+    expect(await previewFile(projectId)).toMatchObject({ status: 200, file: 'b.html' });
+  });
+
   it('returns 404 for an unknown project', async () => {
     const response = await putEntry('proj-does-not-exist', 'index.html');
     expect(response.status).toBe(404);

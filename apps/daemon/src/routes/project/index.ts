@@ -5875,16 +5875,22 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
   const { fs } = ctx.node;
   const { getProject, getWorkspaceProject, getWorkspaceProjectByProjectId, updateProject } = ctx.projectStore;
   /**
-   * Carry the entry attribute across a file mutation: `next` is what
-   * `entryFileAfterRename` / `entryFileAfterDelete` decided, and `undefined`
-   * means the mutation did not touch the entry. The record is re-read here
-   * rather than taken from the pre-mutation project so a concurrent change
-   * to other metadata is not overwritten.
+   * Carry the entry attribute across a file mutation. `decide` is
+   * `entryFileAfterRename` / `entryFileAfterDelete` applied to the entry the
+   * project records NOW — re-read after the awaited filesystem work, not the
+   * snapshot the route loaded before it — so a selection made while the
+   * mutation was in flight is judged on its own path: an entry set to another
+   * file meanwhile is left alone, and one set to the file just renamed or
+   * removed is still carried or cleared. `undefined` means untouched.
    */
-  const carryEntryFile = (projectId: string, next: string | null | undefined) => {
-    if (next === undefined) return;
+  const carryEntryFile = (
+    projectId: string,
+    decide: (currentEntry: unknown) => string | null | undefined,
+  ) => {
     const current = getProject(db, projectId);
     if (!current) return;
+    const next = decide(current.metadata?.entryFile);
+    if (next === undefined) return;
     updateProject(db, projectId, { metadata: metadataWithEntryFile(current.metadata, next) });
     ctx.notifyProjectMetadataChanged?.(projectId);
   };
@@ -6785,7 +6791,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         folderPath,
         project.metadata,
       );
-      carryEntryFile(project.id, entryFileAfterDelete(project.metadata?.entryFile, folderPath, 'folder'));
+      carryEntryFile(project.id, (entry) => entryFileAfterDelete(entry, folderPath, 'folder'));
       /** @type {import('@open-design/contracts').DeleteProjectFolderResponse} */
       const body = { ok: true };
       res.json(body);
@@ -7262,7 +7268,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       )) return;
       await deleteProjectFile(PROJECTS_DIR, projectId, rawSplat, project?.metadata);
       await markProjectFileVersionStoreDeleted(PROJECTS_DIR, projectId, rawSplat, project?.metadata);
-      carryEntryFile(project.id, entryFileAfterDelete(project.metadata?.entryFile, rawSplat, 'file'));
+      carryEntryFile(project.id, (entry) => entryFileAfterDelete(entry, rawSplat, 'file'));
       // Tombstone, not delete: an HTML card must be able to say "the current
       // file is gone" rather than silently opening whatever later takes the
       // name. Image cards keep resolving their own snapshot either way.
@@ -7950,7 +7956,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       }
       carryEntryFile(
         project.id,
-        entryFileAfterRename(project.metadata?.entryFile, result.oldName, result.newName),
+        (entry) => entryFileAfterRename(entry, result.oldName, result.newName),
       );
       /** @type {import('@open-design/contracts').RenameProjectFileResponse} */
       const body = result;
@@ -7986,7 +7992,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       )) return;
       await deleteProjectFile(PROJECTS_DIR, req.params.id, req.params.name, delProject?.metadata);
       await markProjectFileVersionStoreDeleted(PROJECTS_DIR, req.params.id, req.params.name, delProject?.metadata);
-      carryEntryFile(delProject.id, entryFileAfterDelete(delProject.metadata?.entryFile, req.params.name, 'file'));
+      carryEntryFile(delProject.id, (entry) => entryFileAfterDelete(entry, req.params.name, 'file'));
       try {
         deleteWorkspaceArtifact(db, req.params.id, req.params.name);
       } catch (error) {
