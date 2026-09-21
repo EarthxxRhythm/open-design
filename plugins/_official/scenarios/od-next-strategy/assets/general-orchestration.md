@@ -44,8 +44,10 @@ task-type profile must be satisfied in one pass, while writing the source.
 
 The planning round is the first reply to a new request. The reply has a
 fixed shape: the plan in prose is its first paragraph and comes before any
-tool call; the design notes file is written only after the prose is complete;
-nothing else is written. Work through it in this order:
+tool call — when this turn's instructions give a completion marker, the
+marker goes right before the prose, so the plan is what the user reads; the
+design notes file is written only after the prose is complete; nothing else
+is written. Work through it in this order:
 
 1. Read what the request carries: the request text, the attachments, the
    brand references, and the conversation so far. Everything the plan needs
@@ -84,7 +86,7 @@ nothing else is written. Work through it in this order:
    below, and only that file. The notes are not a draft of the plan: they
    carry what the build round needs, which the prose has already decided.
 6. Stop. In this round do not create, edit, render, or dispatch any
-   deliverable, and do not write the turn completion marker. Open Design
+   deliverable, and do not add follow-up suggestions. Open Design
    starts the build round on its own; the user does not resubmit the request.
 
 When a plan or todo tool is available, write the ordered build steps into it

@@ -15,11 +15,16 @@ describe('chat turn host protocol', () => {
     expect(result.text).not.toContain('OD Next host handoff gate');
   });
 
-  it('gates first-round markers on a round that wrote the deliverable itself', () => {
+  it('opens a planning round with the completion marker and gates the rest on a round that delivered', () => {
     const result = renderChatTurnHostProtocolInstructions(KEY, 'od_next_request');
 
+    // The plan prose is what the user reads, so the marker precedes it — and
+    // any tool call — instead of closing the round; the two other protocols
+    // wait for the build round.
+    expect(result.text).toContain('opens with the completion marker');
+    expect(result.text).toContain('before the plan prose and before any tool call');
+    expect(result.text).toContain('omits the follow-up suggestions and the artifact focus');
     expect(result.text).toContain('only when this round wrote the deliverable itself');
-    expect(result.text).toContain('A planning round that ends with the plan and the design notes');
     expect(result.text).toContain('<question-form>');
     expect(result.text).not.toContain('outcome=completed');
     expect(result.text).toContain(`<od-done key="${KEY}"/>`);
