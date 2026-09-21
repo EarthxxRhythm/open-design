@@ -100,6 +100,7 @@ import {
 } from '../../plugins/index.js';
 import { connectorService } from '../../connectors/service.js';
 import type { RouteDeps } from '../../server-context.js';
+import { entryFileAfterDelete, entryFileAfterRename, metadataWithEntryFile } from '../../project-entry-file.js';
 import { listSkills } from '../../skills.js';
 import { isSafeId } from '../../projects.js';
 import {
@@ -331,6 +332,8 @@ function assertProjectCreatePreparationWithinDeadline(
 }
 
 export interface RegisterProjectRoutesDeps extends RouteDeps<'db' | 'design' | 'http' | 'paths' | 'projectStore' | 'projectFiles' | 'conversations' | 'templates' | 'status' | 'events' | 'ids' | 'telemetry' | 'appConfig' | 'agents' | 'validation' | 'collabSync'> {
+  /** Thin signal that the project record changed; the web re-fetches it. */
+  notifyProjectMetadataChanged?: (projectId: string) => void;
   /**
    * Request-wide deadline for the read-only preparation POST /api/projects
    * runs before its transaction. Production keeps the 15s default; tests and
@@ -5515,6 +5518,7 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       }
       const updated = updateProject(db, project.id, { metadata: nextMeta });
       if (!updated) return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'not found');
+      ctx.notifyProjectMetadataChanged?.(project.id);
       /** @type {import('@open-design/contracts').ProjectEntryFileUpdateResponse} */
       const response = {
         project: updated,
@@ -5850,6 +5854,8 @@ export function registerProjectArtifactRoutes(app: Express, ctx: RegisterProject
 }
 
 export interface RegisterProjectFileRoutesDeps extends RouteDeps<'db' | 'design' | 'http' | 'paths' | 'uploads' | 'node' | 'projectStore' | 'projectFiles' | 'documents' | 'artifacts' | 'projectPreviewScopes'> {
+  /** Thin signal that the project record changed; the web re-fetches it. */
+  notifyProjectMetadataChanged?: (projectId: string) => void;
   verifyWorkspaceRequestAuthority?: VerifyWorkspaceRequestAuthority;
   authorizeProjectRequest?: AuthorizeProjectRequest;
   /** Startup-hydrated O(1) quarantine lookup for stale Team mirrors. */
@@ -5867,7 +5873,21 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
   const { PROJECTS_DIR, DESIGN_SYSTEMS_DIR, USER_DESIGN_SYSTEMS_DIR } = ctx.paths;
   const { upload } = ctx.uploads;
   const { fs } = ctx.node;
-  const { getProject, getWorkspaceProject, getWorkspaceProjectByProjectId } = ctx.projectStore;
+  const { getProject, getWorkspaceProject, getWorkspaceProjectByProjectId, updateProject } = ctx.projectStore;
+  /**
+   * Carry the entry attribute across a file mutation: `next` is what
+   * `entryFileAfterRename` / `entryFileAfterDelete` decided, and `undefined`
+   * means the mutation did not touch the entry. The record is re-read here
+   * rather than taken from the pre-mutation project so a concurrent change
+   * to other metadata is not overwritten.
+   */
+  const carryEntryFile = (projectId: string, next: string | null | undefined) => {
+    if (next === undefined) return;
+    const current = getProject(db, projectId);
+    if (!current) return;
+    updateProject(db, projectId, { metadata: metadataWithEntryFile(current.metadata, next) });
+    ctx.notifyProjectMetadataChanged?.(projectId);
+  };
   const authorizeProjectRequest =
     ctx.authorizeProjectRequest ??
     createAuthorizeProjectRequest({
@@ -6765,6 +6785,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         folderPath,
         project.metadata,
       );
+      carryEntryFile(project.id, entryFileAfterDelete(project.metadata?.entryFile, folderPath, 'folder'));
       /** @type {import('@open-design/contracts').DeleteProjectFolderResponse} */
       const body = { ok: true };
       res.json(body);
@@ -7241,6 +7262,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       )) return;
       await deleteProjectFile(PROJECTS_DIR, projectId, rawSplat, project?.metadata);
       await markProjectFileVersionStoreDeleted(PROJECTS_DIR, projectId, rawSplat, project?.metadata);
+      carryEntryFile(project.id, entryFileAfterDelete(project.metadata?.entryFile, rawSplat, 'file'));
       // Tombstone, not delete: an HTML card must be able to say "the current
       // file is gone" rather than silently opening whatever later takes the
       // name. Image cards keep resolving their own snapshot either way.
@@ -7926,6 +7948,10 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       } catch (error) {
         console.warn('[chat-artifacts] rename bookkeeping failed', error);
       }
+      carryEntryFile(
+        project.id,
+        entryFileAfterRename(project.metadata?.entryFile, result.oldName, result.newName),
+      );
       /** @type {import('@open-design/contracts').RenameProjectFileResponse} */
       const body = result;
       res.json(body);
@@ -7960,6 +7986,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       )) return;
       await deleteProjectFile(PROJECTS_DIR, req.params.id, req.params.name, delProject?.metadata);
       await markProjectFileVersionStoreDeleted(PROJECTS_DIR, req.params.id, req.params.name, delProject?.metadata);
+      carryEntryFile(delProject.id, entryFileAfterDelete(delProject.metadata?.entryFile, req.params.name, 'file'));
       try {
         deleteWorkspaceArtifact(db, req.params.id, req.params.name);
       } catch (error) {

@@ -1620,6 +1620,18 @@ function emitProjectEvent(projectId, payload) {
   return true;
 }
 
+// The project record changed under an open view: name, settings, share
+// metadata, or the entry file (set by hand, by `od project entry`, by a
+// delivering Run, or carried along by a rename / delete of the entry). Thin
+// signal — the web re-fetches the record and applies what differs.
+function notifyProjectMetadataChanged(projectId: string): boolean {
+  return emitProjectEvent(projectId, {
+    type: 'project-metadata-changed',
+    projectId,
+    at: Date.now(),
+  });
+}
+
 // Broadcast a thin WORKSPACE-scoped invalidation only to the verified sink
 // partition for `workspaceId`. There is deliberately no account-wide fallback:
 // every producer below is attached to an explicit hub/poller/billing/project
@@ -5313,12 +5325,7 @@ export async function startServer({
     // from its `projects` state; push the existing `project-metadata-changed`
     // thin signal so the open view re-fetches the record instead of keeping
     // the placeholder title until a page reload (recvqhwv6RPU1j).
-    notifyProjectMetadataChanged: (projectId: string) =>
-      emitProjectEvent(projectId, {
-        type: 'project-metadata-changed',
-        projectId,
-        at: Date.now(),
-      }),
+    notifyProjectMetadataChanged,
     ...(sharedProjectPullProfiling
       ? {
           onPullTiming: emitSharedProjectPullTiming,
@@ -8581,6 +8588,7 @@ export async function startServer({
   registerProjectRoutes(app, {
     db,
     design,
+    notifyProjectMetadataChanged,
     // Test seam for the POST /api/projects preparation deadline; production
     // keeps the route's 15s default when the variable is unset or invalid.
     ...(projectCreatePreparationTimeoutMs != null
@@ -9124,6 +9132,7 @@ export async function startServer({
   registerProjectFileRoutes(app, {
     db,
     design,
+    notifyProjectMetadataChanged,
     http: httpDeps,
     paths: pathDeps,
     uploads: uploadDeps,
@@ -16705,6 +16714,7 @@ export async function startServer({
                 metadata: { ...current.metadata, entryFile: deliverable.entryFile },
                 updatedAt: SYNC_KEEPS_UPDATED_AT,
               });
+              notifyProjectMetadataChanged(current.id);
               design.runs.emit(run, 'diagnostic', {
                 type: 'project_entry_recorded',
                 entryFile: deliverable.entryFile,

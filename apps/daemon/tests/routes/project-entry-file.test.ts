@@ -6,6 +6,10 @@
  * file that exists becomes the recorded entry the preview opens, `null`
  * clears the record so inference takes over again, and anything else is
  * refused with a named error instead of being stored.
+ *
+ * The attribute names a path, so the file mutation routes carry it along:
+ * a rename of the entry moves the record, a delete of the entry or of the
+ * folder holding it clears the record, and the preview follows each time.
  */
 import type http from 'node:http';
 import { execFile } from 'node:child_process';
@@ -174,6 +178,104 @@ describe('PUT /api/projects/:id/entry-file', () => {
     await expect(run(['project', 'entry', projectId, '--file', 'missing.html', '--daemon-url', baseUrl, '--json']))
       .rejects.toMatchObject({ code: expect.any(Number) });
   }, 60_000);
+
+  async function previewFile(projectId: string): Promise<{ status: number; file: string | undefined; code: string | undefined }> {
+    const response = await fetch(`${baseUrl}/api/projects/${projectId}/preview-url`);
+    const body = await response.json() as { file?: string; error?: { code?: string } };
+    return { status: response.status, file: body.file, code: body.error?.code };
+  }
+
+  it('follows the entry file through a rename', async () => {
+    const projectId = await createProjectWithFiles('rename', {
+      'screens/home.html': '<!doctype html><title>Home</title>',
+      'screens/about.html': '<!doctype html><title>About</title>',
+    });
+    expect((await putEntry(projectId, 'screens/home.html')).status).toBe(200);
+
+    // Renaming another file leaves the record alone.
+    const other = await fetch(`${baseUrl}/api/projects/${projectId}/files/rename`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: 'screens/about.html', to: 'screens/team.html' }),
+    });
+    expect(other.status).toBe(200);
+    expect(await readEntry(projectId)).toBe('screens/home.html');
+
+    const renamed = await fetch(`${baseUrl}/api/projects/${projectId}/files/rename`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: 'screens/home.html', to: 'screens/start.html' }),
+    });
+    expect(renamed.status, await renamed.text().catch(() => '')).toBe(200);
+    expect(await readEntry(projectId)).toBe('screens/start.html');
+    expect(await previewFile(projectId)).toMatchObject({ status: 200, file: 'screens/start.html' });
+  });
+
+  it('clears the entry when its file is deleted, so the preview falls back to inference', async () => {
+    const projectId = await createProjectWithFiles('delete-file', {
+      'index.html': '<!doctype html><title>Index</title>',
+      'screens/home.html': '<!doctype html><title>Home</title>',
+    });
+    expect((await putEntry(projectId, 'screens/home.html')).status).toBe(200);
+    expect(await previewFile(projectId)).toMatchObject({ status: 200, file: 'screens/home.html' });
+
+    // Deleting another file leaves the record alone.
+    const other = await fetch(`${baseUrl}/api/projects/${projectId}/raw/index.html`, { method: 'DELETE' });
+    expect(other.status).toBe(200);
+    expect(await readEntry(projectId)).toBe('screens/home.html');
+    const restored = await fetch(`${baseUrl}/api/projects/${projectId}/files`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'index.html', content: '<!doctype html><title>Index</title>' }),
+    });
+    expect(restored.status).toBe(200);
+
+    const deleted = await fetch(`${baseUrl}/api/projects/${projectId}/raw/screens/home.html`, { method: 'DELETE' });
+    expect(deleted.status).toBe(200);
+    expect(await readEntry(projectId)).toBeUndefined();
+    // Back on inference: the root index.html is what the preview opens, not a
+    // FILE_NOT_FOUND for the path that is gone.
+    expect(await previewFile(projectId)).toMatchObject({ status: 200, file: 'index.html' });
+  });
+
+  it('clears the entry when a root file is deleted through the files route', async () => {
+    const projectId = await createProjectWithFiles('delete-root', {
+      'index.html': '<!doctype html><title>Index</title>',
+      'landing.html': '<!doctype html><title>Landing</title>',
+    });
+    expect((await putEntry(projectId, 'landing.html')).status).toBe(200);
+    const deleted = await fetch(`${baseUrl}/api/projects/${projectId}/files/landing.html`, { method: 'DELETE' });
+    expect(deleted.status).toBe(200);
+    expect(await readEntry(projectId)).toBeUndefined();
+    expect(await previewFile(projectId)).toMatchObject({ status: 200, file: 'index.html' });
+  });
+
+  it('clears the entry when the folder holding it is deleted', async () => {
+    const projectId = await createProjectWithFiles('delete-folder', {
+      'index.html': '<!doctype html><title>Index</title>',
+      'screens/home.html': '<!doctype html><title>Home</title>',
+      'assets/app.css': 'body{}',
+    });
+    expect((await putEntry(projectId, 'screens/home.html')).status).toBe(200);
+
+    // A folder that does not hold the entry leaves the record alone.
+    const other = await fetch(`${baseUrl}/api/projects/${projectId}/folders`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: 'assets' }),
+    });
+    expect(other.status).toBe(200);
+    expect(await readEntry(projectId)).toBe('screens/home.html');
+
+    const deleted = await fetch(`${baseUrl}/api/projects/${projectId}/folders`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: 'screens' }),
+    });
+    expect(deleted.status).toBe(200);
+    expect(await readEntry(projectId)).toBeUndefined();
+    expect(await previewFile(projectId)).toMatchObject({ status: 200, file: 'index.html' });
+  });
 
   it('returns 404 for an unknown project', async () => {
     const response = await putEntry('proj-does-not-exist', 'index.html');
