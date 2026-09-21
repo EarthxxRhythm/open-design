@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import type { ArtifactExportFormat } from '../runtime/chat/artifact-export';
-import { boundedPublishProgress, ShareTab } from './share/ShareTab';
+import { boundedPublishProgress, ShareTab, type SharePublishFailureKey } from './share/ShareTab';
 import { AnchoredMenuShell } from './chat/AnchoredMenuShell';
 import { createPortal, flushSync } from 'react-dom';
 import { Button, Input, Select } from '@open-design/components';
@@ -106,6 +106,7 @@ import {
   TEAM_PROJECTS_CHANGED_EVENT,
 } from '../collab/useWorkspaceContext';
 import {
+  PublicFilePublishError,
   canPublishPublicFile,
   publicFileManualRevokePublication,
   publicFilePublishFailureKey,
@@ -7950,7 +7951,7 @@ function HtmlViewer({
   // Why a publish/unpublish attempt failed, as a message key. `publishLinkFeedback`
   // only renders inside the already-published branch, so a failed FIRST publish
   // used to leave no trace on screen at all — the button simply returned to idle.
-  const [publishFailureKey, setPublishFailureKey] = useState<PublicFilePublishFailureKey | null>(null);
+  const [publishFailureKey, setPublishFailureKey] = useState<SharePublishFailureKey | null>(null);
   const filePublished = publishedFileUrl.length > 0;
   // Public links need a signed-in workspace (any type); see canPublishPublicFile.
   const canPublishPublic = canPublishPublicFile(workspaceContext);
@@ -8256,7 +8257,11 @@ function HtmlViewer({
           setPublishFailureKey(null);
         } else {
           setPublishLinkFeedback('failed');
-          setPublishFailureKey(publicFilePublishFailureKey(error));
+          // The provider preserves status/code, but not the plan's byte totals.
+          setPublishFailureKey(error instanceof PublicFilePublishError
+            && error.status === 413 && error.code === 'too_large'
+            ? 'fileViewer.publishFileTooLarge'
+            : publicFilePublishFailureKey(error));
         }
       }
     } finally {

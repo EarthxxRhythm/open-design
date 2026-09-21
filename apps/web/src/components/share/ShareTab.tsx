@@ -7,6 +7,8 @@ import type { DeployProviderOption } from '../FileViewer';
 import { RemixIcon } from '../RemixIcon';
 import { SocialShareGrid } from '../SocialShareGrid';
 
+export type SharePublishFailureKey = PublicFilePublishFailureKey | 'fileViewer.publishFileTooLarge';
+
 /** Time-based waiting feedback, not transferred bytes. Only success may reach 1. */
 export function boundedPublishProgress(elapsedMs: number, completed: boolean): number {
   if (completed) return 1;
@@ -69,7 +71,7 @@ export function ShareTab({
   unpublishCurrentFilePublic: () => Promise<void>;
   viewerOnlyDisabledTitle: string;
   publishCurrentFilePublic: () => Promise<void>;
-  publishFailureKey: PublicFilePublishFailureKey | null;
+  publishFailureKey: SharePublishFailureKey | null;
   activeProjectSocialShare: SocialShareResponse | null;
   shareableDeploymentUrl: string;
   DEPLOY_PROVIDER_OPTIONS: DeployProviderOption[];
@@ -251,7 +253,7 @@ export function ShareTab({
                           </span>
                           <span>{publishingPublicFile
                             ? t('fileViewer.publishingFile')
-                            : publishFailureKey === 'fileViewer.publishFileFailed'
+                            : publishFailureKey === 'fileViewer.publishFileFailed' || publishFailureKey === 'fileViewer.publishFileTooLarge'
                               ? t('preview.retry')
                               : t('fileViewer.publishSingleFileTitle')}</span>
                         </button>
