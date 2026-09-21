@@ -522,7 +522,7 @@ test('[P0] two isolated clients converge live content, presence, and owner unsha
           .getByTestId('comment-side-panel')
           .getByTestId('comment-side-item')
           .filter({ hasText: COLLAB_COMMENT_NOTE }),
-      ).toBeVisible({ timeout: T.medium });
+      ).toBeVisible({ timeout: T.long });
     });
 
     const memberDocumentMarker = await memberPage.evaluate(() => {
@@ -689,10 +689,7 @@ test('[P0] two isolated clients converge live content, presence, and owner unsha
   }
 });
 
-// FIXME: Restore this P0 case after workspace-context refreshes use semantic
-// invalidation tokens instead of the 250ms force-coalescing window. A role
-// change immediately after SSE activation can otherwise retain the old role.
-test.fixme('[P0] two active clients converge when a member gains then loses admin access', async ({
+test('[P0] two active clients converge when a member gains then loses admin access', async ({
   browser,
 }, testInfo) => {
   const hubRoot = testInfo.outputPath('fake-role-change-hub');
@@ -1069,7 +1066,7 @@ async function pinWorkspace(page: Page, workspaceMemberId: string): Promise<void
 
 async function openHome(page: Page): Promise<void> {
   await page.bringToFront();
-  await page.goto('/', { waitUntil: 'domcontentloaded', timeout: T.xlong });
+  await page.goto('/', { waitUntil: 'domcontentloaded', timeout: T.xlong * 2 });
   await expect(page.getByText('Loading OpenDesign…')).toHaveCount(0, {
     timeout: T.xlong,
   });

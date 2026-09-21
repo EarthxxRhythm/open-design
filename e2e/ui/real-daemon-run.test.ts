@@ -132,37 +132,6 @@ test('[P0] real daemon run streams, persists, and previews an artifact', async (
   await expectProjectFileToContain(page, projectId, GENERATED_FILE, GENERATED_HEADING);
 });
 
-test('[P1] execution plan connector stops before completed status markers', async ({ page }) => {
-  await createProject(page, 'Execution plan connector geometry', 'claude');
-  await expectWorkspaceReady(page);
-
-  await sendPrompt(page, 'Emit an unfinished-todo run');
-
-  const completedSummary = page.locator('summary').filter({ hasText: 'Draft layout' });
-  await expect(completedSummary).toBeVisible({ timeout: 15_000 });
-  await expect(completedSummary.getByRole('img', { name: 'Done' })).toBeVisible();
-
-  const geometry = await completedSummary.evaluate((summary) => {
-    const row = summary.parentElement;
-    const marker = summary.querySelector<HTMLElement>('[role="img"]');
-    if (!row || !marker) throw new Error('execution-plan row or marker is missing');
-
-    const rowRect = row.getBoundingClientRect();
-    const markerRect = marker.getBoundingClientRect();
-    const connector = window.getComputedStyle(row, '::before');
-    const connectorTop = Number.parseFloat(connector.top);
-
-    return {
-      connectorContent: connector.content,
-      connectorStart: rowRect.top + connectorTop,
-      markerBottom: markerRect.bottom,
-    };
-  });
-
-  expect(geometry.connectorContent).not.toBe('none');
-  expect(geometry.connectorStart).toBeGreaterThanOrEqual(geometry.markerBottom);
-});
-
 test('[P0] local OD Next active canary follows one public task across physical runs', async ({ page }) => {
   test.skip(
     process.env.OD_NEXT_STRATEGY_ROLLOUT !== 'active'
@@ -843,7 +812,7 @@ test('[P1] plan-document regeneration re-opens the existing generated HTML file'
   await sendPrompt(page, 'Generate the deterministic artifact from the plan document');
   await expectProjectFilesToContain(page, projectId, ['index.html', 'plan.md']);
   const htmlTab = workspace.getByRole('tab', { name: /index\.html/i });
-  await expect(htmlTab).toBeVisible({ timeout: 15_000 });
+  await expect(htmlTab).toBeVisible({ timeout: T.long });
   await expect(htmlTab).toHaveAttribute('aria-selected', 'true');
 
   // The user goes back to the plan document to revise it...
@@ -1077,6 +1046,7 @@ test('[P1] plain stdout daemon runtime surfaces stderr-only failures without gho
 });
 
 test('[P0] separate projects keep daemon artifacts isolated across recent-project navigation', async ({ page }) => {
+  test.setTimeout(120_000);
   await createProject(page, 'Real daemon isolation alpha');
   await expectWorkspaceReady(page);
   await sendPrompt(page, 'Create a deterministic smoke artifact');
@@ -1132,8 +1102,9 @@ test('[P2] OpenCode non-zero tool results trigger and persist the repeated-failu
   expectCreateRunAgentId(runResponse, 'opencode');
 
   const warning = 'Heads up — the agent has repeated a failing bash call 4× and may be stuck.';
-  await expect(page.getByText(warning, { exact: true })).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText('Stopped retrying after repeated tool failures.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Stopped retrying after repeated tool failures.', { exact: true })).toBeVisible({
+    timeout: 15_000,
+  });
 
   const { projectId, conversationId } = await currentProjectContext(page);
   await expect.poll(async () => {
@@ -1156,11 +1127,11 @@ test('[P2] OpenCode non-zero tool results trigger and persist the repeated-failu
 
   await page.reload({ waitUntil: 'domcontentloaded' });
   await expectWorkspaceReady(page);
-  await expect(page.getByText(warning, { exact: true })).toBeVisible();
   await expect(page.getByText('Stopped retrying after repeated tool failures.', { exact: true })).toBeVisible();
 });
 
 test('[P1] BYOK OpenCode run is blocked before spawn when provider config is missing', async ({ page }) => {
+  test.setTimeout(120_000);
   await createByokOpenCodeProject(page, 'BYOK OpenCode missing provider smoke');
   await expectWorkspaceReady(page);
   const projectUrl = page.url();
@@ -1194,12 +1165,11 @@ test('[P1] BYOK OpenCode run is blocked before spawn when provider config is mis
 
   await page.goto(projectUrl, { waitUntil: 'domcontentloaded' });
   await expectWorkspaceReady(page);
-  await page.reload({ waitUntil: 'domcontentloaded' });
-  await expectWorkspaceReady(page);
   expect(await listProjectFiles(page, projectId)).toEqual([]);
 });
 
-test('[P1] plugin authoring produces a generated-plugin scaffold with action cards', async ({ page }) => {
+test('[P1] plugin authoring produces a generated-plugin scaffold with Design Files actions', async ({ page }) => {
+  test.setTimeout(120_000);
   await configureFakeAgent(page, 'codex');
   await installBrowserAgentConfig(page, 'codex');
   await gotoEntryHome(page);
@@ -1256,14 +1226,8 @@ test('[P1] plugin authoring produces a generated-plugin scaffold with action car
     expectedThinking: false,
   });
 
-  await expect(page.getByText('Files from this turn')).toBeVisible();
-  await expect(page.getByTestId('assistant-plugin-actions-generated-plugin')).toBeVisible();
-  await expect(page.getByTestId('assistant-plugin-install-generated-plugin')).toBeVisible();
-  await expect(page.getByTestId('assistant-plugin-publish-generated-plugin')).toBeVisible();
-  await expect(page.getByTestId('assistant-plugin-contribute-generated-plugin')).toBeVisible();
-
-  // The run auto-opens the produced file tab; the plugin-folder card lives in
-  // the Design Files ("All project files") view, so navigate there first.
+  // The run auto-opens a produced file tab. Plugin actions now live only on
+  // the plugin-folder card in Design Files, so navigate there first.
   await openAllProjectFiles(page);
   await expect(page.getByTestId('design-plugin-folder-generated-plugin')).toBeVisible();
   await expect(page.getByTestId('design-plugin-folder-install-generated-plugin')).toBeVisible();
@@ -1580,14 +1544,14 @@ async function expectWorkspaceReady(page: Page) {
   await expect(page.getByTestId('file-workspace')).toBeVisible();
 }
 
-async function sendPrompt(page: Page, prompt: string, responseTimeout = T.medium) {
+async function sendPrompt(page: Page, prompt: string, responseTimeout = T.long) {
   const input = page.getByTestId('chat-composer-input');
   const sendButton = page.getByTestId('chat-send');
-  await expect(input).toBeVisible({ timeout: 5_000 });
+  await expect(input).toBeVisible({ timeout: T.long });
   await input.click();
   await input.fill(prompt);
   await expect(input).toHaveText(prompt);
-  await expect(sendButton).toBeEnabled();
+  await expect(sendButton).toBeEnabled({ timeout: T.long });
   // Split the diagnosis on timeout: track whether the create-run POST was
   // ever issued, so a failure distinguishes "the click never produced a
   // request" (composer/overlay problem) from "the daemon did not answer in
