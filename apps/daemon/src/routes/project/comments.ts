@@ -4,6 +4,7 @@ import type {
   ProjectCommentReadRequest,
   WorkspaceCollabContext,
 } from '@open-design/contracts';
+import { SHARE_COMMENT_MAX_BYTES } from '@open-design/contracts';
 import { projectKindFromMetadataToTrackingOrLegacyDefault } from '@open-design/contracts/analytics';
 import type { RouteDeps } from '../../server-context.js';
 import type { BoundWorkspaceResourceMutationGate } from '../../collab/workspace-resource-mutation.js';
@@ -284,20 +285,30 @@ export function registerProjectCommentRoutes(app: Express, ctx: RegisterProjectC
   function sendWorkspaceResolutionError(
     res: any,
     resolution: Extract<ProjectCommentWorkspaceContextResolution, { ok: false }>,
-  ): unknown {
+  ): void {
     if (ctx.sendApiError) {
-      return ctx.sendApiError(
+      ctx.sendApiError(
         res,
         resolution.status,
         resolution.code,
         resolution.message,
       );
+      return;
     }
-    return res.status(resolution.status).json({
+    res.status(resolution.status).json({
       error: resolution.code,
       message: resolution.message,
       ...(resolution.retryable ? { retryable: true } : {}),
     });
+  }
+
+  function sendCommentPayloadTooLarge(res: any): void {
+    const message = `comment body exceeds ${SHARE_COMMENT_MAX_BYTES} bytes`;
+    if (ctx.sendApiError) {
+      ctx.sendApiError(res, 413, 'PAYLOAD_TOO_LARGE', message);
+      return;
+    }
+    res.status(413).json({ error: { code: 'PAYLOAD_TOO_LARGE', message } });
   }
 
   /** The caller's workspaceMemberId, or undefined off-team / personal mode. */
@@ -474,6 +485,15 @@ export function registerProjectCommentRoutes(app: Express, ctx: RegisterProjectC
       delete body.authorAppUserId;
       delete body.authorDisplayName;
       delete body.authorKey;
+      // This is a transport anti-abuse ceiling, not a product character limit.
+      // Keep it server-side: CLI and UI must send the body unchanged and let the
+      // route reject a pathological UTF-8 payload without creating a row.
+      if (
+        typeof body.note === 'string'
+        && Buffer.byteLength(body.note, 'utf8') > SHARE_COMMENT_MAX_BYTES
+      ) {
+        return sendCommentPayloadTooLarge(res);
+      }
       const authorMemberId = await resolveCaller(req, workspaceContext);
       const requestedId = typeof body.id === 'string' && body.id.trim() ? body.id.trim() : '';
       let existing: PreviewComment | null = null;
@@ -520,6 +540,7 @@ export function registerProjectCommentRoutes(app: Express, ctx: RegisterProjectC
         });
         updateProject(db, req.params.id, {});
         if (saved && syncEnabled) {
+          // SAFETY: the DB normalizer returns the PreviewComment fields consumed by the relay.
           requireRelayEnqueued(ctx.onCommentCreated?.(
             saved as unknown as PreviewComment,
             workspaceContext,
@@ -634,6 +655,7 @@ export function registerProjectCommentRoutes(app: Express, ctx: RegisterProjectC
           if (!saved) return null;
           updateProject(db, req.params.id, {});
           if (syncEnabled) {
+            // SAFETY: the DB normalizer returns the PreviewComment fields consumed by the relay.
             requireRelayEnqueued(ctx.onCommentUpdated?.(
               saved as unknown as PreviewComment,
               workspaceContext,

@@ -1,0 +1,209 @@
+import { execFile, spawn } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import http from 'node:http';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve as pathResolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
+import express from 'express';
+import { afterEach, describe, expect, it } from 'vitest';
+import {
+  buildWorkspacePermissions,
+  buildWorkspaceSeatSummary,
+  type WorkspaceCollabContext,
+} from '@open-design/contracts';
+import {
+  closeDatabase,
+  deletePreviewComment,
+  ensureWorkspaceProject,
+  getConversation,
+  getPreviewComment,
+  getProjectPreviewComment,
+  getWorkspaceProject,
+  getWorkspaceProjectByProjectId,
+  insertConversation,
+  insertProject,
+  listPreviewComments,
+  listProjectPreviewComments,
+  openDatabase,
+  reorderPreviewComment,
+  updatePreviewCommentAnchor,
+  updatePreviewCommentStatus,
+  updateProject,
+  upsertPreviewComment,
+} from '../src/db.js';
+import { enforceWorkspaceResourceMutation } from '../src/collab/workspace-resource-mutation.js';
+import { verifyWorkspaceRequestContext } from '../src/collab/request-workspace-context.js';
+import { registerProjectCommentRoutes } from '../src/routes/project/comments.js';
+
+const execFileP = promisify(execFile);
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const DAEMON_ROOT = pathResolve(__dirname, '..');
+const REPO_ROOT = pathResolve(__dirname, '../../..');
+const CLI_SRC = pathResolve(__dirname, '../src/cli.ts');
+const TSX_CLI = pathResolve(REPO_ROOT, 'node_modules/tsx/dist/cli.mjs');
+const PROJECT = 'project-cli-sqlite';
+const CONVERSATION = 'conversation-cli-sqlite';
+const WORKSPACE = 'workspace-cli-sqlite';
+const OWNER = 'member-owner';
+const OTHER = 'member-other';
+const target = {
+  filePath: 'index.html', elementId: 'headline', selector: '#headline',
+  label: 'Headline', text: 'Hello', htmlHint: '<h1>Hello</h1>',
+  position: { x: 1, y: 2, width: 3, height: 4 },
+};
+
+let server: http.Server | null = null;
+let tempRoot = '';
+let db: ReturnType<typeof openDatabase> | null = null;
+
+function context(memberId: string): WorkspaceCollabContext {
+  return {
+    workspaceId: WORKSPACE, workspaceType: 'team', workspaceMemberId: memberId,
+    role: memberId === OWNER ? 'owner' : 'member', memberStatus: 'active', lifecycleState: 'active',
+    billingState: 'active', planId: null, providerMode: 'platform_credits', teamId: WORKSPACE,
+    seatSummary: buildWorkspaceSeatSummary({ seatLimit: 5, usedSeats: 2 }),
+    permissions: buildWorkspacePermissions({ role: memberId === OWNER ? 'owner' : 'member', lifecycleState: 'active' }),
+  };
+}
+
+function headers(memberId: string) {
+  return ['--workspace', WORKSPACE, '--workspace-member', memberId];
+}
+
+async function runCli(args: string[]) {
+  const env = { ...process.env };
+  delete env.NODE_OPTIONS;
+  try {
+    const { stdout, stderr } = await execFileP(process.execPath, [TSX_CLI, CLI_SRC, ...args], {
+      cwd: DAEMON_ROOT, env, timeout: 15_000, maxBuffer: 4 * 1024 * 1024,
+    });
+    return { code: 0, stdout, stderr };
+  } catch (error) {
+    const failed = error as { code?: number | null; stdout?: string; stderr?: string };
+    return { code: failed.code ?? 1, stdout: failed.stdout ?? '', stderr: failed.stderr ?? '' };
+  }
+}
+
+function runCliWithStdin(args: string[], input: string) {
+  return new Promise<{ code: number | null; stdout: string; stderr: string }>((resolveRun) => {
+    const env = { ...process.env };
+    delete env.NODE_OPTIONS;
+    const child = spawn(process.execPath, [TSX_CLI, CLI_SRC, ...args], {
+      cwd: DAEMON_ROOT, env, stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stdout = ''; let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('close', (code) => resolveRun({ code, stdout, stderr }));
+    child.stdin.end(input);
+  });
+}
+
+async function startRouteServer() {
+  tempRoot = mkdtempSync(join(tmpdir(), 'od-comment-cli-sqlite-'));
+  db = openDatabase(tempRoot);
+  insertProject(db, { id: PROJECT, name: 'CLI SQLite', createdAt: 1, updatedAt: 1 });
+  insertConversation(db, { id: CONVERSATION, projectId: PROJECT, title: 'CLI', createdAt: 1, updatedAt: 1 });
+  ensureWorkspaceProject(db, { projectId: PROJECT, workspaceId: WORKSPACE, visibility: 'team', createdByWorkspaceMemberId: OWNER });
+  const app = express();
+  app.use(express.json({ limit: '4mb' }));
+  registerProjectCommentRoutes(app, {
+    db,
+    projectStore: { updateProject, getWorkspaceProject, getWorkspaceProjectByProjectId } as any,
+    conversations: {
+      getConversation, listPreviewComments, listProjectPreviewComments, upsertPreviewComment,
+      getPreviewComment, getProjectPreviewComment, updatePreviewCommentStatus,
+      updatePreviewCommentAnchor, deletePreviewComment, reorderPreviewComment,
+    } as any,
+    sendApiError: (res, status, code, message) => res.status(status).json({ error: { code, message } }),
+    enforceWorkspaceProjectMutation: async (req, res, sendError, getWorkspace, getWorkspaceByProjectId, database, projectId, capability) =>
+      enforceWorkspaceResourceMutation('project', req, res, sendError, getWorkspace, getWorkspaceByProjectId, database, projectId, capability),
+    resolveWorkspaceContext: (req) => verifyWorkspaceRequestContext({
+      req,
+      fetchWorkspaceDirectory: async () => ({ ok: true as const, items: [
+        { workspaceId: WORKSPACE, workspaceName: 'CLI SQLite', workspaceType: 'team' as const, workspaceMemberId: OWNER, role: 'owner' as const, memberStatus: 'active' as const, lifecycleState: 'active' as const },
+        { workspaceId: WORKSPACE, workspaceName: 'CLI SQLite', workspaceType: 'team' as const, workspaceMemberId: OTHER, role: 'member' as const, memberStatus: 'active' as const, lifecycleState: 'active' as const },
+      ] }),
+    }),
+  });
+  server = http.createServer(app);
+  await new Promise<void>((resolveListen) => server!.listen(0, '127.0.0.1', resolveListen));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('route server did not bind');
+  return 'http://127.0.0.1:' + address.port;
+}
+
+afterEach(async () => {
+  if (server) await new Promise<void>((resolveClose) => server!.close(() => resolveClose()));
+  server = null;
+  closeDatabase(); db = null;
+  if (tempRoot) rmSync(tempRoot, { recursive: true, force: true });
+  tempRoot = '';
+});
+
+describe('od comment CLI HTTP/SQLite route integration', () => {
+  it('persists the create/list/update/status/delete lifecycle through production CLI and comment routes', async () => {
+    const base = await startRouteServer();
+    const common = [...headers(OWNER), '--daemon-url', base, '--json'];
+    const create = await runCli(['comment', 'create', PROJECT, CONVERSATION, '--target', JSON.stringify(target), '--prompt', 'created', ...common]);
+    expect(create.code).toBe(0);
+    const created = JSON.parse(create.stdout).comment as { id: string };
+    expect(getPreviewComment(db!, PROJECT, CONVERSATION, created.id)).toMatchObject({ note: 'created', status: 'open', authorMemberId: OWNER });
+
+    const list = await runCli(['comment', 'list', PROJECT, CONVERSATION, ...common]);
+    expect(list.code).toBe(0);
+    expect(JSON.parse(list.stdout).comments).toEqual([expect.objectContaining({ id: created.id, note: 'created' })]);
+
+    const update = await runCli(['comment', 'update', PROJECT, CONVERSATION, created.id, '--target', JSON.stringify(target), '--prompt', 'updated', ...common]);
+    expect(update.code).toBe(0);
+    expect(getPreviewComment(db!, PROJECT, CONVERSATION, created.id)?.note).toBe('updated');
+
+    const status = await runCli(['comment', 'status', PROJECT, CONVERSATION, created.id, '--status', 'resolved', ...common]);
+    expect(status.code).toBe(0);
+    expect(getPreviewComment(db!, PROJECT, CONVERSATION, created.id)?.status).toBe('resolved');
+
+    const deleted = await runCli(['comment', 'delete', PROJECT, CONVERSATION, created.id, ...common]);
+    expect(deleted.code).toBe(0);
+    expect(getPreviewComment(db!, PROJECT, CONVERSATION, created.id)).toBeNull();
+  });
+
+  it('passes long multibyte prompt files and stdin through the route into SQLite', async () => {
+    const base = await startRouteServer();
+    const common = [...headers(OWNER), '--daemon-url', base, '--json'];
+    const fileNote = '评论内容'.repeat(1_500);
+    const promptPath = join(tempRoot, 'long.txt');
+    writeFileSync(promptPath, fileNote, 'utf8');
+    const fromFile = await runCli(['comment', 'create', PROJECT, CONVERSATION, '--target', JSON.stringify(target), '--prompt-file', promptPath, ...common]);
+    expect(fromFile.code).toBe(0);
+    expect(getPreviewComment(db!, PROJECT, CONVERSATION, JSON.parse(fromFile.stdout).comment.id)?.note).toBe(fileNote);
+
+    const stdinNote = '第一行\n第二行评论\n第三行';
+    const fromStdin = await runCliWithStdin(['comment', 'create', PROJECT, CONVERSATION, '--target', JSON.stringify(target), '--prompt-file', '-', ...common], stdinNote);
+    expect(fromStdin.code).toBe(0);
+    expect(getPreviewComment(db!, PROJECT, CONVERSATION, JSON.parse(fromStdin.stdout).comment.id)?.note).toBe(stdinNote);
+  });
+
+  it('sends oversized input to the actual route, which rejects it without a SQLite write', async () => {
+    const base = await startRouteServer();
+    const note = '评论'.repeat(25_000);
+    expect(Buffer.byteLength(note, 'utf8')).toBeGreaterThan(64 * 1024);
+    const promptPath = join(tempRoot, 'oversized.txt');
+    writeFileSync(promptPath, note, 'utf8');
+    const result = await runCli(['comment', 'create', PROJECT, CONVERSATION, '--target', JSON.stringify(target), '--prompt-file', promptPath, ...headers(OWNER), '--daemon-url', base, '--json']);
+    expect(result.code).not.toBe(0);
+    expect(JSON.parse(result.stderr)).toMatchObject({ error: { code: 'PAYLOAD_TOO_LARGE' } });
+    expect(listPreviewComments(db!, PROJECT, CONVERSATION)).toEqual([]);
+  });
+
+  it('rejects unauthorized and invalid CLI writes without mutation', async () => {
+    const base = await startRouteServer();
+    const unauthorized = await runCli(['comment', 'create', PROJECT, CONVERSATION, '--target', JSON.stringify(target), '--prompt', 'denied', ...headers('member-intruder'), '--daemon-url', base, '--json']);
+    expect(unauthorized.code).not.toBe(0);
+    expect(listPreviewComments(db!, PROJECT, CONVERSATION)).toEqual([]);
+
+    const invalid = await runCli(['comment', 'create', PROJECT, CONVERSATION, '--target', '{bad', '--prompt', 'never sent', ...headers(OWNER), '--daemon-url', base]);
+    expect(invalid.code).toBe(2);
+    expect(listPreviewComments(db!, PROJECT, CONVERSATION)).toEqual([]);
+  });
+});
