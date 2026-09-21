@@ -950,6 +950,7 @@ import { registerTeamResourceRoutes } from './routes/team-resources.js';
 import { registerTeamResourceShareRoutes } from './routes/team-resource-share.js';
 import { createCollabRuntime } from './collab/runtime.js';
 import { createSqlitePublicFilePublicationStore } from './collab/public-file-publication-store.js';
+import { resolveLocalProjectCommentWorkspaceContext } from './collab/project-comment-workspace-context.js';
 import {
   createActiveWorkspaceSelectionStore,
 } from './collab/active-workspace-selection.js';
@@ -5013,83 +5014,35 @@ export async function startServer({
     projectId,
     { fresh: false },
   );
-  const resolveLocalProjectCommentWorkspaceContext = async (
+  const resolveProjectLocalCommentWorkspaceContext = async (
     req: any,
     projectId: string,
   ) => {
     const binding = getWorkspaceProjectByProjectId(db, projectId);
-    if (revokedTeamProjectMirrors.has(projectId)) {
-      return {
-        ok: false as const,
-        status: 403 as const,
-        code: 'WORKSPACE_PROJECT_PERMISSION_DENIED',
-        message: 'workspace project read is not allowed',
-      };
-    }
-    if (!binding?.workspaceId) {
-      return { ok: true as const, context: null };
-    }
-    if (binding.resourceState === 'deleted') {
-      return {
-        ok: false as const,
-        status: 403 as const,
-        code: 'WORKSPACE_PROJECT_PERMISSION_DENIED',
-        message: 'workspace project read is not allowed',
-      };
-    }
-    const local = resolveOptionalLocalWorkspaceRequestAuthority(req);
-    if (!local.ok) return local;
-    if (local.context) {
-      if (
-        local.context.workspaceId !== binding.workspaceId
-        || (
-          binding.visibility !== 'team'
-          && binding.createdByWorkspaceMemberId
-          && local.context.workspaceMemberId
-            !== binding.createdByWorkspaceMemberId
-        )
-      ) {
-        return {
-          ok: false as const,
-          status: 403 as const,
-          code: 'WORKSPACE_PROJECT_PERMISSION_DENIED',
-          message: 'workspace project access is not allowed',
-        };
-      }
-      return {
-        ok: true as const,
-        context: {
-          ...local.context,
-          workspaceType: binding.visibility === 'team' ? 'team' : 'personal',
-          ...(binding.visibility === 'team'
-            ? { teamId: binding.workspaceId }
-            : { teamId: null }),
-        },
-      };
-    }
-    const persistedMemberId = binding.createdByWorkspaceMemberId?.trim()
-      || 'local-user';
-    return {
-      ok: true as const,
-      context: workspaceContextFromDirectoryItem({
-        workspaceId: binding.workspaceId,
-        workspaceName: binding.workspaceId,
-        workspaceType: binding.visibility === 'team' ? 'team' : 'personal',
+    const persistedMemberId = binding?.createdByWorkspaceMemberId?.trim() || 'local-user';
+    return resolveLocalProjectCommentWorkspaceContext({
+      binding,
+      revoked: revokedTeamProjectMirrors.has(projectId),
+      local: resolveOptionalLocalWorkspaceRequestAuthority(req),
+      fallbackContext: () => workspaceContextFromDirectoryItem({
+        workspaceId: binding?.workspaceId ?? '',
+        workspaceName: binding?.workspaceId ?? '',
+        workspaceType: binding?.visibility === 'team' ? 'team' : 'personal',
         workspaceMemberId: persistedMemberId,
         role: 'member',
         memberStatus: 'active',
         lifecycleState: 'active',
       }, configuredAmrEnv()),
-    };
+    });
   };
   const resolveProjectCommentWorkspaceContext = (
     req: any,
     projectId: string,
-  ) => resolveLocalProjectCommentWorkspaceContext(req, projectId);
+  ) => resolveProjectLocalCommentWorkspaceContext(req, projectId);
   const resolveProjectCommentReadWorkspaceContext = (
     req: any,
     projectId: string,
-  ) => resolveLocalProjectCommentWorkspaceContext(req, projectId);
+  ) => resolveProjectLocalCommentWorkspaceContext(req, projectId);
   const resolveFreshProjectCommentWorkspaceContext = async (
     req: any,
     projectId: string,
