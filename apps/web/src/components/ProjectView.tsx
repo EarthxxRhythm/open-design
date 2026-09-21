@@ -5127,10 +5127,15 @@ export function ProjectView({
             fresh,
             authorityResolution.name,
           );
+          // The entry file rides the same signal: set by hand or by
+          // `od project entry`, recorded by a delivering Run, moved by a
+          // rename or cleared by a delete, the files panel's ENTRY mark and
+          // the preview follow without a reload.
           if (
             reconciled.name === current.name
             && reconciled.skillId === current.skillId
             && reconciled.designSystemId === current.designSystemId
+            && reconciled.metadata?.entryFile === current.metadata?.entryFile
           ) {
             return;
           }
