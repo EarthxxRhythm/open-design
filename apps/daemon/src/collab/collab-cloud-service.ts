@@ -659,6 +659,7 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
       const expectedOwner = record.expectedOwnerMemberId;
       if (!owners || owners.size === 0) {
         deps.commentOutbox?.acknowledge(record);
+        deps.onError?.(new Error('comment relay remote project owner missing; canceled'));
         continue;
       }
       if (expectedOwner !== null && !owners.has(expectedOwner)) {

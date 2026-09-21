@@ -644,6 +644,53 @@ describe('durable Team comment relay outbox', () => {
     service.dispose();
   });
 
+  it('reports a missing remote owner while conditionally acknowledging only that revision', async () => {
+    const db = seededDb();
+    const queuedContext = context('member');
+    const outbox = createCommentRelayOutboxStore(db, () => 700);
+    const catalog = deferred<Array<{ projectId: string; ownerMemberId: string }>>();
+    const pushed: string[] = [];
+    const confirmed: string[] = [];
+    const errors: unknown[] = [];
+    const service = createCollabCloudService({
+      client: clientWithPush(async (_teamId, projectId) => {
+        pushed.push(projectId);
+        return { seq: pushed.length };
+      }),
+      commentOutbox: outbox,
+      resolveLocalProjectRelayBinding: () => ({
+        workspaceId: 'workspace-a',
+        ownerMemberId: 'project-owner',
+      }),
+      listProjectIds: () => [],
+      resolveLocalConversationId: () => 'conv-local',
+      mergeComment: () => false,
+      resolveCommentRelayWorkspaceContext: async () => queuedContext,
+      listRemoteProjectRelayBindings: async () => catalog.promise,
+      onCommentPushed: ({ projectId }) => confirmed.push(projectId),
+      onError: (error) => errors.push(error),
+      now: () => 700,
+      retryDelayMs: () => 0,
+    });
+    expect(service.enqueueComment(comment({ id: 'missing-owner', note: 'old revision' }), queuedContext)).toBe(true);
+    expect(service.enqueueComment(comment({ id: 'valid-project', projectId: 'p2' }), queuedContext)).toBe(true);
+
+    const flushing = service.flushPendingComments();
+    await Promise.resolve();
+    expect(service.enqueueComment(comment({ id: 'missing-owner', note: 'new revision', updatedAt: 20 }), queuedContext)).toBe(true);
+    catalog.resolve([{ projectId: 'p2', ownerMemberId: 'project-owner' }]);
+    await flushing;
+
+    expect(pushed).toEqual(['p2']);
+    expect(confirmed).toEqual(['p2']);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toBeInstanceOf(Error);
+    expect((errors[0] as Error).message).toContain('remote project owner missing');
+    expect(outbox.count()).toBe(1);
+    expect(outbox.listDue(700)[0]?.comment.note).toBe('new revision');
+    service.dispose();
+  });
+
   it('reuses one fresh authority and one catalog snapshot for an exact identity batch', async () => {
     const db = seededDb();
     const queuedContext = context('member');
