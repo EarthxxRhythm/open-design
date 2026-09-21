@@ -14819,4 +14819,55 @@ describe('LiveArtifactRefreshHistoryPanel', () => {
     expect(markup).not.toContain('Last refreshed');
     expect(markup).not.toContain('>Never<');
   });
+
+  it.each([
+    ['reanchored', 'versioned', '基于旧版本', { anchoredVersion: 1 }, { elementId: 'versioned', selector: '[data-od-id="versioned"]' }],
+    ['stale', 'moved', '锚点可能已移动', {}, { elementId: 'moved-now', selector: '[data-od-id="moved"]' }],
+    ['lost', 'lost', '锚点已丢失', {}, null],
+  ] as const)('localizes the %s anchor tooltip at the rendered marker', async (_state, elementId, expected, extra, target) => {
+    const comment: PreviewComment = {
+      id: `comment-${elementId}`,
+      projectId: 'project-1',
+      conversationId: 'conversation-1',
+      filePath: 'preview.html',
+      elementId,
+      selector: '[data-od-id="moved"]',
+      label: 'Heading',
+      text: 'Heading',
+      htmlHint: '<h1>Heading</h1>',
+      position: { x: 24, y: 32, width: 18, height: 18 },
+      note: 'Original note',
+      status: 'open',
+      createdAt: 1,
+      updatedAt: 1,
+      ...extra,
+    };
+    const collab: CollabContextValue = { ...projectWorkspaceCollabValue(teamWorkspaceContext()), enabled: true, publishedVersion: 2 };
+
+    render(
+      <I18nProvider initial="zh-CN">
+        <CollabProvider value={collab}>
+          <FileViewer projectId="project-1" projectKind="prototype" file={baseFile({ name: 'preview.html', path: 'preview.html', kind: 'html', mime: 'text/html' })} liveHtml='<html><body><main>Hero</main></body></html>' previewComments={[comment]} />
+        </CollabProvider>
+      </I18nProvider>,
+    );
+    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
+    if (target) {
+      const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      window.dispatchEvent(new MessageEvent('message', {
+        source: frame.contentWindow,
+        data: {
+          type: 'od:comment-target',
+          ...target,
+          label: 'Heading',
+          text: 'Heading',
+          position: { x: 24, y: 32, width: 18, height: 18 },
+          htmlHint: '<h1>Heading</h1>',
+        },
+      }));
+    }
+
+    const marker = await screen.findByTestId(`comment-saved-marker-${elementId}`);
+    expect(marker.querySelector('button')?.getAttribute('title')).toContain(expected);
+  });
 });

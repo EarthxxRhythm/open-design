@@ -5397,4 +5397,7 @@ export const ru: Dict = {
   'comment.authorRole.admin': 'Администратор',
   'comment.authorRole.member': 'Участник',
   'comment.authorRole.sharePage': 'Страница общего доступа',
+  'comment.anchorState.reanchored': 'на основе более ранней версии',
+  'comment.anchorState.stale': 'привязка могла переместиться',
+  'comment.anchorState.lost': 'привязка потеряна',
 };

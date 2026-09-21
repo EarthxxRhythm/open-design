@@ -5397,4 +5397,7 @@ export const it: Dict = {
   'comment.authorRole.admin': 'Amministratore',
   'comment.authorRole.member': 'Membro',
   'comment.authorRole.sharePage': 'Pagina condivisa',
+  'comment.anchorState.reanchored': 'basato su una versione precedente',
+  'comment.anchorState.stale': 'l’ancora potrebbe essere stata spostata',
+  'comment.anchorState.lost': 'ancora persa',
 };

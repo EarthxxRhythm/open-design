@@ -5397,4 +5397,7 @@ export const uk: Dict = {
   'comment.authorRole.admin': 'Адміністратор',
   'comment.authorRole.member': 'Учасник',
   'comment.authorRole.sharePage': 'Спільна сторінка',
+  'comment.anchorState.reanchored': 'на основі старішої версії',
+  'comment.anchorState.stale': 'якір міг переміститися',
+  'comment.anchorState.lost': 'якір втрачено',
 };

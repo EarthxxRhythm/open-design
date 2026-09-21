@@ -5843,14 +5843,14 @@ export function applyInspectOverridesToSource(source: string, css: string): stri
   return block + out;
 }
 
-function anchorStateLabel(state: PreviewCommentAnchorState): string {
+function anchorStateLabel(state: PreviewCommentAnchorState, t: TranslateFn): string {
   switch (state) {
     case 'reanchored':
-      return 'based on an older version';
+      return t('comment.anchorState.reanchored');
     case 'stale':
-      return 'anchor may have moved';
+      return t('comment.anchorState.stale');
     case 'lost':
-      return 'anchor lost';
+      return t('comment.anchorState.lost');
     default:
       return '';
   }
@@ -5875,6 +5875,7 @@ function CommentPreviewOverlays({
   currentVersion,
   onLostAnchors,
   onOpenComment,
+  t,
 }: {
   comments: PreviewComment[];
   /** Next pin number for a brand-new comment. Computed by the caller over the
@@ -5902,6 +5903,7 @@ function CommentPreviewOverlays({
    *  ghost pin survives reload. Only fires in drift-ladder mode. */
   onLostAnchors?: (writeBacks: AnchorWriteBack[]) => void;
   onOpenComment: (comment: PreviewComment, snapshot: PreviewCommentSnapshot) => void;
+  t: TranslateFn;
 }) {
   const overlayOffset = useMemo(() => ({ x: offsetX, y: offsetY }), [offsetX, offsetY]);
   const visibleComments = useMemo(
@@ -5999,7 +6001,7 @@ function CommentPreviewOverlays({
               }}
               title={
                 drifted
-                  ? `${markerNumber}. ${label} · ${anchorStateLabel(anchorState)}`
+                  ? `${markerNumber}. ${label} · ${anchorStateLabel(anchorState, t)}`
                   : `${markerNumber}. ${label}: ${comment.note}`
               }
               aria-label={`Open comment for ${label}`}
@@ -6009,7 +6011,7 @@ function CommentPreviewOverlays({
           </div>
         );
       }),
-    [visibleComments, scale, overlayOffset],
+    [visibleComments, scale, overlayOffset, t],
   );
   const activeSavedIndex = activeExistingCommentId
     ? comments.findIndex((comment) => comment.id === activeExistingCommentId)
@@ -17674,6 +17676,7 @@ function HtmlViewer({
                 <CommentPreviewOverlays
                   comments={commentCreateMode ? creationSortedSideComments : []}
                   provisionalPinNumber={nextProvisionalPinNumber}
+                  t={t}
                   driftLadder={collab.enabled}
                   currentVersion={collab.publishedVersion ?? undefined}
                   {...(collab.onLostAnchors ? { onLostAnchors: collab.onLostAnchors } : {})}

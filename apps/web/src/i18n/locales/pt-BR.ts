@@ -5397,4 +5397,7 @@ export const ptBR: Dict = {
   'comment.authorRole.admin': 'Administrador',
   'comment.authorRole.member': 'Membro',
   'comment.authorRole.sharePage': 'Página compartilhada',
+  'comment.anchorState.reanchored': 'com base em uma versão anterior',
+  'comment.anchorState.stale': 'a âncora pode ter sido movida',
+  'comment.anchorState.lost': 'âncora perdida',
 };

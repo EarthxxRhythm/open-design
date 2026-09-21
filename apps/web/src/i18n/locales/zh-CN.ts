@@ -5843,4 +5843,7 @@ export const zhCN: Dict = {
   'comment.authorRole.admin': '管理员',
   'comment.authorRole.member': '成员',
   'comment.authorRole.sharePage': '分享页',
+  'comment.anchorState.reanchored': '基于旧版本',
+  'comment.anchorState.stale': '锚点可能已移动',
+  'comment.anchorState.lost': '锚点已丢失',
 };

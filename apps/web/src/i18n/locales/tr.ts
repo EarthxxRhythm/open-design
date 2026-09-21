@@ -5397,4 +5397,7 @@ export const tr: Dict = {
   'comment.authorRole.admin': 'Yönetici',
   'comment.authorRole.member': 'Üye',
   'comment.authorRole.sharePage': 'Paylaşım sayfası',
+  'comment.anchorState.reanchored': 'eski bir sürüme göre',
+  'comment.anchorState.stale': 'bağlantı noktası taşınmış olabilir',
+  'comment.anchorState.lost': 'bağlantı noktası kayboldu',
 };

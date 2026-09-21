@@ -5397,4 +5397,7 @@ export const th: Dict = {
   'comment.authorRole.admin': 'ผู้ดูแลระบบ',
   'comment.authorRole.member': 'สมาชิก',
   'comment.authorRole.sharePage': 'หน้าที่แชร์',
+  'comment.anchorState.reanchored': 'อ้างอิงจากเวอร์ชันเก่า',
+  'comment.anchorState.stale': 'จุดยึดอาจถูกย้ายแล้ว',
+  'comment.anchorState.lost': 'ไม่พบจุดยึด',
 };

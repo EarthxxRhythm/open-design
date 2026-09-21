@@ -5397,4 +5397,7 @@ export const id: Dict = {
   'comment.authorRole.admin': 'Admin',
   'comment.authorRole.member': 'Anggota',
   'comment.authorRole.sharePage': 'Halaman berbagi',
+  'comment.anchorState.reanchored': 'berdasarkan versi lama',
+  'comment.anchorState.stale': 'jangkar mungkin telah berpindah',
+  'comment.anchorState.lost': 'jangkar hilang',
 };

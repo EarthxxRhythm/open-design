@@ -5397,4 +5397,7 @@ export const pl: Dict = {
   'comment.authorRole.admin': 'Administrator',
   'comment.authorRole.member': 'Członek',
   'comment.authorRole.sharePage': 'Udostępniona strona',
+  'comment.anchorState.reanchored': 'na podstawie starszej wersji',
+  'comment.anchorState.stale': 'kotwica mogła zostać przeniesiona',
+  'comment.anchorState.lost': 'kotwica utracona',
 };
