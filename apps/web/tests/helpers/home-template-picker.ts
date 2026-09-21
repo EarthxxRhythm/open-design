@@ -16,11 +16,16 @@ export async function pickHomeTemplate(id: string): Promise<void> {
     });
     return;
   }
-  fireEvent.click(homeTemplateTrigger());
-  // The picker is conditionally mounted from React state. Under the full
-  // workspace shard that commit can land after fireEvent returns, so querying
-  // synchronously makes every consumer of this shared helper timing-sensitive.
-  const menu = await screen.findByTestId('home-hero-template-menu');
+  // Template hydration can replace the picker immediately after it first
+  // becomes enabled. If that lands beside the click, the replacement's closed
+  // state wins; retry only while no menu is mounted so an already-open picker
+  // is never toggled closed again.
+  await waitFor(() => {
+    if (screen.queryByTestId('home-hero-template-menu')) return;
+    fireEvent.click(homeTemplateTrigger());
+    expect(screen.queryByTestId('home-hero-template-menu')).not.toBeNull();
+  }, { timeout: 2_500 });
+  const menu = screen.getByTestId('home-hero-template-menu');
   const option = menu.querySelector(`[data-chip="${id}"]`);
   expect(option, `creation type ${id} is available in the dropdown`).not.toBeNull();
   fireEvent.click(option!);
