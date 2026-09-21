@@ -11021,6 +11021,41 @@ describe('FileViewer tweaks toolbar', () => {
     ).toBeTruthy();
   });
 
+  it('keeps the unread dot independent from the open count and clears it only from authoritative read responses', async () => {
+    const comment = (id: string, createdAt: number, authorMemberId?: string): PreviewComment => ({
+      id, projectId: 'project-1', conversationId: 'conversation-1', filePath: 'preview.html',
+      elementId: id, selector: `[data-od-id="${id}"]`, label: id, text: '', htmlHint: '',
+      position: { x: 0, y: 0, width: 1, height: 1 }, note: id, status: 'open', createdAt, updatedAt: createdAt, authorMemberId,
+    });
+    const comments = [comment('one', 101), comment('two', 102), comment('three', 103)];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/comments/read')) {
+        return new Response(JSON.stringify(init?.method === 'PUT'
+          ? { projectId: 'project-1', lastReadAt: 103 }
+          : { projectId: 'project-1', lastReadAt: 100 }), { headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response('{}', { headers: { 'Content-Type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()} liveHtml="<html><body /></html>" previewComments={comments} />);
+    await screen.findByTestId('comment-unread-dot');
+    expect(screen.getByTestId('comment-panel-toggle').getAttribute('aria-label')).toBe('Comments (3)');
+    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
+    await waitFor(() => expect(screen.queryByTestId('comment-unread-dot')).toBeNull());
+    expect(screen.getByTestId('comment-panel-toggle').getAttribute('aria-label')).toBe('Comments (3)');
+  });
+
+  it('does not light the dot for a trusted member self comment or timestamp boundary', async () => {
+    const own: PreviewComment = {
+      id: 'own', projectId: 'project-1', conversationId: 'conversation-1', filePath: 'preview.html', elementId: 'own', selector: '[data-od-id="own"]', label: 'own', text: '', htmlHint: '', position: { x: 0, y: 0, width: 1, height: 1 }, note: 'own', status: 'open', createdAt: 101, updatedAt: 101, authorMemberId: 'wm-1',
+    };
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => String(input).endsWith('/comments/read')
+      ? new Response(JSON.stringify({ projectId: 'project-1', lastReadAt: 101 }), { headers: { 'Content-Type': 'application/json' } })
+      : new Response('{}', { headers: { 'Content-Type': 'application/json' } })));
+    renderWithProjectWorkspace(<FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()} liveHtml="<html><body /></html>" previewComments={[own, { ...own, id: 'boundary', authorMemberId: 'wm-other' }]} />, teamWorkspaceContext());
+    await waitFor(() => expect(screen.queryByTestId('comment-unread-dot')).toBeNull());
+  });
+
   it('keeps comments and annotation picker mutually exclusive', () => {
     const { container } = render(
       <FileViewer

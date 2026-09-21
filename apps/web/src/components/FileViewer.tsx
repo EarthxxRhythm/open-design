@@ -38,6 +38,7 @@ import {
 } from '@open-design/contracts/runtime/preview-runtime-state';
 import {
   appendResourceQuery,
+  workspaceAccountScopedCacheKey,
   workspaceIdentityCacheKey,
   workspaceProjectHeaders,
 } from '../collab/workspace-identity';
@@ -245,8 +246,6 @@ import {
   canDeleteComment,
   canEditComment,
   canSendCommentToAgent as canSendCommentToAgentPure,
-  commentAuthoredByViewer,
-  viewerIsProjectOwner,
   type CommentAuthorityContext,
 } from '../comments/comment-authority';
 import { RemixIcon } from './RemixIcon';
@@ -8331,34 +8330,10 @@ function HtmlViewer({
   const [boardMode, setBoardMode] = useState(false);
   const [commentPanelOpen, setCommentPanelOpen] = useState(false);
   const [commentReadState, setCommentReadState] = useState<ProjectCommentReadState | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    setCommentReadState(null);
-    void fetch(`/api/projects/${encodeURIComponent(projectId)}/comments/read`, {
-      headers: workspaceContext ? workspaceProjectHeaders(workspaceContext) : undefined,
-    }).then(async (response) => {
-      if (!response.ok || cancelled) return;
-      const state = await response.json() as ProjectCommentReadState;
-      if (!cancelled && state.projectId === projectId) setCommentReadState(state);
-    }).catch(() => undefined);
-    return () => { cancelled = true; };
-  }, [projectId, workspaceContext]);
-  useEffect(() => {
-    if (!commentPanelOpen) return;
-    let cancelled = false;
-    const readAt = Date.now();
-    setCommentReadState({ projectId, lastReadAt: readAt });
-    void fetch(`/api/projects/${encodeURIComponent(projectId)}/comments/read`, {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json', ...(workspaceContext ? workspaceProjectHeaders(workspaceContext) : {}) },
-      body: JSON.stringify({ readAt }),
-    }).then(async (response) => {
-      if (!response.ok || cancelled) return;
-      const state = await response.json() as ProjectCommentReadState;
-      if (!cancelled && state.projectId === projectId) setCommentReadState(state);
-    }).catch(() => undefined);
-    return () => { cancelled = true; };
-  }, [commentPanelOpen, projectId, workspaceContext]);
+  // The marker is scoped to the authenticated account as well as the project.
+  // A late response from a previous account must never become this viewer's state.
+  const commentReadScopeKey = `${projectId}\u0000${workspaceAccountScopedCacheKey(workspaceContext)}`;
+  const commentReadScopeRef = useRef(commentReadScopeKey);
   const commentPanelToggleRef = useRef<HTMLButtonElement | null>(null);
   const commentPanelReturnFocusRef = useRef<HTMLElement | null>(null);
   const pendingCommentPanelFocusRef = useRef<HTMLElement | null>(null);
@@ -15815,12 +15790,59 @@ function HtmlViewer({
       ),
     [creationSortedSideComments],
   );
-  // Do not fabricate an authorKey from a member id. The trusted workspace
-  // identity excludes locally-authored member comments before applying the
-  // frozen authorKey predicate to external comments.
+  // A member id is a trusted current identity only when the workspace context
+  // supplies one. Never let two absent ids compare equal and accidentally
+  // classify an unattributed external comment as the viewer's own.
+  const viewerMemberId = workspaceContext?.workspaceMemberId?.trim() || null;
   const unreadSideComments = useMemo(() => visibleSideComments.filter((comment) => (
-    comment.authorMemberId !== workspaceContext?.workspaceMemberId
-  )), [visibleSideComments, workspaceContext?.workspaceMemberId]);
+    !viewerMemberId || comment.authorMemberId !== viewerMemberId
+  )), [viewerMemberId, visibleSideComments]);
+  const latestVisibleSideCommentCreatedAt = useMemo(
+    () => unreadSideComments.reduce((latest, comment) => Math.max(latest, comment.createdAt), 0),
+    [unreadSideComments],
+  );
+  const mergeReadState = useCallback((scopeKey: string, state: ProjectCommentReadState) => {
+    if (commentReadScopeRef.current !== scopeKey || state.projectId !== projectId) return;
+    setCommentReadState((current) => {
+      if (!current || current.projectId !== state.projectId) return state;
+      const currentReadAt = current.lastReadAt ?? Number.NEGATIVE_INFINITY;
+      const nextReadAt = state.lastReadAt ?? Number.NEGATIVE_INFINITY;
+      return nextReadAt > currentReadAt ? state : current;
+    });
+  }, [projectId]);
+  useEffect(() => {
+    const scopeKey = commentReadScopeKey;
+    commentReadScopeRef.current = scopeKey;
+    setCommentReadState(null);
+    let cancelled = false;
+    void fetch(`/api/projects/${encodeURIComponent(projectId)}/comments/read`, {
+      headers: workspaceContext ? workspaceProjectHeaders(workspaceContext) : undefined,
+    }).then(async (response) => {
+      if (!response.ok || cancelled) return;
+      mergeReadState(scopeKey, await response.json() as ProjectCommentReadState);
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [commentReadScopeKey, mergeReadState, projectId, workspaceContext]);
+  useEffect(() => {
+    if (!commentPanelOpen) return;
+    const scopeKey = commentReadScopeKey;
+    let cancelled = false;
+    // The daemon clamps this client timestamp and returns its authoritative,
+    // monotonic marker. Do not optimistically commit a browser clock value:
+    // a future clock or failed PUT must not hide comments.
+    void fetch(`/api/projects/${encodeURIComponent(projectId)}/comments/read`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', ...(workspaceContext ? workspaceProjectHeaders(workspaceContext) : {}) },
+      body: JSON.stringify({ readAt: Date.now() }),
+    }).then(async (response) => {
+      if (!response.ok || cancelled) return;
+      mergeReadState(scopeKey, await response.json() as ProjectCommentReadState);
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [commentPanelOpen, commentReadScopeKey, latestVisibleSideCommentCreatedAt, mergeReadState, projectId, workspaceContext]);
+  // Do not fabricate an authorKey from a member id. This client has no trusted
+  // personal authorKey input, so only the verified member identity is excluded
+  // here; external-account self recognition remains a server/identity seam.
   const hasUnreadSideComments = hasUnreadComments({
     readState: commentReadState,
     comments: unreadSideComments.map((comment) => ({
@@ -16073,7 +16095,6 @@ function HtmlViewer({
     && manualEditExitHandoffPending
     && useUrlLoadPreview
     && manualEditUrlHandoffEligible;
-  const boardAvailable = mode === 'preview' && source !== null;
   const showPreviewToolbarControls = mode === 'preview';
   // Independent of the rail's lazy per-slide documents so a collapsed rail
   // (which unmounts DeckThumbnailRail entirely) still renders its toggle.
@@ -16213,9 +16234,6 @@ function HtmlViewer({
     collabEnabled: collab.enabled,
     isProjectOwner: collab.isOwner,
   };
-  const iAmProjectOwner = viewerIsProjectOwner(commentAuthority);
-  const commentAuthoredByMe = (comment: PreviewComment | null | undefined): boolean =>
-    commentAuthoredByViewer(comment, commentAuthority);
   const canSendCommentToAgent = (comment: PreviewComment | null | undefined): boolean =>
     canSendCommentToAgentPure(comment, commentAuthority);
   const canEditActiveComment = canEditComment(activeComposerComment, commentAuthority);
@@ -16735,7 +16753,7 @@ function HtmlViewer({
               >
                 <RemixIcon name="message-3-line" size={15} />
                 <span className="viewer-comment-count" aria-hidden>{visibleSideComments.length}</span>
-                {hasUnreadSideComments ? <span aria-label="Unread comments" style={{ background: '#e5484d', borderRadius: '50%', height: 7, width: 7, position: 'absolute', right: 2, top: 2 }} /> : null}
+                {!commentPanelOpen && hasUnreadSideComments ? <span data-testid="comment-unread-dot" aria-hidden style={{ background: 'var(--danger)', borderRadius: '50%', height: 7, width: 7, position: 'absolute', right: 2, top: 2 }} /> : null}
               </button>
               {source !== null && mode === 'preview' ? (
                 <div className="zoom-menu viewer-toolbar-zoom" ref={zoomMenuRef}>
