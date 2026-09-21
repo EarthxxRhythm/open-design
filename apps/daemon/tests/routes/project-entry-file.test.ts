@@ -19,6 +19,7 @@ import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { startServer } from '../../src/server.js';
+import { withProjectMutation } from '../../src/project-mutation-queue.js';
 
 const execFileP = promisify(execFile);
 const DAEMON_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -301,6 +302,57 @@ describe('PUT /api/projects/:id/entry-file', () => {
     // Whichever order the two landed in, the user's newer selection stands.
     expect(await readEntry(projectId)).toBe('b.html');
     expect(await previewFile(projectId)).toMatchObject({ status: 200, file: 'b.html' });
+  });
+
+  it('never leaves the record on a file that a concurrent delete removed', async () => {
+    // The setter's existence check and write, and the delete's removal and
+    // carry, are steps in the project's mutation queue, so they land in one
+    // order or the other but never interleaved. Holding the queue from the
+    // test forces each order deterministically: selection first, the delete
+    // then clears the record; delete first, the selection is refused. In
+    // neither order does the record end on the removed file.
+    const projectId = await createProjectWithFiles('race-delete', {
+      'index.html': '<!doctype html><title>Index</title>',
+    });
+    const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 150));
+    for (const order of ['select-then-delete', 'delete-then-select'] as const) {
+      for (const [target, remove] of [
+        ['a.html', () => fetch(`${baseUrl}/api/projects/${projectId}/raw/a.html`, { method: 'DELETE' })],
+        ['screens/home.html', () => fetch(`${baseUrl}/api/projects/${projectId}/folders`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: 'screens' }),
+        })],
+      ] as const) {
+        const restore = await fetch(`${baseUrl}/api/projects/${projectId}/files`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: target, content: '<!doctype html><title>Target</title>' }),
+        });
+        expect(restore.status).toBe(200);
+
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => { release = resolve; });
+        void withProjectMutation(projectId, () => gate);
+        const first = order === 'select-then-delete' ? putEntry(projectId, target) : remove();
+        await settle();
+        const second = order === 'select-then-delete' ? remove() : putEntry(projectId, target);
+        await settle();
+        // Both requests are parked behind the held queue: neither has answered.
+        const parked = Symbol('parked');
+        const sentinel = new Promise<typeof parked>((resolve) => setTimeout(() => resolve(parked), 50));
+        expect(await Promise.race([first, sentinel]), `${order} ${target} first parked`).toBe(parked);
+        expect(await Promise.race([second, sentinel]), `${order} ${target} second parked`).toBe(parked);
+        release();
+        const [a, b] = await Promise.all([first, second]);
+        const [selected, removed] = order === 'select-then-delete' ? [a, b] : [b, a];
+        expect((selected as { status: number }).status, `${order} ${target} select`)
+          .toBe(order === 'select-then-delete' ? 200 : 404);
+        expect((removed as Response).status, `${order} ${target} delete`).toBe(200);
+        expect(await readEntry(projectId), `${order} ${target}`).toBeUndefined();
+        expect(await previewFile(projectId)).toMatchObject({ status: 200, file: 'index.html' });
+      }
+    }
   });
 
   it('returns 404 for an unknown project', async () => {

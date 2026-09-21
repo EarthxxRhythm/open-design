@@ -101,6 +101,7 @@ import {
 import { connectorService } from '../../connectors/service.js';
 import type { RouteDeps } from '../../server-context.js';
 import { entryFileAfterDelete, entryFileAfterRename, metadataWithEntryFile } from '../../project-entry-file.js';
+import { withProjectMutation } from '../../project-mutation-queue.js';
 import { listSkills } from '../../skills.js';
 import { isSafeId } from '../../projects.js';
 import {
@@ -5493,13 +5494,9 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       if (requested !== null && typeof requested !== 'string') {
         return sendApiError(res, 400, 'BAD_REQUEST', 'entryFile must be a project-relative file path or null');
       }
-      const existingMeta = project.metadata ?? { kind: 'prototype' };
-      let nextMeta;
-      if (requested === null) {
-        const { entryFile: _cleared, ...rest } = existingMeta;
-        nextMeta = rest;
-      } else {
-        const normalized = requested.trim().replaceAll('\\', '/').replace(/^\.\//, '');
+      let normalized: string | null = null;
+      if (requested !== null) {
+        normalized = requested.trim().replaceAll('\\', '/').replace(/^\.\//, '');
         if (
           !normalized
           || normalized.startsWith('/')
@@ -5507,17 +5504,37 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
         ) {
           return sendApiError(res, 400, 'BAD_REQUEST', 'entryFile must be a project-relative file path');
         }
-        const files: ProjectFile[] = await listFiles(PROJECTS_DIR, project.id, { metadata: existingMeta });
-        const match = files.find((file: ProjectFile) => (
-          file.type !== 'dir' && ((file.path ?? file.name) === normalized || file.name === normalized)
-        ));
-        if (!match) {
-          return sendApiError(res, 404, 'FILE_NOT_FOUND', `${normalized} is not a file in this project`);
-        }
-        nextMeta = { ...existingMeta, entryFile: match.path ?? match.name };
       }
-      const updated = updateProject(db, project.id, { metadata: nextMeta });
-      if (!updated) return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'not found');
+      // The existence check and the write run as one step in the project's
+      // mutation queue, so a rename or delete of the same file cannot land
+      // between them and leave the record on a path that is gone.
+      const outcome = await withProjectMutation(project.id, async () => {
+        const current = getProject(db, project.id);
+        if (!current) return { error: [404, 'PROJECT_NOT_FOUND', 'not found'] as const };
+        const existingMeta = current.metadata ?? { kind: 'prototype' };
+        let nextMeta;
+        if (normalized === null) {
+          const { entryFile: _cleared, ...rest } = existingMeta;
+          nextMeta = rest;
+        } else {
+          const files: ProjectFile[] = await listFiles(PROJECTS_DIR, current.id, { metadata: existingMeta });
+          const match = files.find((file: ProjectFile) => (
+            file.type !== 'dir' && ((file.path ?? file.name) === normalized || file.name === normalized)
+          ));
+          if (!match) {
+            return { error: [404, 'FILE_NOT_FOUND', `${normalized} is not a file in this project`] as const };
+          }
+          nextMeta = { ...existingMeta, entryFile: match.path ?? match.name };
+        }
+        const updated = updateProject(db, current.id, { metadata: nextMeta });
+        if (!updated) return { error: [404, 'PROJECT_NOT_FOUND', 'not found'] as const };
+        return { updated };
+      });
+      if ('error' in outcome) {
+        const [status, code, message] = outcome.error;
+        return sendApiError(res, status, code, message);
+      }
+      const { updated } = outcome;
       ctx.notifyProjectMetadataChanged?.(project.id);
       /** @type {import('@open-design/contracts').ProjectEntryFileUpdateResponse} */
       const response = {
@@ -6785,13 +6802,15 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         project.id,
         'writeFiles',
       )) return;
-      await deleteProjectFolder(
-        PROJECTS_DIR,
-        req.params.id,
-        folderPath,
-        project.metadata,
-      );
-      carryEntryFile(project.id, (entry) => entryFileAfterDelete(entry, folderPath, 'folder'));
+      await withProjectMutation(project.id, async () => {
+        await deleteProjectFolder(
+          PROJECTS_DIR,
+          req.params.id,
+          folderPath,
+          project.metadata,
+        );
+        carryEntryFile(project.id, (entry) => entryFileAfterDelete(entry, folderPath, 'folder'));
+      });
       /** @type {import('@open-design/contracts').DeleteProjectFolderResponse} */
       const body = { ok: true };
       res.json(body);
@@ -7266,9 +7285,11 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         project.id,
         'writeFiles',
       )) return;
-      await deleteProjectFile(PROJECTS_DIR, projectId, rawSplat, project?.metadata);
-      await markProjectFileVersionStoreDeleted(PROJECTS_DIR, projectId, rawSplat, project?.metadata);
-      carryEntryFile(project.id, (entry) => entryFileAfterDelete(entry, rawSplat, 'file'));
+      await withProjectMutation(project.id, async () => {
+        await deleteProjectFile(PROJECTS_DIR, projectId, rawSplat, project?.metadata);
+        await markProjectFileVersionStoreDeleted(PROJECTS_DIR, projectId, rawSplat, project?.metadata);
+        carryEntryFile(project.id, (entry) => entryFileAfterDelete(entry, rawSplat, 'file'));
+      });
       // Tombstone, not delete: an HTML card must be able to say "the current
       // file is gone" rather than silently opening whatever later takes the
       // name. Image cards keep resolving their own snapshot either way.
@@ -7931,33 +7952,36 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         project.id,
         'writeFiles',
       )) return;
-      const result = await renameProjectFile(
-        PROJECTS_DIR,
-        req.params.id,
-        from,
-        to,
-        project?.metadata,
-      );
-      await renameProjectFileVersionStore(
-        PROJECTS_DIR,
-        req.params.id,
-        result.oldName,
-        result.newName,
-        project?.metadata,
-      );
-      // The workspace identity follows the file. History does not: a snapshot's
-      // `source_path_at_capture` records where the bytes came from at the time
-      // and stays put, so an HTML card keeps opening the renamed latest while
-      // an image card keeps opening its own frozen bytes.
-      try {
-        renameWorkspaceArtifactPath(db, req.params.id, result.oldName, result.newName);
-      } catch (error) {
-        console.warn('[chat-artifacts] rename bookkeeping failed', error);
-      }
-      carryEntryFile(
-        project.id,
-        (entry) => entryFileAfterRename(entry, result.oldName, result.newName),
-      );
+      const result = await withProjectMutation(project.id, async () => {
+        const renamed = await renameProjectFile(
+          PROJECTS_DIR,
+          req.params.id,
+          from,
+          to,
+          project?.metadata,
+        );
+        await renameProjectFileVersionStore(
+          PROJECTS_DIR,
+          req.params.id,
+          renamed.oldName,
+          renamed.newName,
+          project?.metadata,
+        );
+        // The workspace identity follows the file. History does not: a snapshot's
+        // `source_path_at_capture` records where the bytes came from at the time
+        // and stays put, so an HTML card keeps opening the renamed latest while
+        // an image card keeps opening its own frozen bytes.
+        try {
+          renameWorkspaceArtifactPath(db, req.params.id, renamed.oldName, renamed.newName);
+        } catch (error) {
+          console.warn('[chat-artifacts] rename bookkeeping failed', error);
+        }
+        carryEntryFile(
+          project.id,
+          (entry) => entryFileAfterRename(entry, renamed.oldName, renamed.newName),
+        );
+        return renamed;
+      });
       /** @type {import('@open-design/contracts').RenameProjectFileResponse} */
       const body = result;
       res.json(body);
@@ -7990,9 +8014,11 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         delProject.id,
         'writeFiles',
       )) return;
-      await deleteProjectFile(PROJECTS_DIR, req.params.id, req.params.name, delProject?.metadata);
-      await markProjectFileVersionStoreDeleted(PROJECTS_DIR, req.params.id, req.params.name, delProject?.metadata);
-      carryEntryFile(delProject.id, (entry) => entryFileAfterDelete(entry, req.params.name, 'file'));
+      await withProjectMutation(delProject.id, async () => {
+        await deleteProjectFile(PROJECTS_DIR, req.params.id, req.params.name, delProject?.metadata);
+        await markProjectFileVersionStoreDeleted(PROJECTS_DIR, req.params.id, req.params.name, delProject?.metadata);
+        carryEntryFile(delProject.id, (entry) => entryFileAfterDelete(entry, req.params.name, 'file'));
+      });
       try {
         deleteWorkspaceArtifact(db, req.params.id, req.params.name);
       } catch (error) {
