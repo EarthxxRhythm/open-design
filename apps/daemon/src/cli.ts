@@ -1967,6 +1967,10 @@ async function runMediaGenerate(rawArgs) {
     printMediaHelp();
     process.exit(2);
   }
+  if (flags.help || flags.h) {
+    printMediaHelp();
+    return;
+  }
 
   const daemonUrl = await cliDaemonUrl(flags);
   const projectId = flags.project || process.env.OD_PROJECT_ID;
