@@ -1,11 +1,10 @@
 import type { Dispatch, SetStateAction } from 'react';
-import { workspaceContextHasTeamIdentity, type SocialShareResponse, type WorkspaceCollabContext } from '@open-design/contracts';
+import { workspaceContextHasTeamIdentity, type WorkspaceCollabContext } from '@open-design/contracts';
 import type { PublicFilePublishFailureKey } from '../../collab/public-file-publish';
 import type { useT } from '../../i18n';
 import type { WebDeployProviderId } from '../../providers/registry';
 import type { DeployProviderOption } from '../FileViewer';
 import { RemixIcon } from '../RemixIcon';
-import { SocialShareGrid } from '../SocialShareGrid';
 
 export type SharePublishFailureKey = PublicFilePublishFailureKey | 'fileViewer.publishFileTooLarge';
 
@@ -37,8 +36,6 @@ export function ShareTab({
   viewerOnlyDisabledTitle,
   publishCurrentFilePublic,
   publishFailureKey,
-  activeProjectSocialShare,
-  shareableDeploymentUrl,
   DEPLOY_PROVIDER_OPTIONS,
   streaming,
   openDeployModal,
@@ -72,8 +69,6 @@ export function ShareTab({
   viewerOnlyDisabledTitle: string;
   publishCurrentFilePublic: () => Promise<void>;
   publishFailureKey: SharePublishFailureKey | null;
-  activeProjectSocialShare: SocialShareResponse | null;
-  shareableDeploymentUrl: string;
   DEPLOY_PROVIDER_OPTIONS: DeployProviderOption[];
   streaming: boolean;
   openDeployModal: (nextProviderId?: WebDeployProviderId, intent?: 'deploy' | 'social-share') => Promise<void>;
@@ -269,16 +264,6 @@ export function ShareTab({
                       ) : null}
                       {menuOrigin === 'toolbar' ? (
                         <>
-                          {/* Icons only for a clean link. Artifact-card Share is
-                              intentionally narrower: Quick Share above only. */}
-                          {activeProjectSocialShare && (shareableDeploymentUrl || publishedFileUrl) ? (
-                            <>
-                              <div className="share-menu-section-label" role="presentation">
-                                {t('socialShare.projectSection')}
-                              </div>
-                              <SocialShareGrid share={activeProjectSocialShare} />
-                            </>
-                          ) : null}
                           <div className="share-menu-divider" />
                           <div className="share-menu-section-label" role="presentation">
                             {t('fileViewer.shareMenuPublishOnline')}

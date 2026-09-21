@@ -17252,8 +17252,6 @@ function HtmlViewer({
                         viewerOnlyDisabledTitle={viewerOnlyDisabledTitle}
                         publishCurrentFilePublic={publishCurrentFilePublic}
                         publishFailureKey={publishFailureKey}
-                        activeProjectSocialShare={activeProjectSocialShare}
-                        shareableDeploymentUrl={shareableDeploymentUrl}
                         DEPLOY_PROVIDER_OPTIONS={DEPLOY_PROVIDER_OPTIONS}
                         streaming={streaming}
                         openDeployModal={openDeployModal}
