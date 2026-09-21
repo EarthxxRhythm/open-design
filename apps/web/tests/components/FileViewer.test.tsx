@@ -13215,6 +13215,7 @@ describe('FileViewer tweaks toolbar', () => {
       expect(item.querySelector('.comment-side-avatar')?.textContent).toBe('琼');
     });
     expect(within(item).getByText(/琼羽/)).toBeTruthy();
+    expect(within(item).getByText(/comment.authorRole.owner/)).toBeTruthy();
   });
 
   it('renders an unresolved member from its trusted display-name snapshot', async () => {
@@ -13303,6 +13304,7 @@ describe('FileViewer tweaks toolbar', () => {
     expect(avatar?.textContent).toBe('A');
     expect(avatar?.style.background).toBe('rgb(202, 138, 4)');
     expect(within(item).getByText(/Avery Visitor/)).toBeTruthy();
+    expect(within(item).getByText(/comment.authorRole.sharePage/)).toBeTruthy();
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/api/workspace/members'))).toBe(false);
   });
 

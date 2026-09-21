@@ -5393,4 +5393,8 @@ export const pl: Dict = {
   'chat.record.canceled': "Anulowano",
   'chat.record.pending': "Nie rozpoczęto",
   'chat.record.unfinished': "Nieukończone",
+  'comment.authorRole.owner': 'Właściciel',
+  'comment.authorRole.admin': 'Administrator',
+  'comment.authorRole.member': 'Członek',
+  'comment.authorRole.sharePage': 'Udostępniona strona',
 };

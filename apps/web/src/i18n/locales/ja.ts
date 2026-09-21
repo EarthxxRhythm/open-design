@@ -5393,4 +5393,8 @@ export const ja: Dict = {
   'chat.record.canceled': "キャンセル済み",
   'chat.record.pending': "未開始",
   'chat.record.unfinished': "未完了",
+  'comment.authorRole.owner': 'オーナー',
+  'comment.authorRole.admin': '管理者',
+  'comment.authorRole.member': 'メンバー',
+  'comment.authorRole.sharePage': '共有ページ',
 };

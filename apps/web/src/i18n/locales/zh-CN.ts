@@ -5839,4 +5839,8 @@ export const zhCN: Dict = {
   'chat.record.canceled': "已取消",
   'chat.record.pending': "未开始",
   'chat.record.unfinished': "未完成",
+  'comment.authorRole.owner': '所有者',
+  'comment.authorRole.admin': '管理员',
+  'comment.authorRole.member': '成员',
+  'comment.authorRole.sharePage': '分享页',
 };

@@ -5393,4 +5393,8 @@ export const th: Dict = {
   'chat.record.canceled': "ยกเลิกแล้ว",
   'chat.record.pending': "ยังไม่เริ่ม",
   'chat.record.unfinished': "ยังไม่เสร็จ",
+  'comment.authorRole.owner': 'เจ้าของ',
+  'comment.authorRole.admin': 'ผู้ดูแลระบบ',
+  'comment.authorRole.member': 'สมาชิก',
+  'comment.authorRole.sharePage': 'หน้าที่แชร์',
 };

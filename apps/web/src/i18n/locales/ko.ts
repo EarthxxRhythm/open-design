@@ -5393,4 +5393,8 @@ export const ko: Dict = {
   'chat.record.canceled': "취소됨",
   'chat.record.pending': "시작 전",
   'chat.record.unfinished': "미완료",
+  'comment.authorRole.owner': '소유자',
+  'comment.authorRole.admin': '관리자',
+  'comment.authorRole.member': '구성원',
+  'comment.authorRole.sharePage': '공유 페이지',
 };

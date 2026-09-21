@@ -5393,4 +5393,8 @@ export const ptBR: Dict = {
   'chat.record.canceled': "Cancelado",
   'chat.record.pending': "Não iniciado",
   'chat.record.unfinished': "Não concluído",
+  'comment.authorRole.owner': 'Proprietário',
+  'comment.authorRole.admin': 'Administrador',
+  'comment.authorRole.member': 'Membro',
+  'comment.authorRole.sharePage': 'Página compartilhada',
 };

@@ -4442,8 +4442,15 @@ function commentAuthorInitials(name: string): string {
   return (first ?? '?').toUpperCase();
 }
 
-function commentAuthorRoleLabel(role: CollabMemberRole): string {
-  return role.charAt(0).toUpperCase() + role.slice(1);
+type CommentAuthorRole = CollabMemberRole | 'sharePage';
+
+function commentAuthorRoleLabel(role: CommentAuthorRole, t: TranslateFn): string {
+  switch (role) {
+    case 'owner': return t('comment.authorRole.owner');
+    case 'admin': return t('comment.authorRole.admin');
+    case 'member': return t('comment.authorRole.member');
+    case 'sharePage': return t('comment.authorRole.sharePage');
+  }
 }
 
 function CommentAuthorIdentity({
@@ -4463,6 +4470,7 @@ function CommentAuthorIdentity({
         comment={comment}
         displayName={comment.authorDisplayName?.trim() ?? ''}
         displayNumber={displayNumber}
+        role="sharePage"
         seed={comment.authorKey ?? comment.authorAppUserId ?? ''}
         t={t}
       />
@@ -4514,7 +4522,7 @@ function CommentAuthorIdentityContent({
   comment: PreviewComment;
   displayName: string;
   displayNumber: number;
-  role?: CollabMemberRole;
+  role?: CommentAuthorRole;
   seed?: string;
   t: TranslateFn;
 }) {
@@ -4534,7 +4542,7 @@ function CommentAuthorIdentityContent({
         {displayName ? (
           <small>
             {displayName}
-            {role ? <> · {commentAuthorRoleLabel(role)}</> : null}
+            {role ? <> · {commentAuthorRoleLabel(role, t)}</> : null}
           </small>
         ) : null}
       </span>
