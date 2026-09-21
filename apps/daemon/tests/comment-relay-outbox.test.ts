@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import Database from 'better-sqlite3';
 
 const { execFileMock } = vi.hoisted(() => ({ execFileMock: vi.fn() }));
 
@@ -21,10 +22,14 @@ import {
 } from '../src/db.js';
 import { createCollabCloudService, previewCommentToCloud } from '../src/collab/collab-cloud-service.js';
 import { commentRelayScope } from '../src/collab/comment-relay-scope.js';
-import { createSqlitePublicFilePublicationStore } from '../src/collab/public-file-publication-store.js';
+import {
+  createSqlitePublicFilePublicationStore,
+  migratePublicFilePublications,
+} from '../src/collab/public-file-publication-store.js';
 import {
   commentRelayLocalBindingMatches,
   createCommentRelayOutboxStore,
+  migrateCommentRelayOutbox,
   type CommentRelayLocalProjectBinding,
 } from '../src/collab/comment-relay-outbox.js';
 import { CollabCloudError, type CollabCloudClient } from '../src/integrations/collab-cloud.js';
@@ -122,6 +127,77 @@ async function waitForCondition(predicate: () => boolean): Promise<void> {
 }
 
 describe('durable Team comment relay outbox', () => {
+  it('backfills legacy personal file paths idempotently without touching malformed or unrelated rows', () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'od-comment-relay-legacy-'));
+    const dbPath = path.join(tempDir, 'app.sqlite');
+    let db = new Database(dbPath);
+    db.exec(`
+      CREATE TABLE comment_relay_outbox (
+        workspace_id TEXT NOT NULL, workspace_member_id TEXT NOT NULL,
+        team_id TEXT NOT NULL, relay_scope TEXT NOT NULL DEFAULT 'team',
+        project_id TEXT NOT NULL, comment_id TEXT NOT NULL,
+        expected_owner_member_id TEXT, payload_json TEXT NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 1, attempt_count INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at INTEGER NOT NULL, last_error TEXT, created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (workspace_id, workspace_member_id, project_id, comment_id)
+      );
+    `);
+    const insert = db.prepare(`
+      INSERT INTO comment_relay_outbox (workspace_id, workspace_member_id, team_id, relay_scope,
+        project_id, comment_id, expected_owner_member_id, payload_json, next_attempt_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 100, 100, 100)
+    `);
+    const payload = (id: string, filePath: string) => JSON.stringify(
+      previewCommentToCloud(comment({ id, filePath }), 'owner-a'),
+    );
+    insert.run('workspace-a', 'owner-a', 'workspace-a', 'personal', 'p1', 'exact', 'owner-a', payload('exact', 'index.html'));
+    insert.run('workspace-a', 'owner-a', 'workspace-a', 'personal', 'p1', 'other-file', 'owner-a', payload('other-file', 'other.html'));
+    insert.run('workspace-a', 'owner-b', 'workspace-a', 'personal', 'p1', 'other-principal', 'owner-b', payload('other-principal', 'index.html'));
+    insert.run('workspace-a', 'owner-a', 'workspace-a', 'team', 'p1', 'team-row', 'owner-a', payload('team-row', 'index.html'));
+    insert.run('workspace-a', 'owner-a', 'workspace-a', 'personal', 'p1', 'malformed', 'owner-a', '{not json');
+
+    migrateCommentRelayOutbox(db);
+    migratePublicFilePublications(db);
+    expect(db.prepare(`SELECT file_path FROM comment_relay_outbox WHERE comment_id = 'exact'`).get()).toEqual({ file_path: 'index.html' });
+    expect(db.prepare(`SELECT file_path FROM comment_relay_outbox WHERE comment_id = 'malformed'`).get()).toEqual({ file_path: '' });
+    migrateCommentRelayOutbox(db);
+    db.close();
+    db = new Database(dbPath);
+    migrateCommentRelayOutbox(db);
+    migratePublicFilePublications(db);
+
+    const publications = createSqlitePublicFilePublicationStore(db, () => 100);
+    const exactScope = { resourceTeamId: 'workspace-a', ownerMemberId: 'owner-a', projectId: 'p1', filePath: 'index.html' };
+    publications.set(exactScope, { url: 'https://example.test/index', slug: 'index', fileName: 'index.html' });
+    publications.delete(exactScope);
+    expect(db.prepare(`SELECT comment_id, file_path FROM comment_relay_outbox ORDER BY comment_id`).all()).toEqual([
+      { comment_id: 'malformed', file_path: '' },
+      { comment_id: 'other-file', file_path: 'other.html' },
+      { comment_id: 'other-principal', file_path: 'index.html' },
+      { comment_id: 'team-row', file_path: '' },
+    ]);
+    db.close();
+  });
+
+  it('rolls back publication deletion when personal outbox cancellation is aborted', () => {
+    const db = seededDb();
+    const scope = { resourceTeamId: 'workspace-a', ownerMemberId: 'owner-a', projectId: 'p1', filePath: 'index.html' };
+    const publications = createSqlitePublicFilePublicationStore(db, () => 100);
+    publications.set(scope, { url: 'https://example.test/index', slug: 'index', fileName: 'index.html' });
+    const outbox = createCommentRelayOutboxStore(db, () => 100);
+    outbox.enqueue({ workspaceId: 'workspace-a', workspaceMemberId: 'owner-a', teamId: 'workspace-a', relayScope: 'personal', projectId: 'p1', expectedOwnerMemberId: 'owner-a', comment: previewCommentToCloud(comment({ id: 'atomic-row' }), 'owner-a') });
+    db.exec(`CREATE TRIGGER abort_personal_outbox_delete BEFORE DELETE ON comment_relay_outbox BEGIN SELECT RAISE(ABORT, 'forced cancellation failure'); END;`);
+
+    expect(() => publications.delete(scope)).toThrow('forced cancellation failure');
+    expect(publications.get(scope)?.slug).toBe('index');
+    expect(outbox.listDue(100).map((record) => record.commentId)).toEqual(['atomic-row']);
+    db.exec('DROP TRIGGER abort_personal_outbox_delete');
+    publications.delete(scope);
+    expect(publications.get(scope)).toBeNull();
+    expect(outbox.count()).toBe(0);
+  });
+
   it('delivers an active personal owner publication through a durable outbox after restart', async () => {
     const db = seededDb();
     const owner = context('owner', {
