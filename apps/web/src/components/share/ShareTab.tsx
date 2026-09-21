@@ -1,10 +1,12 @@
 import type { Dispatch, SetStateAction } from 'react';
+import { Button } from '@open-design/components';
 import { workspaceContextHasTeamIdentity, type WorkspaceCollabContext } from '@open-design/contracts';
 import type { PublicFilePublishFailureKey } from '../../collab/public-file-publish';
 import type { useT } from '../../i18n';
 import type { WebDeployProviderId } from '../../providers/registry';
 import type { DeployProviderOption } from '../FileViewer';
 import { RemixIcon } from '../RemixIcon';
+import styles from './ShareTab.module.css';
 
 export type SharePublishFailureKey = PublicFilePublishFailureKey | 'fileViewer.publishFileTooLarge';
 
@@ -176,22 +178,38 @@ export function ShareTab({
                               {publishedFileUrl}
                             </div>
                             <div className="chrome-publish-actions">
-                              <button
+                              <Button
                                 type="button"
-                                className="chrome-publish-button"
+                                className={styles.copyButton}
                                 disabled={streaming}
                                 title={streaming ? t('fileViewer.shareAfterGenerationComplete') : undefined}
                                 onClick={() => {
                                   void copyPublishedFileLink();
                                 }}
                               >
-                                <RemixIcon name="file-copy-line" size={14} />
+                                <svg
+                                  width="13"
+                                  height="13"
+                                  viewBox={publishLinkFeedback === 'copied' ? '0 0 16 16' : '0 0 24 24'}
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="1.8"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  aria-hidden="true"
+                                  focusable="false"
+                                  className={publishLinkFeedback === 'copied' ? styles.copiedIcon : undefined}
+                                >
+                                  <path d={publishLinkFeedback === 'copied'
+                                    ? 'm3 8 3 3 7-7'
+                                    : 'M10 13.5a5 5 0 0 0 7 .2l3-3a5 5 0 0 0-7-7l-1.7 1.7M14 10.5a5 5 0 0 0-7-.2l-3 3a5 5 0 0 0 7 7l1.7-1.7'} />
+                                </svg>
                                 {publishLinkFeedback === 'copied'
                                   ? t('fileViewer.copied')
                                   : publishLinkFeedback === 'failed'
                                     ? t('useEverywhere.copyFailed')
                                     : t('fileViewer.copyShareLink')}
-                              </button>
+                              </Button>
                               <button
                                 type="button"
                                 className="chrome-publish-button chrome-publish-button--ghost"
