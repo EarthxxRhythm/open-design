@@ -283,6 +283,9 @@ const COMMENT_COMMAND_TIMEOUT_MS = 30_000;
 
 /** Only a validated CLI envelope may supply status/code; omitted Go status stays null. */
 function commentCommandError(error: unknown): Error {
+  const classified = collabCloudErrorFromVelaFailure(error);
+  if (classified) return classified;
+
   const original = error instanceof Error
     ? error
     : new Error('Vela comment command failed', { cause: error });

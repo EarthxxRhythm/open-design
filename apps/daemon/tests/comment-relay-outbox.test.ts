@@ -1,4 +1,8 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const { execFileMock } = vi.hoisted(() => ({ execFileMock: vi.fn() }));
+
+vi.mock('node:child_process', () => ({ execFile: execFileMock }));
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -30,6 +34,8 @@ let tempDir: string | null = null;
 
 afterEach(() => {
   closeDatabase();
+  execFileMock.mockReset();
+  vi.unstubAllEnvs();
   if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
   tempDir = null;
 });
@@ -1138,9 +1144,16 @@ describe('durable Team comment relay outbox', () => {
       new URL('./fixtures/vela-cli-comment-push-share-stopped-927e0a62e7.stdout.json', import.meta.url),
       'utf8',
     );
-    const client = createVelaCliCollabClient({
-      run: async () => { throw Object.assign(new Error('unclassified command failure'), { stdout }); },
+    // Exercise the default runner: runVelaCommand captures stdout on its
+    // rejected process-boundary error, then defaultRunVelaCollab must preserve
+    // the structured terminal failure through runJson and the SQLite outbox.
+    vi.stubEnv('VELA_BIN', process.execPath);
+    vi.stubEnv('OD_DATA_DIR', '');
+    execFileMock.mockImplementationOnce((_bin, _args, _options, callback) => {
+      callback(new Error('unclassified command failure'), stdout, '');
+      return { pid: 4321 };
     });
+    const client = createVelaCliCollabClient();
     const errors: unknown[] = [];
     const confirmed: Array<{ commentId: string; seq: number }> = [];
     const service = createCollabCloudService({
