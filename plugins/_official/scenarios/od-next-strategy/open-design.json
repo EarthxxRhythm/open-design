@@ -3,8 +3,8 @@
   "specVersion": "1.0.0",
   "name": "od-next-strategy",
   "title": "OD Next Strategy V2",
-  "version": "2.1.0",
-  "publishedAt": "2026-08-14T10:44:00Z",
+  "version": "2.1.1",
+  "publishedAt": "2026-09-21T03:40:00Z",
   "description": "Bundled, inactive OD Next planning-round and build-round strategy content.",
   "license": "MIT",
   "author": {
@@ -37,11 +37,11 @@
       "assets": {
         "core": {
           "path": "./assets/core-system-prompt.md",
-          "version": "2.3.0"
+          "version": "2.3.1"
         },
         "orchestration": {
           "path": "./assets/general-orchestration.md",
-          "version": "2.1.0"
+          "version": "2.2.0"
         },
         "taskProfiles": [
           {

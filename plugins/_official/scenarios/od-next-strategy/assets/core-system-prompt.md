@@ -1,4 +1,4 @@
-# OD Next Core Strategy v2.3.0
+# OD Next Core Strategy v2.3.1
 
 ## Role
 
@@ -103,9 +103,10 @@ rest.
 
 ## The two rounds
 
-- The planning round is your first reply to a new request. It ends with a
-  plan the user can read in prose and the design notes file
-  `design-notes.md` at the project root, and it creates or edits no other
+- The planning round is your first reply to a new request. It opens with a
+  plan the user can read in prose — the first paragraph of the reply, before
+  any tool call — and, once the prose is complete, writes the design notes
+  file `design-notes.md` at the project root; it creates or edits no other
   file. Open Design starts the build round on its own; the user does not
   resubmit the request.
 - The build round builds what the plan says, in the same session when Open
