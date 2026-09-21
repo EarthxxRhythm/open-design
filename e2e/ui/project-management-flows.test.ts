@@ -2745,6 +2745,41 @@ test('[P1] repeated artifact cards anchor Share to the clicked turn and keep the
   await expect(menu).not.toContainText('Share project in workspace');
   await expect(menu).not.toContainText('Deploy to Vercel');
   await expect(menu).not.toContainText('Save as template');
+
+  // S7 HTTP failure fixture, not a real cloud failure. Only the production API
+  // response is mocked; the product module and its CSS remain unmodified.
+  let publishAttempts = 0;
+  await page.route(`**/api/projects/${projectId}/files/index.html/publish-public`, async (route) => {
+    if (route.request().method() !== 'POST') { await route.continue(); return; }
+    publishAttempts += 1;
+    await route.fulfill({ status: 500, json: { error: 's7_fixture_internal_failure' } });
+  });
+  await shareLink.click();
+  const failure = menu.getByRole('status');
+  await expect(failure).toHaveText('Could not create the share link. Try again, or use a deploy option below.');
+  await expect(failure).not.toContainText('s7_fixture_internal_failure');
+  for (const [property, value] of Object.entries({
+    color: 'rgb(201, 78, 78)', 'font-size': '12px', 'line-height': '18px',
+    display: 'flex', 'align-items': 'flex-start', gap: '6px', margin: '0px', padding: '0px',
+  })) {
+    await expect(failure).toHaveCSS(property, value);
+  }
+  const warningIcon = failure.locator('svg');
+  await expect(warningIcon).toHaveCSS('width', '14px');
+  await expect(warningIcon).toHaveCSS('height', '14px');
+  await expect(warningIcon).toHaveCSS('flex-shrink', '0');
+  await expect(warningIcon).toHaveCSS('margin-top', '2px');
+  await expect(warningIcon).toHaveAttribute('aria-hidden', 'true');
+  await expect(warningIcon.locator('path')).toHaveAttribute('d', 'M8 4.8v3.6M8 11h.01');
+  const retry = menu.getByRole('menuitem', { name: 'Retry', exact: true });
+  await expect(retry).toBeEnabled();
+  expect(publishAttempts).toBe(1);
+  const retried = page.waitForResponse(response => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `/api/projects/${projectId}/files/index.html/publish-public`);
+  await retry.click();
+  expect((await retried).status()).toBe(500);
+  await expect(failure).toBeVisible();
+  expect(publishAttempts).toBe(2);
 });
 
 test('[P1] project detail fork emits correlated click and result analytics', async ({ page }) => {
