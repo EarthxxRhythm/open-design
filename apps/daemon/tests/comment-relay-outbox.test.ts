@@ -24,6 +24,7 @@ import {
   type CommentRelayLocalProjectBinding,
 } from '../src/collab/comment-relay-outbox.js';
 import { CollabCloudError, type CollabCloudClient } from '../src/integrations/collab-cloud.js';
+import { createVelaCliCollabClient } from '../src/collab/vela-cli-collab-client.js';
 
 let tempDir: string | null = null;
 
@@ -1133,11 +1134,17 @@ describe('durable Team comment relay outbox', () => {
     const db = seededDb();
     const queuedContext = context('member');
     const outbox = createCommentRelayOutboxStore(db, () => 1_400);
-    const stopped = new CollabCloudError(410, 'SHARE_STOPPED', 'this prose must not decide cancellation');
+    const stdout = fs.readFileSync(
+      new URL('./fixtures/vela-cli-comment-push-share-stopped-927e0a62e7.stdout.json', import.meta.url),
+      'utf8',
+    );
+    const client = createVelaCliCollabClient({
+      run: async () => { throw Object.assign(new Error('unclassified command failure'), { stdout }); },
+    });
     const errors: unknown[] = [];
     const confirmed: Array<{ commentId: string; seq: number }> = [];
     const service = createCollabCloudService({
-      client: clientWithPush(async () => { throw stopped; }),
+      client,
       commentOutbox: outbox,
       resolveLocalProjectRelayBinding: () => ({ workspaceId: 'workspace-a', ownerMemberId: 'project-owner' }),
       resolveRemoteProjectOwnerMemberId: async () => 'project-owner',
@@ -1151,7 +1158,9 @@ describe('durable Team comment relay outbox', () => {
 
     expect(outbox.count()).toBe(0);
     expect(confirmed).toEqual([]);
-    expect(errors).toEqual([stopped]);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toBeInstanceOf(CollabCloudError);
+    expect(errors[0]).toMatchObject({ status: 410, code: 'SHARE_STOPPED' });
     service.dispose();
     closeDatabase();
 

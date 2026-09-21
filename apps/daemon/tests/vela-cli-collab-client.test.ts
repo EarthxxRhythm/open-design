@@ -1,5 +1,11 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import type { CollabCloudComment } from '@open-design/contracts';
+import {
+  SHARE_COMMENT_TERMINAL_REJECTION,
+  VELA_CLI_FAILURE_ENVELOPE_FIELDS,
+  type CollabCloudComment,
+} from '@open-design/contracts';
+import { CollabCloudError } from '../src/integrations/collab-cloud.js';
 
 import {
   collabCloudErrorFromVelaFailure,
@@ -7,23 +13,38 @@ import {
 } from '../src/collab/vela-cli-collab-client.js';
 
 describe('Vela CLI collaboration client failures', () => {
-  it('preserves a structured terminal HTTP error emitted by the Vela command boundary', async () => {
-    const commandFailure = Object.assign(new Error('the message is not a classifier'), {
-      stdout: JSON.stringify({ error: { status: 410, code: 'SHARE_STOPPED', message: 'stopped' } }),
-    });
+  it('preserves the captured root errorCode failure emitted by Vela CLI source 927e0a62e7', async () => {
+    const stdout = readFileSync(
+      new URL('./fixtures/vela-cli-comment-push-share-stopped-927e0a62e7.stdout.json', import.meta.url),
+      'utf8',
+    );
+    const wire = JSON.parse(stdout) as Record<string, unknown>;
+    expect(wire[VELA_CLI_FAILURE_ENVELOPE_FIELDS.status]).toBe(SHARE_COMMENT_TERMINAL_REJECTION.status);
+    expect(wire[VELA_CLI_FAILURE_ENVELOPE_FIELDS.code]).toBe(SHARE_COMMENT_TERMINAL_REJECTION.code);
     const client = createVelaCliCollabClient({
-      run: async () => { throw commandFailure; },
+      run: async () => { throw Object.assign(new Error('the message is not a classifier'), { stdout }); },
     });
 
-    await expect(client.pushComment('team-1', 'p1', {} as CollabCloudComment)).rejects.toMatchObject({
-      name: 'CollabCloudError', status: 410, code: 'SHARE_STOPPED', message: 'stopped',
+    const failure = await client.pushComment('team-1', 'p1', {} as CollabCloudComment).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(CollabCloudError);
+    expect(failure).toMatchObject({
+      name: 'CollabCloudError',
+      status: SHARE_COMMENT_TERMINAL_REJECTION.status,
+      code: SHARE_COMMENT_TERMINAL_REJECTION.code,
     });
   });
 
-  it('requires both structured status and code instead of matching failure prose', () => {
+  it('retains the legacy nested error.code envelope', () => {
+    expect(collabCloudErrorFromVelaFailure(Object.assign(new Error('not a classifier'), {
+      stdout: JSON.stringify({ error: { status: 410, code: 'SHARE_STOPPED', message: 'stopped' } }),
+    }))).toMatchObject({ status: 410, code: 'SHARE_STOPPED', message: 'stopped' });
+  });
+
+  it('requires structured status and code; malformed JSON and prose fail closed', () => {
     expect(collabCloudErrorFromVelaFailure(Object.assign(new Error('410 SHARE_STOPPED'), {
       stdout: JSON.stringify({ error: { code: 'SHARE_STOPPED' } }),
     }))).toBeNull();
+    expect(collabCloudErrorFromVelaFailure(Object.assign(new Error('malformed'), { stdout: '{' }))).toBeNull();
     expect(collabCloudErrorFromVelaFailure(new Error('410 SHARE_STOPPED'))).toBeNull();
   });
 });

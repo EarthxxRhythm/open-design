@@ -8,6 +8,7 @@
 // only constructed when OD_COLLAB_CLOUD_URL is set (see createCollabCloudClientFromEnv),
 // so an unconfigured daemon never even reaches here.
 
+import { SHARE_COMMENT_TERMINAL_REJECTION } from '@open-design/contracts';
 import type {
   CollabCloudComment,
   CollabCloudMemberDirectoryEntry,
@@ -420,8 +421,8 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
   /** A stopped public share is a server-confirmed terminal state for this exact durable revision. */
   function isShareStoppedRelayError(error: unknown): error is CollabCloudError {
     return error instanceof CollabCloudError
-      && error.status === 410
-      && error.code === 'SHARE_STOPPED';
+      && error.status === SHARE_COMMENT_TERMINAL_REJECTION.status
+      && error.code === SHARE_COMMENT_TERMINAL_REJECTION.code;
   }
 
   function deferOutboxRecord(record: CommentRelayOutboxRecord, error: unknown): void {
