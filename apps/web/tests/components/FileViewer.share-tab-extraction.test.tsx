@@ -72,15 +72,22 @@ function htmlFile(): ProjectFile {
 
 /** 分享面板挂上之后才发的那几个请求;不喂它们 `canShare` 永远为假,按钮压根不出现。 */
 function stubFetch(published = false) {
-  vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+  const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
     // Keep the production local social payload fallback instead of returning a malformed payload.
     if (url.includes('/social-share')) return new Response('{}', { status: 503 });
-    if (url.includes('publish-public')) return new Response(JSON.stringify({ publication: published ? { url: 'https://open-design.ai/artifact/project-1/stable-slug', slug: 'stable-slug', fileName: 'index.html' } : null }), { status: 200 });
+    if (url.includes('publish-public')) {
+      const publication = { url: 'https://open-design.ai/artifact/project-1/stable-slug', slug: 'stable-slug', fileName: 'index.html' };
+      if (init?.method === 'POST') return new Response(JSON.stringify(publication), { status: 200 });
+      if (init?.method === 'DELETE') return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      return new Response(JSON.stringify({ publication: published ? publication : null }), { status: 200 });
+    }
     if (url.includes('/deployments')) return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
     if (url.includes('/deploy/config')) return new Response(JSON.stringify({ providerId: 'cloudflare-pages', configured: false }), { status: 200 });
     return new Response(JSON.stringify({}), { status: 200 });
-  }));
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
 }
 
 function teamContext(): WorkspaceCollabContext {
@@ -206,6 +213,61 @@ describe('Z11a · ShareTab 搬动前的 DOM 基线', () => {
       '两枚按钮被拆到了不同的外壳里',
     ).toBe(toolbarAction('Export').parentElement);
     expect(bar!.closest('.share-menu'), '按钮外壳脱离了 .share-menu').not.toBeNull();
+  });
+});
+
+describe('G4 · retired HTML publishing section label', () => {
+  it.each(['toolbar', 'artifact-card'] as const)('%s keeps publishing without the old label', async (origin) => {
+    const fetchMock = stubFetch();
+    renderViewer(teamContext(), origin === 'artifact-card'
+      ? { shareRequest: { nonce: 401, anchorId: 'g4-card' } } : {});
+    expect(toolbarAction('Share')).toBeEnabled();
+    if (origin === 'toolbar') fireEvent.click(toolbarAction('Share'));
+    const publish = await screen.findByRole('menuitem', { name: /Get a share link/i });
+    // Actual English rendering of fileViewer.shareMenuPublishViaOd, not a mocked t().
+    expect(screen.queryByText('QUICK SHARE · OPENDESIGN')).toBeNull();
+    expect(document.querySelectorAll('.chrome-unified-panel--share')).toHaveLength(1);
+    if (origin === 'artifact-card') {
+      expect(document.querySelector('[data-artifact-anchor="g4-card"]')).not.toBeNull();
+      expect(document.querySelector('.chrome-access-trigger')).toBeNull();
+    } else {
+      fireEvent.click(document.querySelector<HTMLButtonElement>('.chrome-access-trigger')!);
+      expect(screen.getAllByRole('option')).toHaveLength(2);
+      expect(screen.getByRole('option', { name: 'Only me' })).toHaveAttribute('aria-selected', 'true');
+    }
+    fireEvent.click(publish);
+    await screen.findByRole('button', { name: /stop sharing/i });
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/projects/project-1/files/index.html/publish-public',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
+  it.each(['toolbar', 'artifact-card'] as const)('%s hydrates the exact publication URL and keeps copy/stop usable', async (origin) => {
+    const fetchMock = stubFetch(true);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { userAgent: navigator.userAgent, clipboard: { writeText } });
+    renderViewer(teamContext(), origin === 'artifact-card'
+      ? { shareRequest: { nonce: 402, anchorId: 'g4-published-card' } } : {});
+    if (origin === 'toolbar') fireEvent.click(toolbarAction('Share'));
+    const stop = await screen.findByRole('button', { name: /stop sharing/i });
+    const url = 'https://open-design.ai/artifact/project-1/stable-slug';
+    const panel = document.querySelector<HTMLElement>('.chrome-unified-panel--share')!;
+    expect(panel.querySelector('.chrome-publish-url')?.textContent).toBe(url);
+    expect(panel.querySelector('.chrome-publish-url')).toHaveAttribute('title', url);
+    expect(panel.querySelector('input')).toBeNull();
+    expect(screen.queryByText('QUICK SHARE · OPENDESIGN')).toBeNull();
+    expect(stop).toBeEnabled();
+    const copy = screen.getByRole('button', { name: /copy share link/i });
+    expect(copy).toBeEnabled();
+    fireEvent.click(copy);
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(url));
+    fireEvent.click(stop);
+    await screen.findByRole('menuitem', { name: /Get a share link/i });
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/projects/project-1/files/index.html/publish-public',
+      expect.objectContaining({ method: 'DELETE', body: JSON.stringify({ slug: 'stable-slug' }) }),
+    );
   });
 });
 

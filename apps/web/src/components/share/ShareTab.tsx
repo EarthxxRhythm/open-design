@@ -165,33 +165,8 @@ export function ShareTab({
                         </div>
                       </>
                       ) : null}
-                      {/* Publishing is a menu row like every other action in
-                          this panel (deploy, save-as-template): same section
-                          label, same icon + label row, with a trailing "?"
-                          whose tooltip explains reach and the single-file
-                          limitation. The published state swaps the row for the
-                          link block (content, not an action). */}
                       {canPublishPublic ? (
                       <>
-                      {/* The "?" lives on the section label, not inside the publish
-                          menuitem: activating it is a help-discovery gesture, and
-                          nesting it in the row would make that gesture publish a
-                          public link (no hover-only path exists on touch). Same
-                          structure as the workspace-access help above. */}
-                      <div className="share-menu-section-label share-menu-section-label--help" role="presentation">
-                        <span>{t('fileViewer.shareMenuPublishViaOd')}</span>
-                        <button
-                          type="button"
-                          className="share-menu-help od-tooltip"
-                          data-testid="publish-help"
-                          aria-label={t('fileViewer.publishSingleFileDescription')}
-                          data-tooltip={t('fileViewer.publishSingleFileDescription')}
-                          data-tooltip-placement="top"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <RemixIcon name="question-line" size={14} />
-                        </button>
-                      </div>
                       {publishProgress !== null ? (
                         <progress max={1} value={publishProgress} aria-label={t('fileViewer.publishingFile')} />
                       ) : null}
