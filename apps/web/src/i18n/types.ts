@@ -4181,6 +4181,7 @@ export interface Dict {
   'fileViewer.publishFileRequiresTeam': string;
   'fileViewer.publishFileRequiresWorkspace': string;
   'fileViewer.publishFileFailed': string;
+  'fileViewer.publishFileTooLarge': string;
   'fileViewer.workspaceShareSuccess': string;
   'fileViewer.workspaceShareFailed': string;
   'fileViewer.workspaceUnshareSuccess': string;
