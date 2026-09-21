@@ -14,7 +14,7 @@ import type {
   PreviewComment,
   WorkspaceCollabContext,
 } from '@open-design/contracts';
-import type { CollabCloudClient } from '../integrations/collab-cloud.js';
+import { CollabCloudError, type CollabCloudClient } from '../integrations/collab-cloud.js';
 import type { WorkspaceContextProvider } from './workspace-context.js';
 import type { CommentRelayScope } from './comment-relay-scope.js';
 import type {
@@ -417,6 +417,13 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
     return true;
   }
 
+  /** A stopped public share is a server-confirmed terminal state for this exact durable revision. */
+  function isShareStoppedRelayError(error: unknown): error is CollabCloudError {
+    return error instanceof CollabCloudError
+      && error.status === 410
+      && error.code === 'SHARE_STOPPED';
+  }
+
   function deferOutboxRecord(record: CommentRelayOutboxRecord, error: unknown): void {
     const attemptCount = record.attemptCount + 1;
     const message = error instanceof Error ? error.message : String(error);
@@ -479,6 +486,13 @@ export function createCollabCloudService(deps: CollabCloudServiceDeps): CollabCl
         });
       }
     } catch (error) {
+      if (isShareStoppedRelayError(error)) {
+        // The server has authoritatively closed this share. A revision-conditional
+        // ACK preserves a newer local edit that raced this rejected request.
+        deps.commentOutbox?.acknowledge(record);
+        deps.onError?.(error);
+        return;
+      }
       deferOutboxRecord(record, error);
     }
   }

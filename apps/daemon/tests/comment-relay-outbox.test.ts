@@ -23,7 +23,7 @@ import {
   createCommentRelayOutboxStore,
   type CommentRelayLocalProjectBinding,
 } from '../src/collab/comment-relay-outbox.js';
-import type { CollabCloudClient } from '../src/integrations/collab-cloud.js';
+import { CollabCloudError, type CollabCloudClient } from '../src/integrations/collab-cloud.js';
 
 let tempDir: string | null = null;
 
@@ -1128,4 +1128,94 @@ describe('durable Team comment relay outbox', () => {
     expect(confirmations).toBe(0);
     expect(outbox.count()).toBe(1);
   });
+
+  it('acknowledges only the rejected revision for a structured 410 SHARE_STOPPED and does not resurrect it after SQLite reopen', async () => {
+    const db = seededDb();
+    const queuedContext = context('member');
+    const outbox = createCommentRelayOutboxStore(db, () => 1_400);
+    const stopped = new CollabCloudError(410, 'SHARE_STOPPED', 'this prose must not decide cancellation');
+    const errors: unknown[] = [];
+    const confirmed: Array<{ commentId: string; seq: number }> = [];
+    const service = createCollabCloudService({
+      client: clientWithPush(async () => { throw stopped; }),
+      commentOutbox: outbox,
+      resolveLocalProjectRelayBinding: () => ({ workspaceId: 'workspace-a', ownerMemberId: 'project-owner' }),
+      resolveRemoteProjectOwnerMemberId: async () => 'project-owner',
+      listProjectIds: () => [], resolveProjectWorkspaceContext: async () => queuedContext,
+      resolveLocalConversationId: () => 'conv-local', mergeComment: () => false,
+      onCommentPushed: (event) => confirmed.push(event), onError: (error) => errors.push(error),
+      now: () => 1_400, retryDelayMs: () => 0,
+    });
+    expect(service.enqueueComment(comment(), queuedContext)).toBe(true);
+    await service.flushPendingComments();
+
+    expect(outbox.count()).toBe(0);
+    expect(confirmed).toEqual([]);
+    expect(errors).toEqual([stopped]);
+    service.dispose();
+    closeDatabase();
+
+    const reopened = openDatabase(tempDir!);
+    const restartedOutbox = createCommentRelayOutboxStore(reopened, () => 1_400);
+    expect(restartedOutbox.count()).toBe(0);
+  });
+
+  it('keeps a newer queued revision when the in-flight older revision is terminally rejected', async () => {
+    const db = seededDb();
+    const queuedContext = context('member');
+    const outbox = createCommentRelayOutboxStore(db, () => 1_500);
+    const inFlight = deferred<void>();
+    const service = createCollabCloudService({
+      client: clientWithPush(async () => {
+        await inFlight.promise;
+        throw new CollabCloudError(410, 'SHARE_STOPPED');
+      }),
+      commentOutbox: outbox,
+      resolveLocalProjectRelayBinding: () => ({ workspaceId: 'workspace-a', ownerMemberId: 'project-owner' }),
+      resolveRemoteProjectOwnerMemberId: async () => 'project-owner',
+      listProjectIds: () => [], resolveProjectWorkspaceContext: async () => queuedContext,
+      resolveLocalConversationId: () => 'conv-local', mergeComment: () => false,
+      now: () => 1_500, retryDelayMs: () => 0,
+    });
+    service.enqueueComment(comment({ note: 'old' }), queuedContext);
+    const flushing = service.flushPendingComments();
+    await Promise.resolve();
+    service.enqueueComment(comment({ note: 'new' }), queuedContext);
+    inFlight.resolve();
+    await flushing;
+
+    const [pending] = outbox.listDue(1_500);
+    expect(pending?.comment.note).toBe('new');
+    expect(outbox.count()).toBe(1);
+    service.dispose();
+  });
+
+  it.each([
+    new CollabCloudError(429, 'RATE_LIMITED', 'SHARE_STOPPED'),
+    new CollabCloudError(500, 'UPSTREAM_FAILURE', 'SHARE_STOPPED'),
+    new CollabCloudError(410, 'ANOTHER_GONE_CODE', 'SHARE_STOPPED'),
+    new Error('410 SHARE_STOPPED'),
+  ])('retries non-terminal structured failures without using message text', async (failure) => {
+    const db = seededDb();
+    const queuedContext = context('member');
+    const outbox = createCommentRelayOutboxStore(db, () => 1_600);
+    let attempts = 0;
+    const service = createCollabCloudService({
+      client: clientWithPush(async () => { attempts += 1; throw failure; }),
+      commentOutbox: outbox,
+      resolveLocalProjectRelayBinding: () => ({ workspaceId: 'workspace-a', ownerMemberId: 'project-owner' }),
+      resolveRemoteProjectOwnerMemberId: async () => 'project-owner',
+      listProjectIds: () => [], resolveProjectWorkspaceContext: async () => queuedContext,
+      resolveLocalConversationId: () => 'conv-local', mergeComment: () => false,
+      now: () => 1_600, retryDelayMs: () => 0,
+    });
+    service.enqueueComment(comment(), queuedContext);
+    await service.flushPendingComments();
+    await service.flushPendingComments();
+    await service.flushPendingComments();
+    expect(attempts).toBe(3);
+    expect(outbox.count()).toBe(1);
+    service.dispose();
+  });
+
 });

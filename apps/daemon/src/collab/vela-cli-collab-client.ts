@@ -4,6 +4,7 @@ import type {
   CollabMemberRole,
   CollabPresenceMember,
 } from '@open-design/contracts';
+import { CollabCloudError } from '../integrations/collab-cloud.js';
 import {
   runVelaCommand,
   velaWorkspaceCommandOptions,
@@ -58,7 +59,12 @@ export function createVelaCliCollabClient(options: VelaCliCollabClientOptions = 
     if (!requestedWorkspaceId) {
       throw new Error('explicit workspace scope is required');
     }
-    const stdout = await run(args, requestedWorkspaceId);
+    let stdout: string;
+    try {
+      stdout = await run(args, requestedWorkspaceId);
+    } catch (error) {
+      throw collabCloudErrorFromVelaFailure(error) ?? error;
+    }
     const trimmed = stdout.trim();
     if (!trimmed) return {} as T;
     return JSON.parse(trimmed) as T;
@@ -179,6 +185,38 @@ export function createVelaCliCollabClient(options: VelaCliCollabClientOptions = 
 }
 
 export type VelaCliCollabClient = ReturnType<typeof createVelaCliCollabClient>;
+
+/**
+ * Preserve a Vela command's machine-readable HTTP failure without ever
+ * classifying its human stderr. `runVelaCommand` carries rejected stdout, and
+ * structured command envelopes put status/code either at the root or under
+ * `error`; both fields are required so a code alone cannot cancel data.
+ */
+export function collabCloudErrorFromVelaFailure(error: unknown): CollabCloudError | null {
+  const stdout = error !== null && typeof error === 'object'
+    && typeof (error as { stdout?: unknown }).stdout === 'string'
+    ? (error as { stdout: string }).stdout.trim()
+    : '';
+  if (!stdout) return null;
+  let envelope: unknown;
+  try {
+    envelope = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  if (envelope === null || typeof envelope !== 'object' || Array.isArray(envelope)) return null;
+  const root = envelope as { status?: unknown; code?: unknown; message?: unknown; error?: unknown };
+  const detail = root.error !== null && typeof root.error === 'object' && !Array.isArray(root.error)
+    ? root.error as { status?: unknown; code?: unknown; message?: unknown }
+    : root;
+  const status = detail.status;
+  if (typeof status !== 'number' || !Number.isInteger(status) || typeof detail.code !== 'string' || !detail.code.trim()) return null;
+  return new CollabCloudError(
+    status,
+    detail.code,
+    typeof detail.message === 'string' ? detail.message : undefined,
+  );
+}
 
 function toDirectoryEntry(input: MemberWire | undefined): CollabCloudMemberDirectoryEntry {
   const memberId = typeof input?.memberId === 'string' ? input.memberId : '';
