@@ -1674,6 +1674,18 @@
   pointer-events: auto;
   transform: translate(-50%, -50%);
 }
+/* D1–D3 use the shared body-portal tooltip so its position is clamped to the
+   viewport instead of being clipped by the preview overlay. The trigger's
+   `tipd` class is mirrored onto the portal by TooltipLayer. */
+.od-tooltip-layer.tipd {
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: #1F1F1F;
+  box-shadow: none;
+  color: #FFFFFF;
+  font-size: 11px;
+}
 .comment-saved-pin:hover,
 .comment-active-pin:hover {
   background: #282828;

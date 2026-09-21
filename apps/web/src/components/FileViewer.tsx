@@ -5989,6 +5989,9 @@ function CommentPreviewOverlays({
         const bounds = overlayBoundsFromSnapshot(snapshot, scale, overlayOffset);
         const label = commentTargetDisplayName(comment);
         const drifted = anchorState !== 'anchored';
+        const tooltip = drifted
+          ? `${markerNumber}. ${label} · ${anchorStateLabel(anchorState, t)}`
+          : `${markerNumber}. ${label}: ${comment.note}`;
         return (
           <div
             key={comment.id}
@@ -6006,17 +6009,16 @@ function CommentPreviewOverlays({
             <div className="comment-saved-outline" />
             <button
               type="button"
-              className="comment-saved-pin"
+              className="comment-saved-pin od-tooltip tipd"
+              data-tooltip={tooltip}
+              data-tooltip-placement="top"
               onClick={(event) => {
                 event.stopPropagation();
                 onOpenCommentRef.current(comment, snapshot);
               }}
-              title={
-                drifted
-                  ? `${markerNumber}. ${label} · ${anchorStateLabel(anchorState, t)}`
-                  : `${markerNumber}. ${label}: ${comment.note}`
-              }
+              title={tooltip}
               aria-label={`Open comment for ${label}`}
+              aria-description={tooltip}
             >
               {markerNumber}
             </button>

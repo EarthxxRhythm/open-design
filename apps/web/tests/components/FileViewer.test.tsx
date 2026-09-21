@@ -62,6 +62,7 @@ vi.mock('../../src/state/projects', async () => {
   };
 });
 
+import { TooltipLayer } from '../../src/components/TooltipLayer';
 import {
   COMMENT_AUTHOR_AVATAR_COLORS,
   CommentSidePanel,
@@ -15013,6 +15014,7 @@ describe('LiveArtifactRefreshHistoryPanel', () => {
       <I18nProvider initial="zh-CN">
         <CollabProvider value={collab}>
           <FileViewer projectId="project-1" projectKind="prototype" file={baseFile({ name: 'preview.html', path: 'preview.html', kind: 'html', mime: 'text/html' })} liveHtml='<html><body><main>Hero</main></body></html>' previewComments={[comment]} />
+          <TooltipLayer />
         </CollabProvider>
       </I18nProvider>,
     );
@@ -15035,8 +15037,23 @@ describe('LiveArtifactRefreshHistoryPanel', () => {
     const marker = await screen.findByTestId(`comment-saved-marker-${elementId}`);
     const pin = marker.querySelector('button');
     expect(marker).toHaveClass(`comment-saved-marker--${_state}`);
-    expect(pin).toHaveClass('comment-saved-pin');
+    expect(pin).toHaveClass('comment-saved-pin', 'od-tooltip', 'tipd');
+    expect(pin).toHaveAttribute('data-tooltip', expect.stringContaining(expected));
     expect(pin).toHaveAttribute('title', expect.stringContaining(expected));
+    expect(pin).toHaveAccessibleDescription(expect.stringContaining(expected));
+
+    fireEvent.pointerOver(pin!);
+    expect(screen.getByRole('tooltip')).toHaveTextContent(expected);
+    expect(pin).not.toHaveAttribute('title');
+    fireEvent.pointerOut(pin!);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    expect(pin).toHaveAttribute('title', expect.stringContaining(expected));
+
+    fireEvent.keyDown(document, { key: 'Tab' });
+    fireEvent.focusIn(pin!);
+    expect(screen.getByRole('tooltip')).toHaveTextContent(expected);
+    fireEvent.focusOut(pin!);
+    expect(screen.queryByRole('tooltip')).toBeNull();
   });
 
   it('keeps D1–D4 marker and deck-page presentation on the rendered selectors', () => {
