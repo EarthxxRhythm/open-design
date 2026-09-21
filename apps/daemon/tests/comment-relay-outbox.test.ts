@@ -212,23 +212,28 @@ describe('durable Team comment relay outbox', () => {
       now: () => 100, retryDelayMs: () => 0,
     });
     expect(service.enqueueComment(comment({ authorMemberId: owner.workspaceMemberId }), owner)).toBe(true);
+    // Same-principal/different-file, project, and principal controls must stay.
+    outbox.enqueue({ workspaceId: owner.workspaceId, workspaceMemberId: owner.workspaceMemberId, teamId: owner.workspaceId, relayScope: 'personal', projectId: 'p1', expectedOwnerMemberId: owner.workspaceMemberId, comment: previewCommentToCloud(comment({ id: 'other-file', filePath: 'other.html' }), owner.workspaceMemberId) });
+    outbox.enqueue({ workspaceId: owner.workspaceId, workspaceMemberId: owner.workspaceMemberId, teamId: owner.workspaceId, relayScope: 'personal', projectId: 'p2', expectedOwnerMemberId: owner.workspaceMemberId, comment: previewCommentToCloud(comment({ id: 'other-project', projectId: 'p2' }), owner.workspaceMemberId) });
+    outbox.enqueue({ workspaceId: owner.workspaceId, workspaceMemberId: 'other-owner', teamId: owner.workspaceId, relayScope: 'personal', projectId: 'p1', expectedOwnerMemberId: 'other-owner', comment: previewCommentToCloud(comment({ id: 'other-principal' }), 'other-owner') });
+    outbox.enqueue({ workspaceId: owner.workspaceId, workspaceMemberId: owner.workspaceMemberId, teamId: owner.workspaceId, relayScope: 'team', projectId: 'p1', expectedOwnerMemberId: owner.workspaceMemberId, comment: previewCommentToCloud(comment({ id: 'team-row' }), owner.workspaceMemberId) });
+    // A stop invalidates pre-stop rows even when the stable alias is immediately
+    // republished; an active witness cannot safely distinguish their generation.
     publications.delete({ resourceTeamId: owner.workspaceId, ownerMemberId: owner.workspaceMemberId, projectId: 'p1', filePath: 'index.html' });
-    await service.flushPendingComments();
-    expect(pushes).toBe(0);
-    // A missing exact-file publication in the durable local store is an
-    // authoritative unpublish, not a temporary delivery-authority outage.
-    expect(outbox.count()).toBe(0);
+    publications.set({ resourceTeamId: owner.workspaceId, ownerMemberId: owner.workspaceMemberId, projectId: 'p1', filePath: 'index.html' }, { url: 'https://example.test/share', slug: 'public-slug', fileName: 'index.html' });
+    expect(outbox.listDue(100).map((record) => record.commentId).sort()).toEqual(['other-file', 'other-principal', 'other-project', 'team-row']);
 
     service.dispose();
-    // A stable alias can be republished after process restart, but the old
-    // canceled payload must not be reconstructed from the durable outbox.
+    // Cancellation and the unrelated controls survive restart independently.
     closeDatabase();
     const reopened = openDatabase(tempDir!);
     const restartedPublications = createSqlitePublicFilePublicationStore(reopened, () => 100);
-    restartedPublications.set({ resourceTeamId: owner.workspaceId, ownerMemberId: owner.workspaceMemberId, projectId: 'p1', filePath: 'index.html' }, { url: 'https://example.test/share', slug: 'public-slug', fileName: 'index.html' });
     const restartedScope = (projectId: string, filePath: string, current: WorkspaceCollabContext) =>
       commentRelayScope({ binding, context: current, projectId, filePath, publications: restartedPublications });
     const restartedOutbox = createCommentRelayOutboxStore(reopened, () => 100);
+    const controls = restartedOutbox.listDue(100);
+    expect(controls.map((record) => record.commentId).sort()).toEqual(['other-file', 'other-principal', 'other-project', 'team-row']);
+    for (const record of controls) restartedOutbox.acknowledge(record);
     const restarted = createCollabCloudService({
       client: clientWithPush(async () => { pushes += 1; return { seq: 1 }; }),
       commentOutbox: restartedOutbox, commentRelayScope: restartedScope,
@@ -241,6 +246,11 @@ describe('durable Team comment relay outbox', () => {
     });
     await restarted.flushPendingComments();
     expect(pushes).toBe(0);
+    expect(restartedOutbox.count()).toBe(0);
+    // A new post-resume revision still has the normal delivery path.
+    expect(restarted.enqueueComment(comment({ id: 'after-resume', note: 'after-resume', authorMemberId: owner.workspaceMemberId }), owner)).toBe(true);
+    await restarted.flushPendingComments();
+    expect(pushes).toBe(1);
     expect(restartedOutbox.count()).toBe(0);
     restarted.dispose();
   });

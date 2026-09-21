@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { cancelPersonalCommentRelayOutbox } from './comment-relay-outbox.js';
 
 type SqliteDb = Database.Database;
 
@@ -210,6 +211,16 @@ export function createSqlitePublicFilePublicationStore(
        AND file_path = ?
   `);
 
+  const deletePublicationAndCancelOutbox = db.transaction((scope: PublicFilePublicationScope) => {
+    deleteRow.run(
+      scope.resourceTeamId,
+      scope.ownerMemberId,
+      scope.projectId,
+      scope.filePath,
+    );
+    cancelPersonalCommentRelayOutbox(db, scope);
+  });
+
   // Independent of publications/projects: replacement slugs and local deletion
   // must not erase an outstanding remote stop, including exhausted diagnostics.
   const stopSelect = `SELECT resource_team_id AS resourceTeamId,
@@ -280,12 +291,10 @@ export function createSqlitePublicFilePublicationStore(
       );
     },
     delete(scope) {
-      deleteRow.run(
-        scope.resourceTeamId,
-        scope.ownerMemberId,
-        scope.projectId,
-        scope.filePath,
-      );
+      // A successful public-file stop is authoritative locally. Remove its
+      // witness and every pre-stop personal relay revision as one SQLite
+      // transaction, so immediate re-publication cannot revive stale rows.
+      deletePublicationAndCancelOutbox(scope);
     },
   };
 }
