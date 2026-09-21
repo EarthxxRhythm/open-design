@@ -367,6 +367,83 @@ describe('preview comment permission gating', () => {
     expect(rows.find((c) => c.authorMemberId === 'm-other')?.note).toBe('other note');
   });
 
+  it('ignores spoofed request authors on create and edit', async () => {
+    const api = await startServer();
+    const created = await api.json(
+      `/api/projects/${PROJECT}/conversations/${CONVERSATION}/comments`,
+      {
+        method: 'POST',
+        member: 'm-author',
+        body: {
+          target: api.commentTarget,
+          note: 'trusted author',
+          authorMemberId: 'm-spoofed',
+          authorKind: 'user',
+          authorAppUserId: 'app-spoofed',
+          authorDisplayName: 'Spoofed',
+          authorKey: 'f'.repeat(64),
+        },
+      },
+    );
+    expect(created.status).toBe(200);
+    expect(created.body.comment).toMatchObject({
+      authorMemberId: 'm-author',
+    });
+    expect(created.body.comment).not.toHaveProperty('authorKind');
+    expect(created.body.comment).not.toHaveProperty('authorAppUserId');
+    expect(created.body.comment).not.toHaveProperty('authorDisplayName');
+    expect(created.body.comment).not.toHaveProperty('authorKey');
+
+    const unauthenticated = await api.json(
+      `/api/projects/${PROJECT}/conversations/${CONVERSATION}/comments`,
+      {
+        method: 'POST',
+        body: {
+          target: api.commentTarget,
+          note: 'no caller identity',
+          authorMemberId: 'm-spoofed',
+          authorKind: 'user',
+          authorAppUserId: 'app-spoofed',
+          authorDisplayName: 'Spoofed',
+          authorKey: 'd'.repeat(64),
+        },
+      },
+    );
+    expect(unauthenticated.status).toBe(200);
+    expect(unauthenticated.body.comment).not.toHaveProperty('authorMemberId');
+    expect(unauthenticated.body.comment).not.toHaveProperty('authorKind');
+    expect(unauthenticated.body.comment).not.toHaveProperty('authorAppUserId');
+    expect(unauthenticated.body.comment).not.toHaveProperty('authorDisplayName');
+    expect(unauthenticated.body.comment).not.toHaveProperty('authorKey');
+
+    const edited = await api.json(
+      `/api/projects/${PROJECT}/conversations/${CONVERSATION}/comments`,
+      {
+        method: 'POST',
+        member: 'm-author',
+        body: {
+          id: created.body.comment.id,
+          target: api.commentTarget,
+          note: 'trusted edit',
+          authorMemberId: 'm-spoofed-edit',
+          authorKind: 'user',
+          authorAppUserId: 'app-spoofed-edit',
+          authorDisplayName: 'Spoofed edit',
+          authorKey: 'e'.repeat(64),
+        },
+      },
+    );
+    expect(edited.status).toBe(200);
+    expect(edited.body.comment).toMatchObject({
+      authorMemberId: 'm-author',
+      note: 'trusted edit',
+    });
+    expect(edited.body.comment).not.toHaveProperty('authorKind');
+    expect(edited.body.comment).not.toHaveProperty('authorAppUserId');
+    expect(edited.body.comment).not.toHaveProperty('authorDisplayName');
+    expect(edited.body.comment).not.toHaveProperty('authorKey');
+  });
+
   it('POST creates another row for the same author unless an existing id is sent', async () => {
     const api = await startServer();
     const first = await api.createComment('m-author', 'first note');

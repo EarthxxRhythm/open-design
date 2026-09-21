@@ -590,6 +590,17 @@ function migrate(db: SqliteDb): void {
   if (!previewCommentAuthorCols.some((c: DbRow) => c.name === 'author_key')) {
     db.exec(`ALTER TABLE preview_comments ADD COLUMN author_key TEXT`);
   }
+  // Read markers are project-scoped; the viewer filters its current file.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS project_comment_read_state (
+      project_id TEXT NOT NULL,
+      viewer_scope TEXT NOT NULL,
+      last_read_at INTEGER NOT NULL,
+      PRIMARY KEY (project_id, viewer_scope),
+      FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+    );
+  `);
+
   const deploymentCols = db.prepare(`PRAGMA table_info(deployments)`).all() as DbRow[];
   if (!deploymentCols.some((c: DbRow) => c.name === 'status')) {
     db.exec(`ALTER TABLE deployments ADD COLUMN status TEXT NOT NULL DEFAULT 'ready'`);
@@ -4336,20 +4347,42 @@ export function mergeSyncedPreviewComment(
     ? Math.max(0, Math.round(comment.anchoredVersion as number))
     : null;
   const updatedAt = Number.isFinite(comment.updatedAt) ? (comment.updatedAt as number) : now;
+  const authorKind = comment.authorKind === 'member' || comment.authorKind === 'user'
+    ? comment.authorKind
+    : undefined;
+  const authorMemberId = authorKind === 'user'
+    ? null
+    : typeof comment.memberId === 'string' && comment.memberId.trim()
+      ? comment.memberId.trim()
+      : null;
+  const authorAppUserId = typeof comment.authorAppUserId === 'string'
+    ? comment.authorAppUserId
+    : undefined;
+  const authorDisplayName = typeof comment.authorDisplayName === 'string'
+    ? comment.authorDisplayName
+    : undefined;
+  const authorKey = typeof comment.authorKey === 'string' ? comment.authorKey : undefined;
   const existing = db
     .prepare(`SELECT updated_at AS updatedAt FROM preview_comments WHERE id = ? AND project_id = ?`)
     .get(comment.id, projectId) as DbRow | undefined;
   if (existing) {
     // Last-writer-wins: only apply a strictly-newer edit. Keeps the existing
-    // row's conversation/created_at/author identity; refreshes mutable content,
-    // status, and drift-ladder anchor state.
+    // row's conversation/created_at, refreshes mutable content/status/anchor
+    // state, and updates author fields only when the incoming wire payload
+    // explicitly carries each trusted field. Legacy payloads cannot erase them.
     if (updatedAt <= Number(existing.updatedAt ?? 0)) return false;
     db.prepare(
       `UPDATE preview_comments SET
          selector = ?, label = ?, text = ?, position_json = ?, html_hint = ?,
          selection_kind = ?, member_count = ?, pod_members_json = ?, style_json = ?,
          attachments_json = ?, slide_index = ?, slide_key = ?, note = ?, status = ?,
-         anchor_state = ?, anchored_version = ?, last_good_position_json = ?, updated_at = ?
+         anchor_state = ?, anchored_version = ?, last_good_position_json = ?,
+         author_member_id = CASE WHEN ? THEN ? ELSE author_member_id END,
+         author_kind = CASE WHEN ? THEN ? ELSE author_kind END,
+         author_app_user_id = CASE WHEN ? THEN ? ELSE author_app_user_id END,
+         author_display_name = CASE WHEN ? THEN ? ELSE author_display_name END,
+         author_key = CASE WHEN ? THEN ? ELSE author_key END,
+         updated_at = ?
        WHERE id = ? AND project_id = ?`,
     ).run(
       comment.selector,
@@ -4369,6 +4402,16 @@ export function mergeSyncedPreviewComment(
       anchorState,
       anchoredVersion,
       comment.lastGoodPosition ? JSON.stringify(comment.lastGoodPosition) : null,
+      authorKind !== undefined ? 1 : 0,
+      authorMemberId,
+      authorKind !== undefined ? 1 : 0,
+      authorKind ?? null,
+      authorAppUserId !== undefined ? 1 : 0,
+      authorAppUserId ?? null,
+      authorDisplayName !== undefined ? 1 : 0,
+      authorDisplayName ?? null,
+      authorKey !== undefined ? 1 : 0,
+      authorKey ?? null,
       updatedAt,
       comment.id,
       projectId,
@@ -4408,9 +4451,9 @@ export function mergeSyncedPreviewComment(
          (id, project_id, conversation_id, file_path, element_id, selector, label,
           text, position_json, html_hint, selection_kind, member_count, pod_members_json,
           style_json, attachments_json, slide_index, slide_key, note, status, created_at, updated_at,
-          anchor_state, anchored_version, author_member_id, last_good_position_json,
-          pin_seq, pin_seq_confirmed, sort_key)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          anchor_state, anchored_version, author_member_id, author_kind, author_app_user_id,
+          author_display_name, author_key, last_good_position_json, pin_seq, pin_seq_confirmed, sort_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       comment.id,
@@ -4436,13 +4479,37 @@ export function mergeSyncedPreviewComment(
       updatedAt,
       anchorState,
       anchoredVersion,
-      typeof comment.memberId === 'string' ? comment.memberId : null,
+      authorMemberId,
+      authorKind ?? null,
+      authorAppUserId ?? null,
+      authorDisplayName ?? null,
+      authorKey ?? null,
       comment.lastGoodPosition ? JSON.stringify(comment.lastGoodPosition) : null,
       pinSeq,
       1,
       createdAt,
     );
   return result.changes > 0;
+}
+
+export function getProjectCommentReadState(
+  db: SqliteDb, projectId: string, viewerScope: string,
+): { projectId: string; lastReadAt?: number } {
+  const stored = db.prepare(`SELECT last_read_at AS lastReadAt FROM project_comment_read_state
+    WHERE project_id = ? AND viewer_scope = ?`).get(projectId, viewerScope) as DbRow | undefined;
+  const lastReadAt = stored?.lastReadAt;
+  return { projectId, ...(Number.isFinite(lastReadAt) ? { lastReadAt } : {}) };
+}
+
+/** Advance, never rewind, a trusted viewer's project-level read marker. */
+export function markProjectCommentsRead(
+  db: SqliteDb, projectId: string, viewerScope: string, readAt: number,
+): { projectId: string; lastReadAt?: number } {
+  db.prepare(`INSERT INTO project_comment_read_state (project_id, viewer_scope, last_read_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(project_id, viewer_scope) DO UPDATE SET
+      last_read_at = MAX(project_comment_read_state.last_read_at, excluded.last_read_at)`).run(projectId, viewerScope, readAt);
+  return getProjectCommentReadState(db, projectId, viewerScope);
 }
 
 export function getPreviewComment(db: SqliteDb, projectId: string, conversationId: string, id: string) {
