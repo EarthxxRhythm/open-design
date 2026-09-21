@@ -30,7 +30,7 @@ Start from `example.html`. It is the full runnable source, with embedded origina
 
 ## Visual system
 
-- Palette: cobalt `#164b87`, deep night `#102e55`, ivory `#eeeade`, parchment `#eae2cf`, bronze `#d9b877`.
+- Palette: cobalt `#0758bc`, deep night `#083d86`, ivory `#fffaf0`, parchment `#fff6e3`, bronze `#f5cf7c`.
 - System serif typography: Georgia / Times New Roman; system sans and monospace for body and coordinates. No fonts are distributed.
 - Editorial composition: generous side margins, large serif headings, small uppercase coordinates, fine rules and open space.
 - Five chapters: astronomer hero, point-cloud instrument / approach, observatory artwork and services, questions / contact, oversized wordmark footer.
