@@ -96,6 +96,12 @@ async function startProjectStubServer(): Promise<StubServer> {
         }));
         return;
       }
+      if (['POST', 'GET'].includes(captured.method)
+        && captured.url === '/api/projects/project-1/files/nested%2Findex.html/publish-public') {
+        const publication = { url: 'https://example.invalid/returned-link', slug: 'returned-slug', fileName: 'nested/index.html' };
+        res.end(JSON.stringify(captured.method === 'GET' ? { publication } : publication));
+        return;
+      }
       if (captured.method === 'GET' && captured.url === '/api/workspaces/ws-1/projects?view=team') {
         res.statusCode = 200;
         res.end(JSON.stringify({
@@ -224,6 +230,28 @@ async function runCli(args: string[]): Promise<{ stdout: string; stderr: string;
 }
 
 describe('od project CLI', () => {
+  it.each(['publish', 'get', 'status', 'stop'])('share %s uses the existing file endpoint and emits raw JSON', async action => {
+    stub = await startProjectStubServer();
+    const result = await runCli([
+      'project', 'share', action, 'project-1', '--path', 'nested/index.html',
+      '--workspace', 'ws-1', '--workspace-member', 'member-1',
+      '--daemon-url', stub.baseUrl, '--json',
+      ...(action === 'stop' ? ['--slug', 'legacy-public-slug'] : []),
+    ]);
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe('');
+    const publication = { url: 'https://example.invalid/returned-link', slug: 'returned-slug', fileName: 'nested/index.html' };
+    expect(JSON.parse(result.stdout)).toEqual(action === 'stop'
+      ? { ok: true, slug: 'legacy-public-slug', fileName: 'nested/index.html' }
+      : action === 'publish' ? publication : { publication });
+    expect(stub.requests).toHaveLength(1);
+    expect(stub.requests[0]).toMatchObject({
+      method: action === 'stop' ? 'DELETE' : action === 'publish' ? 'POST' : 'GET',
+      url: '/api/projects/project-1/files/nested%2Findex.html/publish-public',
+      headers: { 'x-od-workspace-id': 'ws-1', 'x-od-workspace-member-id': 'member-1' },
+      body: action === 'stop' ? JSON.stringify({ slug: 'legacy-public-slug' }) : '',
+    });
+  });
   it('documents exact workspace identity for bound project and file commands', async () => {
     const projectHelp = await runCli(['project', 'help']);
     const filesHelp = await runCli(['files', 'help']);
