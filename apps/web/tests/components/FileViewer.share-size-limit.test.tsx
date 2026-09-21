@@ -233,3 +233,88 @@ it.each(['file', 'project'] as const)('clears over-limit error when changing %s'
   expect(screen.queryByText(sizeMessage)).toBeNull();
   expect(posts(fetch)).toHaveLength(1);
 });
+
+// A2 regressions exercise the production viewer and provider, with only HTTP deferred.
+it('keeps bounded progress across panel reopen and copies only the completed response', async () => {
+  const { fetch } = await setup();
+  const gate = deferred<Response>();
+  fetch.mockImplementationOnce(() => gate.promise);
+  await publish();
+  const request = posts(fetch)[0]!;
+  expect(request[0]).toBe('/api/projects/s15-project/files/index.html/publish-public');
+  expect(request[1]).toMatchObject({ method: 'POST' });
+  expect(request[1]?.body).toBeUndefined();
+  let previous = 0;
+  for (const elapsed of [250, 1000, 5000, 60000]) {
+    await tick(elapsed);
+    const value = document.querySelector('progress')!.value;
+    expect(value).toBeGreaterThan(0);
+    expect(value).toBeGreaterThanOrEqual(previous);
+    expect(value).toBeLessThanOrEqual(0.9);
+    previous = value;
+  }
+  expect(write).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: /^share$/i }));
+  expect(document.querySelector('progress')).toBeNull();
+  await tick(1000);
+  fireEvent.click(screen.getByRole('button', { name: /^share$/i }));
+  expect(document.querySelector('progress')!.value).toBeGreaterThanOrEqual(previous);
+  expect(posts(fetch)).toHaveLength(1);
+  await act(async () => gate.resolve(new Response(JSON.stringify(publication))));
+  expect(document.querySelector('progress')!.value).toBe(1);
+  expect(write.mock.calls).toEqual([[publication.url]]);
+  expect(screen.getByRole('button', { name: /^copied!$/i })).toBeTruthy();
+  await tick(999);
+  expect(document.querySelector('progress')!.value).toBe(1);
+  await tick(1);
+  expect(document.querySelector('progress')).toBeNull();
+  await tick(799);
+  expect(screen.getByRole('button', { name: /^copied!$/i })).toBeTruthy();
+  await tick(1);
+  expect(screen.getByRole('button', { name: /copy share link/i })).toBeTruthy();
+  expect(posts(fetch)).toHaveLength(1);
+});
+
+it('clipboard rejection preserves the successful publication and its existing copy feedback', async () => {
+  await setup();
+  write.mockRejectedValueOnce(new Error(sensitive));
+  await publish();
+  expect(screen.getByRole('button', { name: /stop sharing/i })).toBeTruthy();
+  expect(screen.getByText(publication.url)).toBeTruthy();
+  expect(screen.getByRole('button', { name: /copy failed/i })).toBeTruthy();
+  expect(screen.queryByText(genericMessage)).toBeNull();
+  expect(document.body.textContent).not.toContain(sensitive);
+  expect(analytics.track.mock.calls.filter(([name, data]) =>
+    name === 'artifact_publish_result' && data.result === 'failed')).toEqual([]);
+  await tick(1800);
+  expect(screen.getByRole('button', { name: /copy share link/i })).toBeTruthy();
+});
+
+it.each(['file', 'project'] as const)('ignores a late publish after changing %s while a new publish is pending', async change => {
+  const { view, fetch } = await setup();
+  const old = deferred<Response>();
+  fetch.mockImplementationOnce(() => old.promise);
+  await publish();
+  await tick(1000);
+  await act(async () => view.rerenderWith({
+    ...props,
+    ...(change === 'project' ? { projectId: 'next-project' } :
+      { file: { ...htmlFile(), name: 'next.html', path: 'next.html' } }),
+  }));
+  if (screen.getByRole('button', { name: /^share$/i }).getAttribute('aria-expanded') !== 'true') {
+    fireEvent.click(screen.getByRole('button', { name: /^share$/i }));
+  }
+  expect(document.querySelector('progress')).toBeNull();
+  const next = deferred<Response>();
+  fetch.mockImplementationOnce(() => next.promise);
+  await publish();
+  await act(async () => old.resolve(new Response(JSON.stringify(publication))));
+  expect(write).not.toHaveBeenCalled();
+  expect(screen.queryByText(publication.url)).toBeNull();
+  expect(document.querySelector('progress')!.value).toBeLessThanOrEqual(0.9);
+  const nextPublication = { ...publication, url: 'https://example.invalid/next-response', slug: 'next' };
+  await act(async () => next.resolve(new Response(JSON.stringify(nextPublication))));
+  expect(write.mock.calls).toEqual([[nextPublication.url]]);
+  expect(screen.getByText(nextPublication.url)).toBeTruthy();
+  expect(posts(fetch)).toHaveLength(2);
+});
