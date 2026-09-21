@@ -7,6 +7,13 @@ import type { DeployProviderOption } from '../FileViewer';
 import { RemixIcon } from '../RemixIcon';
 import { SocialShareGrid } from '../SocialShareGrid';
 
+/** Time-based waiting feedback, not transferred bytes. Only success may reach 1. */
+export function boundedPublishProgress(elapsedMs: number, completed: boolean): number {
+  if (completed) return 1;
+  const elapsed = Number.isNaN(elapsedMs) ? 0 : Math.max(0, elapsedMs);
+  return Math.min(0.9, 0.9 * (1 - Math.exp(-elapsed / 5000)));
+}
+
 export function ShareTab({
   menuOrigin,
   workspaceContext,
@@ -23,6 +30,7 @@ export function ShareTab({
   copyPublishedFileLink,
   publishLinkFeedback,
   publishingPublicFile,
+  publishProgress,
   unpublishCurrentFilePublic,
   viewerOnlyDisabledTitle,
   publishCurrentFilePublic,
@@ -57,6 +65,7 @@ export function ShareTab({
   copyPublishedFileLink: () => Promise<void>;
   publishLinkFeedback: 'copied' | 'failed' | null;
   publishingPublicFile: boolean;
+  publishProgress: number | null;
   unpublishCurrentFilePublic: () => Promise<void>;
   viewerOnlyDisabledTitle: string;
   publishCurrentFilePublic: () => Promise<void>;
@@ -186,6 +195,9 @@ export function ShareTab({
                           <RemixIcon name="question-line" size={14} />
                         </button>
                       </div>
+                      {publishProgress !== null ? (
+                        <progress max={1} value={publishProgress} aria-label={t('fileViewer.publishingFile')} />
+                      ) : null}
                       {filePublished ? (
                         <div className="chrome-publish-plain">
                           <div className="chrome-publish-url" title={publishedFileUrl}>
@@ -237,7 +249,11 @@ export function ShareTab({
                               className={publishingPublicFile ? 'icon-spin' : undefined}
                             />
                           </span>
-                          <span>{publishingPublicFile ? t('fileViewer.publishingFile') : t('fileViewer.publishSingleFileTitle')}</span>
+                          <span>{publishingPublicFile
+                            ? t('fileViewer.publishingFile')
+                            : publishFailureKey === 'fileViewer.publishFileFailed'
+                              ? t('preview.retry')
+                              : t('fileViewer.publishSingleFileTitle')}</span>
                         </button>
                       ) }
                       {publishFailureKey ? (
